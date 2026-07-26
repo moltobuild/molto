@@ -1,0 +1,13 @@
+# Molto's own manifest (dogfooding, see rfcs/0003-project-manifest.md).
+
+[package]
+name = "molto"
+version = "0.1.0"
+
+[profile.debug]
+opt_level = 0
+debug_info = true
+
+[profile.release]
+opt_level = 3
+debug_info = false
