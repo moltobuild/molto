@@ -19,8 +19,4 @@ typedef enum {
 /* Canonical lowercase name of a profile ("debug", "release", ...). */
 [[nodiscard]] const char *profile_name(build_profile profile);
 
-/* Built-in default build settings for a profile, used as a base before
-   overriding with values from Project.toml. */
-[[nodiscard]] manifest_profile profile_defaults(build_profile profile);
-
 #endif /* MOLTO_PROFILE_H */

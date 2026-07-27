@@ -2,6 +2,7 @@
 
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/project/project_ctx.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
 #include <molto/services/process_service.h>
@@ -14,11 +15,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Compose the output executable path for a package. Single source of truth
-   for the binary location, shared by build_project and build_binary_path. */
+/* Compose the output executable path for a package. */
 static void compose_binary_path(const char *root, build_profile profile,
                                 const char *name, char *out, size_t out_size) {
     snprintf(out, out_size, "%s/build/%s/%s", root, profile_name(profile), name);
+}
+
+/* Select the settings for `profile` from a parsed project context. */
+static manifest_profile profile_settings(const project_ctx *ctx, build_profile profile) {
+    switch (profile) {
+        case profile_release: return ctx->profile.release;
+        case profile_bench:   return ctx->profile.bench;
+        case profile_custom:  return ctx->profile.custom;
+        case profile_debug:
+        default:              return ctx->profile.debug;
+    }
 }
 
 /* Map a source path to its object path, mirroring the source tree under
@@ -83,28 +94,18 @@ static bool link_all(bool any_cpp, const str_list *objects, const char *binary) 
     return ok;
 }
 
-/* Read the package name and effective profile settings from the manifest. */
-static int load_manifest(const char *root, build_profile profile,
-                         char *name, size_t name_size, manifest_profile *settings) {
+/* Load and parse `root/Project.toml` into a project context, reporting the
+   detailed parse error to stderr on failure. */
+static int load_project(const char *root, project_ctx *out) {
     char manifest_path[4096];
     snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
     if (!fs_path_exists(manifest_path)) {
         fprintf(stderr, "molto: no Project.toml in '%s'\n", root);
         return exit_invalid_manifest;
     }
-    char *toml = fs_read_file(manifest_path);
-    if (toml == NULL) {
-        fprintf(stderr, "molto: could not read '%s'\n", manifest_path);
-        return exit_invalid_manifest;
-    }
-    bool have_name = manifest_read_name(toml, name, name_size);
-    *settings = profile_defaults(profile);
-    /* A missing profile section simply leaves the built-in defaults in place. */
-    bool have_profile = manifest_read_profile(toml, profile_name(profile), settings);
-    (void)have_profile;
-    free(toml);
-    if (!have_name) {
-        fprintf(stderr, "molto: Project.toml is missing a package name\n");
+    char err[256] = "";
+    if (!project_load(manifest_path, out, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
         return exit_invalid_manifest;
     }
     return exit_ok;
@@ -218,12 +219,13 @@ static bool link_needed(const str_list *objects, const char *binary) {
     return false;
 }
 
-int build_project(const char *root, build_profile profile) {
-    char name[128];
-    manifest_profile settings;
-    int result = load_manifest(root, profile, name, sizeof name, &settings);
+int build_project(const char *root, build_profile profile,
+                  char *out_binary, size_t out_binary_size) {
+    project_ctx ctx;
+    int result = load_project(root, &ctx);
     if (result != exit_ok)
         return result;
+    manifest_profile settings = profile_settings(&ctx, profile);
 
     char src_dir[4096];
     snprintf(src_dir, sizeof src_dir, "%s/src", root);
@@ -250,9 +252,9 @@ int build_project(const char *root, build_profile profile) {
     result = compile_sources(root, profile, &settings, include_flag,
                              &sources, &objects, &any_cpp, &any_compiled);
 
+    char binary[4096];
+    compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
     if (result == exit_ok) {
-        char binary[4096];
-        compose_binary_path(root, profile, name, binary, sizeof binary);
         /* Re-link only when something was rebuilt or the binary is stale. */
         if ((any_compiled || link_needed(&objects, binary))
             && !link_all(any_cpp, &objects, binary)) {
@@ -260,24 +262,10 @@ int build_project(const char *root, build_profile profile) {
             result = exit_build_failure;
         }
     }
+    if (result == exit_ok && out_binary != NULL)
+        snprintf(out_binary, out_binary_size, "%s", binary);
 
     str_list_free(&sources);
     str_list_free(&objects);
     return result;
-}
-
-bool build_binary_path(const char *root, build_profile profile,
-                       char *out, size_t out_size) {
-    char manifest_path[4096];
-    snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
-    char *toml = fs_read_file(manifest_path);
-    if (toml == NULL)
-        return false;
-    char name[128];
-    bool ok = manifest_read_name(toml, name, sizeof name);
-    free(toml);
-    if (!ok)
-        return false;
-    compose_binary_path(root, profile, name, out, out_size);
-    return true;
 }

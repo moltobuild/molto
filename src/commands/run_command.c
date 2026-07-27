@@ -16,15 +16,10 @@ int run_command_run(const char *requested_profile,
         return exit_usage_error;
     }
 
-    int code = build_project(".", profile);
+    char binary[4096];
+    int code = build_project(".", profile, binary, sizeof binary);
     if (code != exit_ok)
         return code;
-
-    char binary[4096];
-    if (!build_binary_path(".", profile, binary, sizeof binary)) {
-        fprintf(stderr, "molto: could not resolve target binary\n");
-        return exit_invalid_manifest;
-    }
 
     const char **argv = malloc((size_t)(forwarded_count + 2) * sizeof(char *));
     if (argv == NULL)

@@ -17,14 +17,4 @@ typedef struct {
    Returns a heap-allocated string the caller must free(), or NULL on error. */
 [[nodiscard]] char *manifest_render_default(const char *name);
 
-/* Read the package name from a Project.toml `toml` string into `out`
-   (`out_size` bytes). Returns false if `[package] name` is absent. */
-[[nodiscard]] bool manifest_read_name(const char *toml, char *out, size_t out_size);
-
-/* Read the `[profile.<name>]` section from `toml` into `*out`. Keys that are
-   absent keep their existing value in `*out` (seed it with defaults first).
-   Returns false if the section itself is absent. */
-[[nodiscard]] bool manifest_read_profile(const char *toml, const char *name,
-                                         manifest_profile *out);
-
 #endif /* MOLTO_MANIFEST_SERVICE_H */

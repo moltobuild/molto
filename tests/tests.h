@@ -11,5 +11,7 @@ void suite_process_service(void);
 void suite_build_service(void);
 void suite_run_command(void);
 void suite_task_pool(void);
+void suite_toml(void);
+void suite_project_ctx(void);
 
 #endif /* MOLTO_TESTS_H */

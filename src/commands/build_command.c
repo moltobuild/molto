@@ -14,7 +14,7 @@ int build_command_run(const char *requested_profile) {
     }
     const char *label = profile_name(profile);
     printf("Compiling (%s)\n", label);
-    int code = build_project(".", profile);
+    int code = build_project(".", profile, NULL, 0);
     if (code == exit_ok)
         printf("Finished %s -> build/%s\n", label, label);
     return code;

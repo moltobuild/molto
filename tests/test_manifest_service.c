@@ -32,36 +32,4 @@ void suite_manifest_service(void) {
 
     /* Invalid name yields no manifest. */
     CHECK(manifest_render_default("Bad Name") == NULL);
-
-    /* Reading the package name back from a manifest. */
-    const char *manifest =
-        "[package]\n"
-        "name = \"demo_app\"\n"
-        "version = \"0.1.0\"\n"
-        "\n"
-        "[profile.release]\n"
-        "opt_level = 2\n"
-        "debug_info = true\n";
-    char name[64] = "";
-    CHECK(manifest_read_name(manifest, name, sizeof name));
-    CHECK(strcmp(name, "demo_app") == 0);
-    CHECK(!manifest_read_name("[package]\nversion = \"0.1.0\"\n", name, sizeof name));
-
-    /* Reading a profile overrides the seeded defaults. */
-    manifest_profile settings = { .opt_level = 0, .debug_info = false };
-    CHECK(manifest_read_profile(manifest, "release", &settings));
-    CHECK(settings.opt_level == 2);
-    CHECK(settings.debug_info == true);
-
-    /* Absent section returns false and leaves the defaults untouched. */
-    manifest_profile untouched = { .opt_level = 9, .debug_info = false };
-    CHECK(!manifest_read_profile(manifest, "bench", &untouched));
-    CHECK(untouched.opt_level == 9);
-
-    /* A section with only one key keeps the other default. */
-    const char *partial = "[profile.debug]\nopt_level = 1\n";
-    manifest_profile mixed = { .opt_level = 0, .debug_info = true };
-    CHECK(manifest_read_profile(partial, "debug", &mixed));
-    CHECK(mixed.opt_level == 1);
-    CHECK(mixed.debug_info == true); /* untouched default */
 }

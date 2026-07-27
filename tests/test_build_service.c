@@ -45,7 +45,7 @@ void suite_build_service(void) {
         "int main(void) { printf(\"hi\\n\"); return answer(); }\n"));
 
     /* First build compiles and links. */
-    CHECK(build_project(root, profile_debug) == exit_ok);
+    CHECK(build_project(root, profile_debug, NULL, 0) == exit_ok);
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     CHECK(fs_path_exists(binary));
@@ -53,7 +53,7 @@ void suite_build_service(void) {
 
     /* A no-op rebuild in a later second must NOT re-link (binary untouched). */
     sleep(1);
-    CHECK(build_project(root, profile_debug) == exit_ok);
+    CHECK(build_project(root, profile_debug, NULL, 0) == exit_ok);
     CHECK(mtime_of(binary) == linked_at);
 
     /* Changing a source triggers recompilation and a re-link. */
@@ -63,7 +63,7 @@ void suite_build_service(void) {
     CHECK(fs_write_file(main_path,
         "#include <stdio.h>\n"
         "int main(void) { printf(\"hi again\\n\"); return 0; }\n"));
-    CHECK(build_project(root, profile_debug) == exit_ok);
+    CHECK(build_project(root, profile_debug, NULL, 0) == exit_ok);
     CHECK(mtime_of(binary) > linked_at);
 
     /* The produced binary runs successfully. */
@@ -77,7 +77,7 @@ void suite_build_service(void) {
     /* A directory without Project.toml is an invalid-manifest error. */
     char empty[] = "/tmp/molto_empty_XXXXXX";
     CHECK(mkdtemp(empty) != NULL);
-    CHECK(build_project(empty, profile_debug) == exit_invalid_manifest);
+    CHECK(build_project(empty, profile_debug, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
 }
