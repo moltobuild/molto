@@ -1,13 +1,47 @@
+/*
+ * toml — a small, safe TOML parser.
+ *
+ * Design, in plain terms:
+ *   - We parse the whole document once into a flat list of "entries". Each entry
+ *     is one (section, key) pair with a typed value (string, integer or bool).
+ *     For example the line `opt_level = 3` under `[profile.release]` becomes the
+ *     entry { section="profile.release", key="opt_level", int 3 }.
+ *   - Parsing walks the text one line at a time. For each line we:
+ *       1. cut off any inline `# comment` (but not a `#` inside quotes),
+ *       2. trim surrounding whitespace,
+ *       3. if it is `[section]` update the current section,
+ *          otherwise split `key = value` and store a typed entry.
+ *   - It "fails closed": any malformed input aborts the whole parse and returns
+ *     NULL together with a "Project.toml:<line>: <reason>" message, instead of
+ *     silently guessing. Nothing is ever half-parsed.
+ *
+ * The parser never modifies the caller's input text; it works on local copies.
+ * On top of the flat model there are two ways to read values: dictionary-style
+ * getters (toml_get_*) and schema binding into a struct (toml_bind).
+ */
+
 #include <molto/util/toml.h>
 
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Capacity limits for the fields of a single entry. A section/key/value that
+ * exceeds its limit is a parse error (never silently truncated). */
 #define TOML_SECTION_MAX 128
 #define TOML_KEY_MAX     64
 #define TOML_VALUE_MAX   256
 #define TOML_LINE_MAX    1024
+
+/* Scratch buffer size for the digits of one integer value. */
+#define TOML_DIGITS_MAX  64
+
+/* strtol base for integer values (plain decimal). */
+#define TOML_INTEGER_BASE 10
+
+/* Growth policy for the document's entry array. */
+#define TOML_DOC_INITIAL_CAPACITY 16
+#define TOML_DOC_GROWTH_FACTOR    2
 
 typedef struct {
     char section[TOML_SECTION_MAX];
@@ -125,32 +159,36 @@ static bool parse_literal_string(const char *text, char *out, size_t out_size,
     return true;
 }
 
+/* Parse a decimal integer, allowing a leading sign and '_' digit separators
+ * (e.g. "1_000", "-42"). Rejects overflow and any non-digit garbage. */
 static bool parse_integer(const char *text, long *out) {
-    char digits[64];
-    size_t o = 0;
+    char digits[TOML_DIGITS_MAX];
+    size_t count = 0;
     for (const char *p = text; *p != '\0'; p++) {
         if (*p == '_')
-            continue;
-        if (o + 1 >= sizeof digits)
+            continue; /* separators are cosmetic; drop them */
+        if (count + 1 >= sizeof digits)
             return false;
-        digits[o++] = *p;
+        digits[count++] = *p;
     }
-    digits[o] = '\0';
-    if (o == 0)
+    digits[count] = '\0';
+    if (count == 0)
         return false;
     errno = 0;
     char *endptr;
-    long value = strtol(digits, &endptr, 10);
+    long value = strtol(digits, &endptr, TOML_INTEGER_BASE);
     if (errno == ERANGE || *endptr != '\0')
-        return false;
+        return false; /* out of range, or not a pure integer */
     *out = value;
     return true;
 }
 
+/* Append a parsed entry to the document, growing the array as needed. */
 static bool doc_push(toml_document *doc, const toml_entry *entry,
                      char *err, size_t err_size) {
     if (doc->count == doc->capacity) {
-        size_t next = doc->capacity == 0 ? 16 : doc->capacity * 2;
+        size_t next = doc->capacity == 0 ? TOML_DOC_INITIAL_CAPACITY
+                                         : doc->capacity * TOML_DOC_GROWTH_FACTOR;
         toml_entry *items = realloc(doc->items, next * sizeof(toml_entry));
         if (items == NULL) {
             set_err(err, err_size, 0, "out of memory", NULL);
@@ -268,6 +306,7 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
         return NULL;
     }
 
+    /* Walk the input one line at a time, tracking the current section. */
     char section[TOML_SECTION_MAX] = "";
     const char *cursor = text;
     int line_no = 0;
@@ -381,6 +420,11 @@ void toml_dump(const toml_document *doc, FILE *stream) {
     }
 }
 
+/* Populate a struct from the document following `schema`. This is C's stand-in
+ * for the reflection a Python dataclass parser would use: since C cannot look
+ * up a struct's fields by name at runtime, each schema entry carries the field's
+ * byte `offset` (from offsetof) so we can write to `(char *)out + offset`.
+ * Absent keys are left untouched, so callers seed defaults before binding. */
 bool toml_bind(const toml_document *doc, const toml_field *schema,
                size_t field_count, void *out, char *err, size_t err_size) {
     char *base = out;

@@ -5,11 +5,29 @@
 #include <stddef.h>
 #include <stdio.h>
 
-/* A small, robust TOML parser. It supports a useful subset: [section] and
-   [a.b] headers, bare keys, inline comments, basic and literal strings,
-   signed integers with '_' separators, and booleans. Arrays and inline tables
-   are recognized and skipped (so a [deps] section does not break parsing).
-   It fails closed: any malformed input yields NULL and a line-tagged message. */
+/*
+ * A small, robust TOML parser. It supports a useful subset: [section] and
+ * [a.b] headers, bare keys, inline comments, basic and literal strings, signed
+ * integers with '_' separators, and booleans. Arrays and inline tables are
+ * recognized and skipped (so a [deps] section does not break parsing). It fails
+ * closed: any malformed input yields NULL and a line-tagged message.
+ *
+ * Two ways to read the parsed document:
+ *
+ *   1) Dictionary style — pull individual values:
+ *        toml_document *doc = toml_parse(text, err, sizeof err);
+ *        char name[64];
+ *        toml_get_string(doc, "package", "name", name, sizeof name);
+ *        toml_free(doc);
+ *
+ *   2) Schema binding — fill a struct in one call (see toml_bind below):
+ *        typedef struct { char name[64]; long width; } config;
+ *        const toml_field schema[] = {
+ *            TOML_STR(config, "package", "name",  name),
+ *            TOML_INT(config, "layout",  "width", width),
+ *        };
+ *        toml_bind(doc, schema, 2, &cfg, err, sizeof err);
+ */
 typedef struct toml_document toml_document;
 
 /* Parse `text` into a document. On failure returns NULL and, if `err` is not

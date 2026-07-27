@@ -15,10 +15,43 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Toolchain the build shells out to (v0.1 targets GCC on Linux). */
+#define CC_C   "gcc"   /* compiler/linker for C sources */
+#define CC_CPP "g++"   /* compiler/linker when any C++ source is present */
+
+/* Compiler command-line arguments. */
+#define ARG_COMPILE       "-c"   /* compile only, do not link */
+#define ARG_OUTPUT        "-o"   /* next argument is the output path */
+#define ARG_DEBUG         "-g"   /* emit debug symbols */
+#define OPT_FLAG_FORMAT   "-O%d" /* optimisation level, e.g. -O2 */
+#define INCLUDE_FLAG_FORMAT "-I%s" /* add an include search directory */
+
+/* On-disk layout of a Molto project. */
+#define MANIFEST_FILENAME "Project.toml"
+#define DIR_BUILD         "build" /* output root, e.g. build/<profile>/ */
+#define DIR_OBJ           "obj"   /* compiled objects under the build root */
+#define DIR_SRC           "src"   /* where sources are discovered */
+#define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
+
+/* Size of the stack buffers used to compose filesystem paths. */
+#define PATH_BUFFER_SIZE 4096
+
+/* Size of the buffer receiving a manifest parse-error message. */
+#define MANIFEST_ERROR_SIZE 256
+
+/* Fixed slots in a compile command's argv:
+ *   compiler, -c, source, -o, object, -O<n>, [-g], include, NULL
+ * The optional -g means the count varies, so we size for the maximum. */
+#define COMPILE_ARGV_MAX 10
+/* Extra argv slots around the object list when linking: linker, -o, binary, NULL. */
+#define LINK_ARGV_EXTRA 4
+/* Size of the small buffer holding the "-O<n>" flag. */
+#define OPT_FLAG_SIZE 16
+
 /* Compose the output executable path for a package. */
 static void compose_binary_path(const char *root, build_profile profile,
                                 const char *name, char *out, size_t out_size) {
-    snprintf(out, out_size, "%s/build/%s/%s", root, profile_name(profile), name);
+    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_name(profile), name);
 }
 
 /* Select the settings for `profile` from a parsed project context. */
@@ -40,12 +73,13 @@ static void object_path_for(const char *root, const char *profile_dir,
     const char *relative = source;
     if (strncmp(source, root, root_len) == 0 && source[root_len] == '/')
         relative = source + root_len + 1;
-    snprintf(out, out_size, "%s/build/%s/obj/%s.o", root, profile_dir, relative);
+    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX,
+             root, profile_dir, relative);
 }
 
 /* Create the parent directory chain for `path`. */
 static bool make_parent_dirs(const char *path) {
-    char directory[4096];
+    char directory[PATH_BUFFER_SIZE];
     snprintf(directory, sizeof directory, "%s", path);
     char *slash = strrchr(directory, '/');
     if (slash == NULL)
@@ -57,19 +91,19 @@ static bool make_parent_dirs(const char *path) {
 /* Compile a single translation unit to `object`. */
 static bool compile_one(const char *source, const char *object,
                         const manifest_profile *settings, const char *include_flag) {
-    const char *compiler = source_is_cpp(source) ? "g++" : "gcc";
-    char opt_flag[16];
-    snprintf(opt_flag, sizeof opt_flag, "-O%d", settings->opt_level);
-    const char *argv[10];
+    const char *compiler = source_is_cpp(source) ? CC_CPP : CC_C;
+    char opt_flag[OPT_FLAG_SIZE];
+    snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
+    const char *argv[COMPILE_ARGV_MAX];
     size_t i = 0;
     argv[i++] = compiler;
-    argv[i++] = "-c";
+    argv[i++] = ARG_COMPILE;
     argv[i++] = source;
-    argv[i++] = "-o";
+    argv[i++] = ARG_OUTPUT;
     argv[i++] = object;
     argv[i++] = opt_flag;
     if (settings->debug_info)
-        argv[i++] = "-g";
+        argv[i++] = ARG_DEBUG;
     argv[i++] = include_flag;
     argv[i++] = NULL;
     return process_run(argv) == 0;
@@ -77,16 +111,16 @@ static bool compile_one(const char *source, const char *object,
 
 /* Link every object into the final executable. */
 static bool link_all(bool any_cpp, const str_list *objects, const char *binary) {
-    const char *linker = any_cpp ? "g++" : "gcc";
+    const char *linker = any_cpp ? CC_CPP : CC_C;
     size_t count = str_list_count(objects);
-    const char **argv = malloc((count + 4) * sizeof(char *));
+    const char **argv = malloc((count + LINK_ARGV_EXTRA) * sizeof(char *));
     if (argv == NULL)
         return false;
     size_t i = 0;
     argv[i++] = linker;
     for (size_t j = 0; j < count; j++)
         argv[i++] = str_list_get(objects, j);
-    argv[i++] = "-o";
+    argv[i++] = ARG_OUTPUT;
     argv[i++] = binary;
     argv[i++] = NULL;
     bool ok = process_run(argv) == 0;
@@ -97,13 +131,13 @@ static bool link_all(bool any_cpp, const str_list *objects, const char *binary) 
 /* Load and parse `root/Project.toml` into a project context, reporting the
    detailed parse error to stderr on failure. */
 static int load_project(const char *root, project_ctx *out) {
-    char manifest_path[4096];
-    snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
+    char manifest_path[PATH_BUFFER_SIZE];
+    snprintf(manifest_path, sizeof manifest_path, "%s/" MANIFEST_FILENAME, root);
     if (!fs_path_exists(manifest_path)) {
-        fprintf(stderr, "molto: no Project.toml in '%s'\n", root);
+        fprintf(stderr, "molto: no " MANIFEST_FILENAME " in '%s'\n", root);
         return exit_invalid_manifest;
     }
-    char err[256] = "";
+    char err[MANIFEST_ERROR_SIZE] = "";
     if (!project_load(manifest_path, out, err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
         return exit_invalid_manifest;
@@ -148,7 +182,7 @@ static int compile_sources(const char *root, build_profile profile,
         const char *source = str_list_get(sources, i);
         if (source_is_cpp(source))
             *any_cpp = true;
-        char object[4096];
+        char object[PATH_BUFFER_SIZE];
         object_path_for(root, profile_name(profile), source, object, sizeof object);
         if (!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
@@ -227,10 +261,10 @@ int build_project(const char *root, build_profile profile,
         return result;
     manifest_profile settings = profile_settings(&ctx, profile);
 
-    char src_dir[4096];
-    snprintf(src_dir, sizeof src_dir, "%s/src", root);
+    char src_dir[PATH_BUFFER_SIZE];
+    snprintf(src_dir, sizeof src_dir, "%s/" DIR_SRC, root);
     if (!fs_is_dir(src_dir)) {
-        fprintf(stderr, "molto: no src directory in '%s'\n", root);
+        fprintf(stderr, "molto: no " DIR_SRC " directory in '%s'\n", root);
         return exit_build_failure;
     }
 
@@ -242,8 +276,9 @@ int build_project(const char *root, build_profile profile,
         return exit_build_failure;
     }
 
-    char include_flag[sizeof src_dir + 2];
-    snprintf(include_flag, sizeof include_flag, "-I%s", src_dir);
+    /* Extra room over src_dir for the "-I" prefix and the terminating NUL. */
+    char include_flag[PATH_BUFFER_SIZE + 4];
+    snprintf(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir);
 
     str_list objects;
     str_list_init(&objects);
@@ -252,7 +287,7 @@ int build_project(const char *root, build_profile profile,
     result = compile_sources(root, profile, &settings, include_flag,
                              &sources, &objects, &any_cpp, &any_compiled);
 
-    char binary[4096];
+    char binary[PATH_BUFFER_SIZE];
     compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
     if (result == exit_ok) {
         /* Re-link only when something was rebuilt or the binary is stale. */
