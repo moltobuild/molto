@@ -34,6 +34,10 @@ typedef struct {
 /* Parse and execute argv; returns the process exit code. */
 [[nodiscard]] int cli_run(int argc, char **argv);
 
+/* Return the value following the option `name` in argv (e.g. "--profile"),
+   or NULL if the option is absent or has no value. */
+[[nodiscard]] const char *cli_option_value(int argc, char **argv, const char *name);
+
 /* Molto version string. */
 [[nodiscard]] const char *cli_version(void);
 

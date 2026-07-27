@@ -30,4 +30,14 @@ void suite_cli(void) {
 
     char *argv_build[] = { "molto", "build" };
     CHECK(cli_parse(2, argv_build).command == cli_cmd_build);
+
+    /* Option value extraction. */
+    char *argv_profile[] = { "molto", "build", "--profile", "release" };
+    const char *value = cli_option_value(4, argv_profile, "--profile");
+    CHECK(value != NULL && strcmp(value, "release") == 0);
+
+    CHECK(cli_option_value(2, argv_build, "--profile") == NULL);
+
+    char *argv_dangling[] = { "molto", "build", "--profile" };
+    CHECK(cli_option_value(3, argv_dangling, "--profile") == NULL);
 }

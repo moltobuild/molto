@@ -1,5 +1,6 @@
 #include <molto/cli.h>
 
+#include <molto/commands/build_command.h>
 #include <molto/commands/init_command.h>
 #include <molto/commands/new_command.h>
 #include <molto/exit_code.h>
@@ -68,6 +69,14 @@ cli_invocation cli_parse(int argc, char **argv) {
     return invocation;
 }
 
+const char *cli_option_value(int argc, char **argv, const char *name) {
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], name) == 0)
+            return argv[i + 1];
+    }
+    return NULL;
+}
+
 void cli_print_usage(void) {
     printf(
         "molto %s - a modern packaging ecosystem for C and C++\n"
@@ -115,6 +124,7 @@ int cli_run(int argc, char **argv) {
         case cli_cmd_init:
             return init_command_run();
         case cli_cmd_build:
+            return build_command_run(cli_option_value(argc, argv, "--profile"));
         case cli_cmd_run:
         case cli_cmd_test:
         case cli_cmd_bench:

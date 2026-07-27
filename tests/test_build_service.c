@@ -1,0 +1,55 @@
+#include "test_framework.h"
+#include "tests.h"
+
+#include <molto/build/profile.h>
+#include <molto/exit_code.h>
+#include <molto/services/build_service.h>
+#include <molto/services/fs_service.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+
+void suite_build_service(void) {
+    char root[] = "/tmp/molto_build_XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    CHECK(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    CHECK(fs_write_file(path,
+        "[package]\n"
+        "name = \"demo_app\"\n"
+        "version = \"0.1.0\"\n"
+        "[profile.debug]\n"
+        "opt_level = 0\n"
+        "debug_info = true\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    CHECK(fs_write_file(path,
+        "#include <stdio.h>\n"
+        "int main(void) { printf(\"hi\\n\"); return 0; }\n"));
+
+    /* First build compiles and links. */
+    CHECK(build_project(root, profile_debug) == exit_ok);
+    char binary[512];
+    snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
+    CHECK(fs_path_exists(binary));
+
+    /* Second build is incremental and still succeeds. */
+    CHECK(build_project(root, profile_debug) == exit_ok);
+
+    /* The produced binary runs successfully. */
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
+    CHECK(system(cmd) == 0);
+
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+
+    /* A directory without Project.toml is an invalid-manifest error. */
+    char empty[] = "/tmp/molto_empty_XXXXXX";
+    CHECK(mkdtemp(empty) != NULL);
+    CHECK(build_project(empty, profile_debug) == exit_invalid_manifest);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
+    (void)system(cmd);
+}
