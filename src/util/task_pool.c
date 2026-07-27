@@ -2,8 +2,7 @@
  * task_pool — a work-stealing thread pool.
  *
  * The goal is to run many independent tasks (e.g. compiling one source file
- * each) across several CPU cores at once. It is the same idea behind Rust's
- * rayon or Java's ForkJoinPool.
+ * each) across several CPU cores at once.
  *
  * How it works, in plain terms:
  *   - A "worker" is a real operating-system thread (thrd_t). We create one per
@@ -20,7 +19,7 @@
  *   - `pending` counts tasks that were submitted but not finished yet.
  *     task_pool_wait() blocks until it reaches zero.
  *
- * C primitives used here (for readers coming from Python):
+ * C primitives used here:
  *   - thrd_t / thrd_create / thrd_join : an OS thread and its start/join.
  *   - mtx_t (mutex)      : a lock; only one thread holds it at a time.
  *   - cnd_t (condition)  : a way to sleep until another thread signals you.

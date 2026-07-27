@@ -420,8 +420,7 @@ void toml_dump(const toml_document *doc, FILE *stream) {
     }
 }
 
-/* Populate a struct from the document following `schema`. This is C's stand-in
- * for the reflection a Python dataclass parser would use: since C cannot look
+/* Populate a struct from the document following `schema`. Since C cannot look
  * up a struct's fields by name at runtime, each schema entry carries the field's
  * byte `offset` (from offsetof) so we can write to `(char *)out + offset`.
  * Absent keys are left untouched, so callers seed defaults before binding. */
