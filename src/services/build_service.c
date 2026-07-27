@@ -1,5 +1,6 @@
 #include <molto/services/build_service.h>
 
+#include <molto/build/depfile.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
 #include <molto/project/project_ctx.h>
@@ -23,6 +24,8 @@
 #define ARG_COMPILE       "-c"   /* compile only, do not link */
 #define ARG_OUTPUT        "-o"   /* next argument is the output path */
 #define ARG_DEBUG         "-g"   /* emit debug symbols */
+#define ARG_DEPFILE_GEN   "-MMD" /* also write a header-dependency file */
+#define ARG_DEPFILE_OUT   "-MF"  /* next argument is the dependency file path */
 #define OPT_FLAG_FORMAT   "-O%d" /* optimisation level, e.g. -O2 */
 #define INCLUDE_FLAG_FORMAT "-I%s" /* add an include search directory */
 
@@ -32,6 +35,7 @@
 #define DIR_OBJ           "obj"   /* compiled objects under the build root */
 #define DIR_SRC           "src"   /* where sources are discovered */
 #define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
+#define DEPFILE_SUFFIX    ".d"    /* appended to an object path for its depfile */
 
 /* Size of the stack buffers used to compose filesystem paths. */
 #define PATH_BUFFER_SIZE 4096
@@ -40,9 +44,10 @@
 #define MANIFEST_ERROR_SIZE 256
 
 /* Fixed slots in a compile command's argv:
- *   compiler, -c, source, -o, object, -O<n>, [-g], include, NULL
+ *   compiler, -c, source, -o, object, -O<n>, [-g], -MMD, -MF, depfile,
+ *   include, NULL
  * The optional -g means the count varies, so we size for the maximum. */
-#define COMPILE_ARGV_MAX 10
+#define COMPILE_ARGV_MAX 12
 /* Extra argv slots around the object list when linking: linker, -o, binary, NULL. */
 #define LINK_ARGV_EXTRA 4
 /* Size of the small buffer holding the "-O<n>" flag. */
@@ -77,6 +82,13 @@ static void object_path_for(const char *root, const char *profile_dir,
              root, profile_dir, relative);
 }
 
+/* The dependency file gcc writes next to an object: "<object>.d". Used both to
+   tell the compiler where to write it and to read it back when deciding whether
+   to rebuild, so the two paths always match. */
+static void depfile_path_for(const char *object, char *out, size_t out_size) {
+    snprintf(out, out_size, "%s" DEPFILE_SUFFIX, object);
+}
+
 /* Create the parent directory chain for `path`. */
 static bool make_parent_dirs(const char *path) {
     char directory[PATH_BUFFER_SIZE];
@@ -94,6 +106,8 @@ static bool compile_one(const char *source, const char *object,
     const char *compiler = source_is_cpp(source) ? CC_CPP : CC_C;
     char opt_flag[OPT_FLAG_SIZE];
     snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    depfile_path_for(object, depfile, sizeof depfile);
     const char *argv[COMPILE_ARGV_MAX];
     size_t i = 0;
     argv[i++] = compiler;
@@ -104,6 +118,9 @@ static bool compile_one(const char *source, const char *object,
     argv[i++] = opt_flag;
     if (settings->debug_info)
         argv[i++] = ARG_DEBUG;
+    argv[i++] = ARG_DEPFILE_GEN;   /* -MMD */
+    argv[i++] = ARG_DEPFILE_OUT;   /* -MF  */
+    argv[i++] = depfile;
     argv[i++] = include_flag;
     argv[i++] = NULL;
     return process_run(argv) == 0;
@@ -163,6 +180,34 @@ static void compile_task_run(void *arg) {
     }
 }
 
+/* Decide whether `source` must be recompiled into `object`. Header-aware: if a
+   dependency file from a previous build exists, the unit is stale when the
+   source or any header it lists is newer than the object. Fail-safe: a missing
+   object, a missing/empty depfile (e.g. the first build), or a deleted
+   prerequisite all force a rebuild. */
+static bool needs_rebuild(const char *source, const char *object) {
+    if (!fs_path_exists(object))
+        return true;
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    depfile_path_for(object, depfile, sizeof depfile);
+    str_list prerequisites;
+    str_list_init(&prerequisites);
+    bool stale;
+    if (depfile_read(depfile, &prerequisites) && str_list_count(&prerequisites) > 0) {
+        stale = false;
+        for (size_t i = 0; i < str_list_count(&prerequisites); i++) {
+            if (fs_source_newer(str_list_get(&prerequisites, i), object)) {
+                stale = true;
+                break;
+            }
+        }
+    } else {
+        stale = fs_source_newer(source, object);
+    }
+    str_list_free(&prerequisites);
+    return stale;
+}
+
 /* Compile every source. Phase 1 (sequential) resolves object paths and marks
    which units are stale; phase 2 compiles the stale ones in parallel on a
    work-stealing pool. Reports whether C++ is present and whether anything was
@@ -193,7 +238,7 @@ static int compile_sources(const char *root, build_profile profile,
             free(needs);
             return exit_build_failure;
         }
-        needs[i] = fs_source_newer(source, object);
+        needs[i] = needs_rebuild(source, object);
     }
 
     size_t to_build = 0;

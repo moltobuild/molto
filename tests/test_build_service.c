@@ -56,6 +56,16 @@ void suite_build_service(void) {
     CHECK(build_project(root, profile_debug, NULL, 0) == exit_ok);
     CHECK(mtime_of(binary) == linked_at);
 
+    /* Touching a header recompiles the units that include it. main.c includes
+       util.h, so editing util.h must rebuild main.c and re-link. */
+    sleep(1);
+    char util_header[512];
+    snprintf(util_header, sizeof util_header, "%s/src/util.h", root);
+    CHECK(fs_write_file(util_header, "int answer(void); /* touched */\n"));
+    CHECK(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    CHECK(mtime_of(binary) > linked_at);
+    linked_at = mtime_of(binary); /* rebase for the next step */
+
     /* Changing a source triggers recompilation and a re-link. */
     sleep(1);
     char main_path[512];
