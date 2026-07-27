@@ -14,4 +14,8 @@ void suite_process_service(void) {
     const char *missing[] = { "molto_no_such_command_zzz", NULL };
     int code = process_run(missing);
     CHECK(code == 127 || code == -1);
+
+    /* A child killed by a signal is reported as 128 + signal. */
+    const char *killed[] = { "sh", "-c", "kill -TERM $$", NULL };
+    CHECK(process_run(killed) == 128 + 15); /* SIGTERM = 15 */
 }

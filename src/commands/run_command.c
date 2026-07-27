@@ -7,6 +7,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+/* process_run reports a signal death as 128 + signal (shell convention). */
+#define SIGNAL_EXIT_BASE 128
 
 int run_command_run(const char *requested_profile,
                     char *const *forwarded, int forwarded_count) {
@@ -34,8 +38,16 @@ int run_command_run(const char *requested_profile,
     free(argv);
 
     if (status < 0) {
-        fprintf(stderr, "molto: failed to run '%s'\n", binary);
+        /* The program could not be started at all (should not happen after a
+           successful build, but report it honestly if it does). */
+        fprintf(stderr, "molto: failed to start '%s'\n", binary);
         return exit_build_failure;
+    }
+    if (status > SIGNAL_EXIT_BASE) {
+        /* The program started but was killed by a signal (e.g. a crash). */
+        int signal_number = status - SIGNAL_EXIT_BASE;
+        fprintf(stderr, "molto: '%s' terminated by signal %d (%s)\n",
+                binary, signal_number, strsignal(signal_number));
     }
     return status;
 }

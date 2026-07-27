@@ -4,6 +4,7 @@
 #include <molto/commands/run_command.h>
 #include <molto/services/fs_service.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -35,6 +36,16 @@ void suite_run_command(void) {
     /* Forwarded arguments reach the program (argc - 1 == 2). */
     char *forwarded[] = { "alpha", "beta" };
     CHECK(run_command_run(NULL, forwarded, 2) == 2);
+
+    /* A program that dies from a signal is reported as 128 + signal, not as a
+       "failed to start" error. The sleep(1) ensures the rewritten source is
+       newer than the previous object so it actually recompiles. */
+    sleep(1);
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    CHECK(fs_write_file(path,
+        "#include <signal.h>\n"
+        "int main(void) { raise(SIGTERM); return 0; }\n"));
+    CHECK(run_command_run(NULL, NULL, 0) == 128 + SIGTERM);
 
     CHECK(chdir(previous) == 0);
 
