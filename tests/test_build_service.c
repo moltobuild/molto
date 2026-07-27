@@ -8,6 +8,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static long mtime_of(const char *path) {
+    struct stat info;
+    if (stat(path, &info) != 0)
+        return -1;
+    return (long)info.st_mtime;
+}
 
 void suite_build_service(void) {
     char root[] = "/tmp/molto_build_XXXXXX";
@@ -34,9 +43,22 @@ void suite_build_service(void) {
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     CHECK(fs_path_exists(binary));
+    long linked_at = mtime_of(binary);
 
-    /* Second build is incremental and still succeeds. */
+    /* A no-op rebuild in a later second must NOT re-link (binary untouched). */
+    sleep(1);
     CHECK(build_project(root, profile_debug) == exit_ok);
+    CHECK(mtime_of(binary) == linked_at);
+
+    /* Changing a source triggers recompilation and a re-link. */
+    sleep(1);
+    char main_path[512];
+    snprintf(main_path, sizeof main_path, "%s/src/main.c", root);
+    CHECK(fs_write_file(main_path,
+        "#include <stdio.h>\n"
+        "int main(void) { printf(\"hi again\\n\"); return 0; }\n"));
+    CHECK(build_project(root, profile_debug) == exit_ok);
+    CHECK(mtime_of(binary) > linked_at);
 
     /* The produced binary runs successfully. */
     char cmd[600];

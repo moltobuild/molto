@@ -108,10 +108,12 @@ static int load_manifest(const char *root, build_profile profile,
     return exit_ok;
 }
 
-/* Compile every source, accumulating object paths and whether C++ is present. */
+/* Compile every source, accumulating object paths, whether C++ is present,
+   and whether any translation unit was actually recompiled this run. */
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
-                           const str_list *sources, str_list *objects, bool *any_cpp) {
+                           const str_list *sources, str_list *objects,
+                           bool *any_cpp, bool *any_compiled) {
     for (size_t i = 0; i < str_list_count(sources); i++) {
         const char *source = str_list_get(sources, i);
         if (source_is_cpp(source))
@@ -124,13 +126,25 @@ static int compile_sources(const char *root, build_profile profile,
         }
         if (!str_list_push(objects, object))
             return exit_build_failure;
-        if (fs_source_newer(source, object)
-            && !compile_one(source, object, settings, include_flag)) {
-            fprintf(stderr, "molto: failed to compile '%s'\n", source);
-            return exit_build_failure;
+        if (fs_source_newer(source, object)) {
+            if (!compile_one(source, object, settings, include_flag)) {
+                fprintf(stderr, "molto: failed to compile '%s'\n", source);
+                return exit_build_failure;
+            }
+            *any_compiled = true;
         }
     }
     return exit_ok;
+}
+
+/* Return true if the executable must be re-linked: it is missing or older
+   than at least one object file. */
+static bool link_needed(const str_list *objects, const char *binary) {
+    for (size_t i = 0; i < str_list_count(objects); i++) {
+        if (fs_source_newer(str_list_get(objects, i), binary))
+            return true;
+    }
+    return false;
 }
 
 int build_project(const char *root, build_profile profile) {
@@ -161,13 +175,16 @@ int build_project(const char *root, build_profile profile) {
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
+    bool any_compiled = false;
     result = compile_sources(root, profile, &settings, include_flag,
-                             &sources, &objects, &any_cpp);
+                             &sources, &objects, &any_cpp, &any_compiled);
 
     if (result == exit_ok) {
         char binary[4096];
         compose_binary_path(root, profile, name, binary, sizeof binary);
-        if (!link_all(any_cpp, &objects, binary)) {
+        /* Re-link only when something was rebuilt or the binary is stale. */
+        if ((any_compiled || link_needed(&objects, binary))
+            && !link_all(any_cpp, &objects, binary)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
