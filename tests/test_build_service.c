@@ -33,10 +33,16 @@ void suite_build_service(void) {
         "[profile.debug]\n"
         "opt_level = 0\n"
         "debug_info = true\n"));
+    /* Two translation units so the build fans out onto the task pool. */
+    snprintf(path, sizeof path, "%s/src/util.h", root);
+    CHECK(fs_write_file(path, "int answer(void);\n"));
+    snprintf(path, sizeof path, "%s/src/util.c", root);
+    CHECK(fs_write_file(path, "int answer(void) { return 0; }\n"));
     snprintf(path, sizeof path, "%s/src/main.c", root);
     CHECK(fs_write_file(path,
         "#include <stdio.h>\n"
-        "int main(void) { printf(\"hi\\n\"); return 0; }\n"));
+        "#include \"util.h\"\n"
+        "int main(void) { printf(\"hi\\n\"); return answer(); }\n"));
 
     /* First build compiles and links. */
     CHECK(build_project(root, profile_debug) == exit_ok);

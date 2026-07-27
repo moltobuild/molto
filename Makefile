@@ -10,7 +10,7 @@ ifeq ($(origin CC),default)
 endif
 
 STD    ?= c2x
-CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -Iinclude
+CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -pthread -Iinclude
 LDFLAGS ?=
 
 BUILD_DIR := build

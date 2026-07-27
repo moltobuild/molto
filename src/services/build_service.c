@@ -7,7 +7,9 @@
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/util/str_list.h>
+#include <molto/util/task_pool.h>
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,13 +110,40 @@ static int load_manifest(const char *root, build_profile profile,
     return exit_ok;
 }
 
-/* Compile every source, accumulating object paths, whether C++ is present,
-   and whether any translation unit was actually recompiled this run. */
+/* One parallel compilation task: compile `source` into `object`, recording a
+   shared failure flag. Runs on a task_pool worker. */
+typedef struct {
+    const char *source;
+    const char *object;
+    const manifest_profile *settings;
+    const char *include_flag;
+    atomic_bool *failed;
+} compile_task;
+
+static void compile_task_run(void *arg) {
+    compile_task *task = arg;
+    if (!compile_one(task->source, task->object, task->settings, task->include_flag)) {
+        fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
+        atomic_store(task->failed, true);
+    }
+}
+
+/* Compile every source. Phase 1 (sequential) resolves object paths and marks
+   which units are stale; phase 2 compiles the stale ones in parallel on a
+   work-stealing pool. Reports whether C++ is present and whether anything was
+   actually recompiled. */
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
                            const str_list *sources, str_list *objects,
                            bool *any_cpp, bool *any_compiled) {
-    for (size_t i = 0; i < str_list_count(sources); i++) {
+    size_t count = str_list_count(sources);
+    bool *needs = calloc(count, sizeof(bool));
+    if (needs == NULL)
+        return exit_build_failure;
+
+    /* Phase 1: resolve object paths and decide what to rebuild. Finishing all
+       str_list_push here keeps the object pointers stable for phase 2. */
+    for (size_t i = 0; i < count; i++) {
         const char *source = str_list_get(sources, i);
         if (source_is_cpp(source))
             *any_cpp = true;
@@ -122,19 +151,61 @@ static int compile_sources(const char *root, build_profile profile,
         object_path_for(root, profile_name(profile), source, object, sizeof object);
         if (!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
+            free(needs);
             return exit_build_failure;
         }
-        if (!str_list_push(objects, object))
+        if (!str_list_push(objects, object)) {
+            free(needs);
             return exit_build_failure;
-        if (fs_source_newer(source, object)) {
-            if (!compile_one(source, object, settings, include_flag)) {
-                fprintf(stderr, "molto: failed to compile '%s'\n", source);
-                return exit_build_failure;
-            }
-            *any_compiled = true;
         }
+        needs[i] = fs_source_newer(source, object);
     }
-    return exit_ok;
+
+    size_t to_build = 0;
+    for (size_t i = 0; i < count; i++)
+        to_build += needs[i] ? 1 : 0;
+    if (to_build == 0) {
+        *any_compiled = false;
+        free(needs);
+        return exit_ok;
+    }
+
+    /* Phase 2: compile the stale units concurrently. */
+    compile_task *tasks = calloc(to_build, sizeof(compile_task));
+    task_pool *pool = task_pool_create(0);
+    if (tasks == NULL || pool == NULL) {
+        free(tasks);
+        task_pool_destroy(pool);
+        free(needs);
+        return exit_build_failure;
+    }
+
+    atomic_bool failed = false;
+    int result = exit_ok;
+    size_t next = 0;
+    for (size_t i = 0; i < count && result == exit_ok; i++) {
+        if (!needs[i])
+            continue;
+        tasks[next] = (compile_task){
+            .source = str_list_get(sources, i),
+            .object = str_list_get(objects, i),
+            .settings = settings,
+            .include_flag = include_flag,
+            .failed = &failed,
+        };
+        if (!task_pool_submit(pool, compile_task_run, &tasks[next]))
+            result = exit_build_failure;
+        next++;
+    }
+    task_pool_wait(pool);
+    task_pool_destroy(pool);
+
+    if (result == exit_ok && atomic_load(&failed))
+        result = exit_build_failure;
+    *any_compiled = true;
+    free(tasks);
+    free(needs);
+    return result;
 }
 
 /* Return true if the executable must be re-linked: it is missing or older
