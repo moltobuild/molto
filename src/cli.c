@@ -3,6 +3,7 @@
 #include <molto/commands/build_command.h>
 #include <molto/commands/init_command.h>
 #include <molto/commands/new_command.h>
+#include <molto/commands/run_command.h>
 #include <molto/exit_code.h>
 
 #include <stdbool.h>
@@ -71,9 +72,22 @@ cli_invocation cli_parse(int argc, char **argv) {
 
 const char *cli_option_value(int argc, char **argv, const char *name) {
     for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--") == 0)
+            return NULL;
         if (strcmp(argv[i], name) == 0)
             return argv[i + 1];
     }
+    return NULL;
+}
+
+char **cli_forwarded_args(int argc, char **argv, int *out_count) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--") == 0) {
+            *out_count = argc - (i + 1);
+            return &argv[i + 1];
+        }
+    }
+    *out_count = 0;
     return NULL;
 }
 
@@ -125,7 +139,12 @@ int cli_run(int argc, char **argv) {
             return init_command_run();
         case cli_cmd_build:
             return build_command_run(cli_option_value(argc, argv, "--profile"));
-        case cli_cmd_run:
+        case cli_cmd_run: {
+            int forwarded_count = 0;
+            char **forwarded = cli_forwarded_args(argc, argv, &forwarded_count);
+            return run_command_run(cli_option_value(argc, argv, "--profile"),
+                                   forwarded, forwarded_count);
+        }
         case cli_cmd_test:
         case cli_cmd_bench:
         case cli_cmd_lint:

@@ -9,5 +9,6 @@ void suite_profile(void);
 void suite_source_discovery(void);
 void suite_process_service(void);
 void suite_build_service(void);
+void suite_run_command(void);
 
 #endif /* MOLTO_TESTS_H */

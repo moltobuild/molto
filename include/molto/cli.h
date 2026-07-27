@@ -35,8 +35,13 @@ typedef struct {
 [[nodiscard]] int cli_run(int argc, char **argv);
 
 /* Return the value following the option `name` in argv (e.g. "--profile"),
-   or NULL if the option is absent or has no value. */
+   or NULL if the option is absent or has no value. Scanning stops at "--". */
 [[nodiscard]] const char *cli_option_value(int argc, char **argv, const char *name);
+
+/* Return a pointer into argv to the first argument after a bare "--", writing
+   the number of such arguments into `*out_count`. Returns NULL (and 0) when
+   there is no "--" separator. */
+[[nodiscard]] char **cli_forwarded_args(int argc, char **argv, int *out_count);
 
 /* Molto version string. */
 [[nodiscard]] const char *cli_version(void);

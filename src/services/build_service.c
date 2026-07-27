@@ -12,6 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Compose the output executable path for a package. Single source of truth
+   for the binary location, shared by build_project and build_binary_path. */
+static void compose_binary_path(const char *root, build_profile profile,
+                                const char *name, char *out, size_t out_size) {
+    snprintf(out, out_size, "%s/build/%s/%s", root, profile_name(profile), name);
+}
+
 /* Map a source path to its object path, mirroring the source tree under
    `root/build/<profile_dir>/obj`. */
 static void object_path_for(const char *root, const char *profile_dir,
@@ -159,7 +166,7 @@ int build_project(const char *root, build_profile profile) {
 
     if (result == exit_ok) {
         char binary[4096];
-        snprintf(binary, sizeof binary, "%s/build/%s/%s", root, profile_name(profile), name);
+        compose_binary_path(root, profile, name, binary, sizeof binary);
         if (!link_all(any_cpp, &objects, binary)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
@@ -169,4 +176,20 @@ int build_project(const char *root, build_profile profile) {
     str_list_free(&sources);
     str_list_free(&objects);
     return result;
+}
+
+bool build_binary_path(const char *root, build_profile profile,
+                       char *out, size_t out_size) {
+    char manifest_path[4096];
+    snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
+    char *toml = fs_read_file(manifest_path);
+    if (toml == NULL)
+        return false;
+    char name[128];
+    bool ok = manifest_read_name(toml, name, sizeof name);
+    free(toml);
+    if (!ok)
+        return false;
+    compose_binary_path(root, profile, name, out, out_size);
+    return true;
 }

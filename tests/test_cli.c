@@ -40,4 +40,26 @@ void suite_cli(void) {
 
     char *argv_dangling[] = { "molto", "build", "--profile" };
     CHECK(cli_option_value(3, argv_dangling, "--profile") == NULL);
+
+    /* cli_option_value stops at "--": flags after it belong to the program. */
+    char *argv_after_sep[] = { "molto", "run", "--", "--profile", "release" };
+    CHECK(cli_option_value(5, argv_after_sep, "--profile") == NULL);
+
+    /* Forwarded arguments after "--". */
+    int forwarded_count = -1;
+    char **forwarded = cli_forwarded_args(5, argv_after_sep, &forwarded_count);
+    CHECK(forwarded_count == 2);
+    CHECK(forwarded != NULL && strcmp(forwarded[0], "--profile") == 0);
+    CHECK(strcmp(forwarded[1], "release") == 0);
+
+    char *argv_no_sep[] = { "molto", "run" };
+    forwarded_count = -1;
+    CHECK(cli_forwarded_args(2, argv_no_sep, &forwarded_count) == NULL);
+    CHECK(forwarded_count == 0);
+
+    char *argv_trailing_sep[] = { "molto", "run", "--" };
+    forwarded_count = -1;
+    forwarded = cli_forwarded_args(3, argv_trailing_sep, &forwarded_count);
+    CHECK(forwarded_count == 0);
+    CHECK(forwarded == &argv_trailing_sep[3]); /* points past the end, count 0 */
 }
