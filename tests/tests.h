@@ -11,6 +11,7 @@ void suite_source_discovery(void);
 void suite_process_service(void);
 void suite_build_service(void);
 void suite_run_command(void);
+void suite_test_command(void);
 void suite_task_pool(void);
 void suite_toml(void);
 void suite_project_ctx(void);

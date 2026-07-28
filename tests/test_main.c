@@ -18,6 +18,7 @@ int main(void) {
     RUN_SUITE(suite_cli);
     RUN_SUITE(suite_build_service);
     RUN_SUITE(suite_run_command);
+    RUN_SUITE(suite_test_command);
     printf("\n%d checks, %d failed\n", tests_run, tests_failed);
     return tests_failed == 0 ? 0 : 1;
 }

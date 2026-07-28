@@ -34,6 +34,7 @@
 #define DIR_BUILD         "build" /* output root, e.g. build/<profile>/ */
 #define DIR_OBJ           "obj"   /* compiled objects under the build root */
 #define DIR_SRC           "src"   /* where sources are discovered */
+#define DIR_TESTS         "tests" /* where test sources are discovered */
 #define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
 #define DEPFILE_SUFFIX    ".d"    /* appended to an object path for its depfile */
 
@@ -298,13 +299,16 @@ static bool link_needed(const str_list *objects, const char *binary) {
     return false;
 }
 
-int build_project(const char *root, build_profile profile,
-                  char *out_binary, size_t out_binary_size) {
-    project_ctx ctx;
-    int result = load_project(root, &ctx);
+/* Load the manifest and compile every source under `root/src` into `objects`
+   (caller-initialised, caller-freed). Reports whether C++ is present and whether
+   anything was recompiled. Shared by build_project and build_tests. */
+static int compile_project(const char *root, build_profile profile,
+                           project_ctx *ctx_out, str_list *objects_out,
+                           bool *any_cpp_out, bool *any_compiled_out) {
+    int result = load_project(root, ctx_out);
     if (result != exit_ok)
         return result;
-    manifest_profile settings = profile_settings(&ctx, profile);
+    manifest_profile settings = profile_settings(ctx_out, profile);
 
     char src_dir[PATH_BUFFER_SIZE];
     snprintf(src_dir, sizeof src_dir, "%s/" DIR_SRC, root);
@@ -325,27 +329,164 @@ int build_project(const char *root, build_profile profile,
     char include_flag[PATH_BUFFER_SIZE + 4];
     snprintf(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir);
 
+    *any_cpp_out = false;
+    *any_compiled_out = false;
+    result = compile_sources(root, profile, &settings, include_flag,
+                             &sources, objects_out, any_cpp_out, any_compiled_out);
+    str_list_free(&sources);
+    return result;
+}
+
+int build_project(const char *root, build_profile profile,
+                  char *out_binary, size_t out_binary_size) {
+    project_ctx ctx;
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    result = compile_sources(root, profile, &settings, include_flag,
-                             &sources, &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, &ctx, &objects, &any_cpp, &any_compiled);
 
-    char binary[PATH_BUFFER_SIZE];
-    compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
     if (result == exit_ok) {
+        char binary[PATH_BUFFER_SIZE];
+        compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
         /* Re-link only when something was rebuilt or the binary is stale. */
         if ((any_compiled || link_needed(&objects, binary))
             && !link_all(any_cpp, &objects, binary)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
+        if (result == exit_ok && out_binary != NULL)
+            snprintf(out_binary, out_binary_size, "%s", binary);
     }
-    if (result == exit_ok && out_binary != NULL)
-        snprintf(out_binary, out_binary_size, "%s", binary);
 
-    str_list_free(&sources);
+    str_list_free(&objects);
+    return result;
+}
+
+/* Portion of `path` relative to `root` (drops a leading "root/"), or `path`
+   unchanged if it is not under root. */
+static const char *relative_to_root(const char *root, const char *path) {
+    size_t root_len = strlen(root);
+    if (strncmp(path, root, root_len) == 0 && path[root_len] == '/')
+        return path + root_len + 1;
+    return path;
+}
+
+/* Output path of a test executable: build/<profile>/tests/<name>, mirroring the
+   test source's path under tests/ with its extension stripped. */
+static void test_binary_path(const char *root, const char *profile_dir,
+                             const char *test_source, char *out, size_t out_size) {
+    char stem[PATH_BUFFER_SIZE];
+    snprintf(stem, sizeof stem, "%s", relative_to_root(root, test_source));
+    char *dot = strrchr(stem, '.');
+    char *slash = strrchr(stem, '/');
+    if (dot != NULL && (slash == NULL || dot > slash))
+        *dot = '\0';
+    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem);
+}
+
+int build_tests(const char *root, build_profile profile, str_list *test_binaries_out) {
+    project_ctx ctx;
+    str_list objects;
+    str_list_init(&objects);
+    bool any_cpp = false;
+    bool any_compiled = false;
+    int result = compile_project(root, profile, &ctx, &objects, &any_cpp, &any_compiled);
+    if (result != exit_ok) {
+        str_list_free(&objects);
+        return result;
+    }
+
+    manifest_profile settings = profile_settings(&ctx, profile);
+    const char *profile_dir = profile_name(profile);
+
+    /* Object of src/main.c (the app entry point), if any, to exclude from test
+       links: each test brings its own main(). */
+    char main_source[PATH_BUFFER_SIZE];
+    snprintf(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root);
+    char main_object[PATH_BUFFER_SIZE];
+    object_path_for(root, profile_dir, main_source, main_object, sizeof main_object);
+    bool has_main = fs_path_exists(main_source);
+
+    /* Library objects = every src object except the app's main object. */
+    str_list lib_objects;
+    str_list_init(&lib_objects);
+    for (size_t i = 0; i < str_list_count(&objects) && result == exit_ok; i++) {
+        const char *object = str_list_get(&objects, i);
+        if (has_main && strcmp(object, main_object) == 0)
+            continue;
+        if (!str_list_push(&lib_objects, object))
+            result = exit_build_failure;
+    }
+
+    char src_dir[PATH_BUFFER_SIZE];
+    snprintf(src_dir, sizeof src_dir, "%s/" DIR_SRC, root);
+    char include_flag[PATH_BUFFER_SIZE + 4];
+    snprintf(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir);
+
+    char tests_dir[PATH_BUFFER_SIZE];
+    snprintf(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root);
+    str_list test_sources;
+    str_list_init(&test_sources);
+    /* No tests/ directory (or empty) is not an error: nothing to build. */
+    if (result == exit_ok && fs_is_dir(tests_dir))
+        (void)source_discovery_collect(tests_dir, &test_sources);
+
+    for (size_t i = 0; i < str_list_count(&test_sources) && result == exit_ok; i++) {
+        const char *test_source = str_list_get(&test_sources, i);
+
+        char test_object[PATH_BUFFER_SIZE];
+        object_path_for(root, profile_dir, test_source, test_object, sizeof test_object);
+        if (!make_parent_dirs(test_object)) {
+            result = exit_build_failure;
+            break;
+        }
+        bool recompiled = false;
+        if (needs_rebuild(test_source, test_object)) {
+            if (!compile_one(test_source, test_object, &settings, include_flag)) {
+                fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
+                result = exit_build_failure;
+                break;
+            }
+            recompiled = true;
+        }
+
+        char test_binary[PATH_BUFFER_SIZE];
+        test_binary_path(root, profile_dir, test_source, test_binary, sizeof test_binary);
+        if (!make_parent_dirs(test_binary)) {
+            result = exit_build_failure;
+            break;
+        }
+
+        /* Link the test object together with the project's library objects. */
+        str_list link_objects;
+        str_list_init(&link_objects);
+        bool pushed = str_list_push(&link_objects, test_object);
+        for (size_t j = 0; pushed && j < str_list_count(&lib_objects); j++)
+            pushed = str_list_push(&link_objects, str_list_get(&lib_objects, j));
+        if (!pushed) {
+            str_list_free(&link_objects);
+            result = exit_build_failure;
+            break;
+        }
+        bool cpp = any_cpp || source_is_cpp(test_source);
+        if ((recompiled || any_compiled || link_needed(&link_objects, test_binary))
+            && !link_all(cpp, &link_objects, test_binary)) {
+            fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
+            result = exit_build_failure;
+        }
+        str_list_free(&link_objects);
+        if (result != exit_ok)
+            break;
+
+        if (!str_list_push(test_binaries_out, test_binary)) {
+            result = exit_build_failure;
+            break;
+        }
+    }
+
+    str_list_free(&test_sources);
+    str_list_free(&lib_objects);
     str_list_free(&objects);
     return result;
 }

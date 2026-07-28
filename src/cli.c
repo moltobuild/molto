@@ -4,6 +4,7 @@
 #include <molto/commands/init_command.h>
 #include <molto/commands/new_command.h>
 #include <molto/commands/run_command.h>
+#include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
 
 #include <stdbool.h>
@@ -146,6 +147,7 @@ int cli_run(int argc, char **argv) {
                                    forwarded, forwarded_count);
         }
         case cli_cmd_test:
+            return test_command_run(cli_option_value(argc, argv, "--profile"));
         case cli_cmd_bench:
         case cli_cmd_lint:
         case cli_cmd_add:
