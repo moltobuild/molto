@@ -108,4 +108,42 @@ void suite_build_service(void) {
     CHECK(build_project(lib_root, profile_debug, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
     (void)system(cmd);
+
+    /* Changing a profile setting recompiles even when the source is unchanged
+       (command fingerprint). */
+    char fp_root[] = "/tmp/molto_fp_XXXXXX";
+    CHECK(mkdtemp(fp_root) != NULL);
+    snprintf(path, sizeof path, "%s/src", fp_root);
+    CHECK(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src/main.c", fp_root);
+    CHECK(fs_write_file(path, "int main(void) { return 0; }\n"));
+    snprintf(path, sizeof path, "%s/Project.toml", fp_root);
+    CHECK(fs_write_file(path,
+        "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 0\ndebug_info = true\n"));
+    CHECK(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);
+    char fp_obj[512];
+    snprintf(fp_obj, sizeof fp_obj, "%s/build/debug/obj/src/main.c.o", fp_root);
+    long compiled_at = mtime_of(fp_obj);
+    sleep(1);
+    CHECK(fs_write_file(path,
+        "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
+    CHECK(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);
+    CHECK(mtime_of(fp_obj) > compiled_at); /* recompiled due to changed opt_level */
+    snprintf(cmd, sizeof cmd, "rm -rf %s", fp_root);
+    (void)system(cmd);
+
+    /* [target].defines reach the compiler: main uses ANSWER, so it only
+       compiles when -DANSWER=42 is passed. */
+    char def_root[] = "/tmp/molto_def_XXXXXX";
+    CHECK(mkdtemp(def_root) != NULL);
+    snprintf(path, sizeof path, "%s/src", def_root);
+    CHECK(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", def_root);
+    CHECK(fs_write_file(path,
+        "[package]\nname = \"def\"\n[target]\ndefines = [\"ANSWER=42\"]\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", def_root);
+    CHECK(fs_write_file(path, "int main(void) { return ANSWER - 42; }\n"));
+    CHECK(build_project(def_root, profile_debug, NULL, 0) == exit_ok);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
+    (void)system(cmd);
 }

@@ -42,6 +42,30 @@ static bool valid_compiler(const char *name) {
         || strcmp(name, "msvc") == 0;
 }
 
+/* Copy a string array from `doc[section][key]` into a fixed-size destination,
+   capping at PROJECT_MAX_OPTS entries. */
+static void read_option_array(const toml_document *doc, const char *section,
+                              const char *key,
+                              char dest[PROJECT_MAX_OPTS][PROJECT_OPT_LEN],
+                              size_t *count) {
+    str_list values;
+    str_list_init(&values);
+    if (toml_get_array(doc, section, key, &values)) {
+        size_t total = str_list_count(&values);
+        for (size_t i = 0; i < total && *count < PROJECT_MAX_OPTS; i++)
+            snprintf(dest[(*count)++], PROJECT_OPT_LEN, "%s", str_list_get(&values, i));
+    }
+    str_list_free(&values);
+}
+
+/* Read defines/include/flags of a section into `out`. */
+static void read_options(const toml_document *doc, const char *section,
+                         project_options *out) {
+    read_option_array(doc, section, "defines", out->defines, &out->define_count);
+    read_option_array(doc, section, "include", out->include, &out->include_count);
+    read_option_array(doc, section, "flags", out->flags, &out->flag_count);
+}
+
 bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
     seed_defaults(out);
 
@@ -99,6 +123,13 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
                      PROJECT_LINK_NAME_MAX, "%s", str_list_get(&libs, i));
     }
     str_list_free(&libs);
+
+    /* Base compilation options ([target]) and per-profile additions. */
+    read_options(doc, "target", &out->target.options);
+    read_options(doc, "profile.debug", &out->profile_options.debug);
+    read_options(doc, "profile.release", &out->profile_options.release);
+    read_options(doc, "profile.bench", &out->profile_options.bench);
+    read_options(doc, "profile.custom", &out->profile_options.custom);
 
     toml_free(doc);
 

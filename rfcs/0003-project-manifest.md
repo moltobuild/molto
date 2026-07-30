@@ -34,10 +34,13 @@ version  = "0.1.0"
 artifact = "static"        # source | static | shared, default: static
 
 [target]
-compiler = "gcc"           # gcc | g++ | clang | llvm | msvc
-std      = "c23"           # C standard passed as -std=
-cpp_std  = "c++20"         # C++ standard for C++ translation units
+compiler = "gcc"            # gcc | g++ | clang | llvm | msvc
+std      = "c23"            # C standard passed as -std=
+cpp_std  = "c++20"          # C++ standard for C++ translation units
 link     = ["m", "pthread"] # system libraries: -lm -lpthread
+defines  = ["NDEBUG"]       # -DNDEBUG (base for all profiles)
+include  = ["vendor/include"] # -Ivendor/include
+flags    = ["-fno-omit-frame-pointer"] # raw, verbatim
 
 [env]
 MOLTO_LOG = "debug"        # injected into compilation and execution
@@ -63,6 +66,7 @@ debug_info = true
 [profile.release]
 opt_level  = 3
 debug_info = false
+flags      = ["-flto"]      # added on top of [target] for release only
 
 [profile.bench]
 opt_level  = 3
@@ -95,14 +99,22 @@ orchestrates the toolchain, it does not replace it.
 | `std`      | string        | no       | C standard, e.g. `"c23"`, `"c17"`, `"c11"`; translated to `-std=`. Absent → compiler default.        |
 | `cpp_std`  | string        | no       | C++ standard for C++ translation units, e.g. `"c++20"`.                                              |
 | `link`     | array[string] | no       | System libraries to link, e.g. `["m", "pthread"]` → `-lm -lpthread`.                                 |
+| `defines`  | array[string] | no       | Preprocessor defines, e.g. `["FOO=1", "NDEBUG"]` → `-DFOO=1 -DNDEBUG`.                                |
+| `include`  | array[string] | no       | Extra include directories, e.g. `["vendor/include"]` → `-Ivendor/include`.                           |
+| `flags`    | array[string] | no       | Raw, compiler-specific flags passed verbatim, e.g. `["-fno-omit-frame-pointer"]` (escape hatch).     |
+
+`defines` and `include` are portable (Molto emits the right form per compiler);
+`flags` is a raw escape hatch. These keys in `[target]` are the **base** applied
+to every profile; a `[profile.*]` may declare the same keys, which are **added
+on top** for that profile (see below).
 
 Molto selects the correct C vs C++ driver per source file: for `compiler = "gcc"`
 it compiles `.c` with `gcc` and `.cpp`/`.cc` with `g++`; likewise `clang`/`clang++`
 for LLVM. Toolchain availability follows the roadmap (`spec.md` section 19): GCC
 on Linux in v0.1, Clang in v0.2, MSVC afterwards.
 
-The keys `flags`, `defines`, `include` and a cross-compilation `triple` are
-**reserved** for a future revision.
+A cross-compilation `triple` (and per-OS override tables such as
+`[target.linux]`) are **reserved** for a future revision.
 
 ## `[env]`
 
@@ -116,14 +128,20 @@ One table per build profile: `debug`, `release`, `bench`, or the user-defined
 `custom` name (`spec.md` section 13). `release` enables compiler optimizations
 by default.
 
-| Key          | Type    | Description                    |
-|--------------|---------|--------------------------------|
-| `opt_level`  | integer | Compiler optimization level    |
-| `debug_info` | bool    | Whether to emit debug symbols  |
+| Key          | Type          | Description                                             |
+|--------------|---------------|---------------------------------------------------------|
+| `opt_level`  | integer       | Compiler optimization level                             |
+| `debug_info` | bool          | Whether to emit debug symbols                           |
+| `defines`    | array[string] | Extra defines for this profile, added to `[target]`     |
+| `include`    | array[string] | Extra include directories for this profile              |
+| `flags`      | array[string] | Extra raw flags for this profile                        |
 
-Unrecognized keys are passed through to the active compiler backend unchanged,
-preserving compiler-agnosticism. The keys `lto`, `strip`, `sanitizers` and
-`warnings_as_errors` are **reserved** for a future revision.
+A profile's `defines`/`include`/`flags` are **added on top** of the `[target]`
+base for that profile (e.g. `-flto` only in `release`). Changing any compile
+setting (opt level, std, defines, flags, …) triggers recompilation: Molto
+records the exact command per object and rebuilds when it changes. The keys
+`lto`, `strip`, `sanitizers` and `warnings_as_errors` are **reserved** for a
+future revision.
 
 ## `[registries]`
 

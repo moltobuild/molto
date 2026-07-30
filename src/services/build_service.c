@@ -31,8 +31,10 @@
 #define ARG_DEPFILE_OUT   "-MF"  /* next argument is the dependency file path */
 #define OPT_FLAG_FORMAT   "-O%d" /* optimisation level, e.g. -O2 */
 #define STD_FLAG_FORMAT   "-std=%s" /* language standard, e.g. -std=c23 */
-#define LINK_FLAG_FORMAT  "-l%s"  /* link a system library, e.g. -lm */
 #define INCLUDE_FLAG_FORMAT "-I%s" /* add an include search directory */
+#define DEFINE_FLAG_PREFIX  "-D"  /* prepended to a preprocessor define */
+#define INCLUDE_FLAG_PREFIX "-I"  /* prepended to an include directory */
+#define LINK_FLAG_PREFIX    "-l"  /* prepended to a system library name */
 
 /* On-disk layout of a Molto project. */
 #define MANIFEST_FILENAME "Project.toml"
@@ -42,6 +44,7 @@
 #define DIR_TESTS         "tests" /* where test sources are discovered */
 #define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
 #define DEPFILE_SUFFIX    ".d"    /* appended to an object path for its depfile */
+#define COMMAND_SUFFIX    ".cmd"  /* fingerprint of the command that built an artifact */
 
 /* Size of the stack buffers used to compose filesystem paths. */
 #define PATH_BUFFER_SIZE 4096
@@ -49,14 +52,6 @@
 /* Size of the buffer receiving a manifest parse-error message. */
 #define MANIFEST_ERROR_SIZE 256
 
-/* Fixed slots in a compile command's argv:
- *   compiler, -c, source, -o, object, -O<n>, [-g], [-std=..], -MMD, -MF,
- *   depfile, include, NULL
- * The optional -g and -std mean the count varies, so we size for the maximum. */
-#define COMPILE_ARGV_MAX 13
-/* Extra argv slots around the object list when linking: linker, -o, binary,
- * NULL (system libraries are counted separately). */
-#define LINK_ARGV_EXTRA 4
 /* Size of the small buffer holding the "-O<n>" flag. */
 #define OPT_FLAG_SIZE 16
 /* Size of the buffer holding the "-std=<name>" flag. */
@@ -76,6 +71,18 @@ static manifest_profile profile_settings(const project_ctx *ctx, build_profile p
         case profile_custom:  return ctx->profile.custom;
         case profile_debug:
         default:              return ctx->profile.debug;
+    }
+}
+
+/* Select the per-profile extra options for `profile`. */
+static const project_options *profile_options_for(const project_ctx *ctx,
+                                                  build_profile profile) {
+    switch (profile) {
+        case profile_release: return &ctx->profile_options.release;
+        case profile_bench:   return &ctx->profile_options.bench;
+        case profile_custom:  return &ctx->profile_options.custom;
+        case profile_debug:
+        default:              return &ctx->profile_options.debug;
     }
 }
 
@@ -125,11 +132,66 @@ static bool make_parent_dirs(const char *path) {
     return fs_make_dirs(directory);
 }
 
-/* Compile a single translation unit to `object`, using the toolchain and
-   language standard from `target`. */
-static bool compile_one(const char *source, const char *object,
-                        const manifest_profile *settings, const char *include_flag,
-                        const project_target *target) {
+/* Path of the command-fingerprint sidecar for an artifact: "<artifact>.cmd". */
+static void command_path_for(const char *artifact, char *out, size_t out_size) {
+    snprintf(out, out_size, "%s" COMMAND_SUFFIX, artifact);
+}
+
+/* Push "<prefix><value>" (e.g. "-DFOO=1") onto argv. */
+static bool push_prefixed(str_list *argv, const char *prefix, const char *value) {
+    char buffer[PROJECT_OPT_LEN + 4];
+    snprintf(buffer, sizeof buffer, "%s%s", prefix, value);
+    return str_list_push(argv, buffer);
+}
+
+/* Append a scope's defines (-D), include dirs (-I) and raw flags to argv. */
+static bool push_options(str_list *argv, const project_options *options) {
+    bool ok = true;
+    for (size_t i = 0; ok && i < options->define_count; i++)
+        ok = push_prefixed(argv, DEFINE_FLAG_PREFIX, options->defines[i]);
+    for (size_t i = 0; ok && i < options->include_count; i++)
+        ok = push_prefixed(argv, INCLUDE_FLAG_PREFIX, options->include[i]);
+    for (size_t i = 0; ok && i < options->flag_count; i++)
+        ok = str_list_push(argv, options->flags[i]);
+    return ok;
+}
+
+/* Join argv items into one space-separated heap string (caller frees). */
+static char *join_args(const str_list *argv) {
+    size_t total = 1;
+    for (size_t i = 0; i < str_list_count(argv); i++)
+        total += strlen(str_list_get(argv, i)) + 1;
+    char *out = malloc(total);
+    if (out == NULL)
+        return NULL;
+    size_t pos = 0;
+    for (size_t i = 0; i < str_list_count(argv); i++)
+        pos += (size_t)snprintf(out + pos, total - pos, "%s%s",
+                                i > 0 ? " " : "", str_list_get(argv, i));
+    return out;
+}
+
+/* Run a command held in a str_list argv (adds the NULL terminator). */
+static int run_str_argv(const str_list *argv) {
+    size_t count = str_list_count(argv);
+    const char **cargv = malloc((count + 1) * sizeof(char *));
+    if (cargv == NULL)
+        return -1;
+    for (size_t i = 0; i < count; i++)
+        cargv[i] = str_list_get(argv, i);
+    cargv[count] = NULL;
+    int status = process_run(cargv);
+    free(cargv);
+    return status;
+}
+
+/* Build the full compile command for one source into `argv` (a str_list):
+   driver, -c, source, -o, object, -O<n>, [-g], [-std], base+profile defines/
+   includes/flags, -MMD -MF depfile, and the src include flag. */
+static bool build_compile_argv(str_list *argv, const char *source, const char *object,
+                               const manifest_profile *settings, const project_target *target,
+                               const project_options *profile_opts, const char *include_flag,
+                               const char *depfile) {
     const char *cc, *cxx;
     toolchain_drivers(target, &cc, &cxx);
     bool is_cpp = source_is_cpp(source);
@@ -137,63 +199,76 @@ static bool compile_one(const char *source, const char *object,
     char opt_flag[OPT_FLAG_SIZE];
     snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
 
+    bool ok = str_list_push(argv, is_cpp ? cxx : cc)
+           && str_list_push(argv, ARG_COMPILE)
+           && str_list_push(argv, source)
+           && str_list_push(argv, ARG_OUTPUT)
+           && str_list_push(argv, object)
+           && str_list_push(argv, opt_flag);
+    if (ok && settings->debug_info)
+        ok = str_list_push(argv, ARG_DEBUG);
     const char *std_value = is_cpp ? target->cpp_std : target->std;
-    bool has_std = std_value[0] != '\0';
-    char std_flag[STD_FLAG_SIZE];
-    if (has_std)
+    if (ok && std_value[0] != '\0') {
+        char std_flag[STD_FLAG_SIZE];
         snprintf(std_flag, sizeof std_flag, STD_FLAG_FORMAT, std_value);
-
-    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    depfile_path_for(object, depfile, sizeof depfile);
-
-    const char *argv[COMPILE_ARGV_MAX];
-    size_t i = 0;
-    argv[i++] = is_cpp ? cxx : cc;
-    argv[i++] = ARG_COMPILE;
-    argv[i++] = source;
-    argv[i++] = ARG_OUTPUT;
-    argv[i++] = object;
-    argv[i++] = opt_flag;
-    if (settings->debug_info)
-        argv[i++] = ARG_DEBUG;
-    if (has_std)
-        argv[i++] = std_flag;
-    argv[i++] = ARG_DEPFILE_GEN;   /* -MMD */
-    argv[i++] = ARG_DEPFILE_OUT;   /* -MF  */
-    argv[i++] = depfile;
-    argv[i++] = include_flag;
-    argv[i++] = NULL;
-    return process_run(argv) == 0;
+        ok = str_list_push(argv, std_flag);
+    }
+    if (ok)
+        ok = push_options(argv, &target->options);
+    if (ok)
+        ok = push_options(argv, profile_opts);
+    if (ok)
+        ok = str_list_push(argv, ARG_DEPFILE_GEN)
+          && str_list_push(argv, ARG_DEPFILE_OUT)
+          && str_list_push(argv, depfile)
+          && str_list_push(argv, include_flag);
+    return ok;
 }
 
-/* Link every object into the final executable, using the toolchain from
-   `target` and appending its system libraries (`-l<lib>`). */
-static bool link_all(bool any_cpp, const str_list *objects, const char *binary,
-                     const project_target *target) {
-    const char *cc, *cxx;
-    toolchain_drivers(target, &cc, &cxx);
-    const char *linker = any_cpp ? cxx : cc;
-    size_t count = str_list_count(objects);
-    size_t lib_count = target->link_count;
-    const char **argv = malloc((count + LINK_ARGV_EXTRA + lib_count) * sizeof(char *));
-    if (argv == NULL)
+/* Build the current compile command for a source as a heap string, for the
+   fingerprint comparison (caller frees). NULL on allocation failure. */
+static char *compile_command_string(const char *source, const char *object,
+                                     const manifest_profile *settings,
+                                     const project_target *target,
+                                     const project_options *profile_opts,
+                                     const char *include_flag) {
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    depfile_path_for(object, depfile, sizeof depfile);
+    str_list argv;
+    str_list_init(&argv);
+    char *command = NULL;
+    if (build_compile_argv(&argv, source, object, settings, target,
+                           profile_opts, include_flag, depfile))
+        command = join_args(&argv);
+    str_list_free(&argv);
+    return command;
+}
+
+/* Compile a single translation unit to `object`, then record the command that
+   produced it in "<object>.cmd" for the incremental fingerprint. */
+static bool compile_one(const char *source, const char *object,
+                        const manifest_profile *settings, const project_target *target,
+                        const project_options *profile_opts, const char *include_flag) {
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    depfile_path_for(object, depfile, sizeof depfile);
+    str_list argv;
+    str_list_init(&argv);
+    if (!build_compile_argv(&argv, source, object, settings, target,
+                            profile_opts, include_flag, depfile)) {
+        str_list_free(&argv);
         return false;
-    /* -l flags need storage that outlives process_run. */
-    char lib_flags[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX + sizeof("-l")];
-    size_t i = 0;
-    argv[i++] = linker;
-    for (size_t j = 0; j < count; j++)
-        argv[i++] = str_list_get(objects, j);
-    argv[i++] = ARG_OUTPUT;
-    argv[i++] = binary;
-    /* System libraries go after the objects so the linker resolves them. */
-    for (size_t j = 0; j < lib_count; j++) {
-        snprintf(lib_flags[j], sizeof lib_flags[j], LINK_FLAG_FORMAT, target->link[j]);
-        argv[i++] = lib_flags[j];
     }
-    argv[i++] = NULL;
-    bool ok = process_run(argv) == 0;
-    free(argv);
+    bool ok = run_str_argv(&argv) == 0;
+    if (ok) {
+        char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
+        command_path_for(object, cmd_path, sizeof cmd_path);
+        char *command = join_args(&argv);
+        if (command != NULL) {
+            (void)fs_write_file(cmd_path, command);
+            free(command);
+        }
+    }
+    str_list_free(&argv);
     return ok;
 }
 
@@ -222,26 +297,39 @@ typedef struct {
     const manifest_profile *settings;
     const char *include_flag;
     const project_target *target;
+    const project_options *profile_opts;
     atomic_bool *failed;
 } compile_task;
 
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
-    if (!compile_one(task->source, task->object, task->settings,
-                     task->include_flag, task->target)) {
+    if (!compile_one(task->source, task->object, task->settings, task->target,
+                     task->profile_opts, task->include_flag)) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
     }
 }
 
-/* Decide whether `source` must be recompiled into `object`. Header-aware: if a
-   dependency file from a previous build exists, the unit is stale when the
-   source or any header it lists is newer than the object. Fail-safe: a missing
-   object, a missing/empty depfile (e.g. the first build), or a deleted
-   prerequisite all force a rebuild. */
-static bool needs_rebuild(const char *source, const char *object) {
+/* Decide whether `source` must be recompiled into `object`. Rebuilds when:
+   the object is missing; the compile command changed (fingerprint in
+   "<object>.cmd" differs from `command`, e.g. after editing flags/profile); or
+   the source or any header from the depfile is newer than the object. Fail-safe:
+   a missing fingerprint/depfile (first build) or a deleted prerequisite all
+   force a rebuild. */
+static bool needs_rebuild(const char *source, const char *object, const char *command) {
     if (!fs_path_exists(object))
         return true;
+
+    /* Command fingerprint: recompile if the build command changed. */
+    char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
+    command_path_for(object, cmd_path, sizeof cmd_path);
+    char *stored = fs_read_file(cmd_path);
+    bool command_changed = command == NULL || stored == NULL
+                        || strcmp(stored, command) != 0;
+    free(stored);
+    if (command_changed)
+        return true;
+
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     depfile_path_for(object, depfile, sizeof depfile);
     str_list prerequisites;
@@ -268,7 +356,7 @@ static bool needs_rebuild(const char *source, const char *object) {
    actually recompiled. */
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
-                           const project_target *target,
+                           const project_target *target, const project_options *profile_opts,
                            const str_list *sources, str_list *objects,
                            bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
@@ -293,7 +381,10 @@ static int compile_sources(const char *root, build_profile profile,
             free(needs);
             return exit_build_failure;
         }
-        needs[i] = needs_rebuild(source, object);
+        char *command = compile_command_string(source, object, settings, target,
+                                               profile_opts, include_flag);
+        needs[i] = needs_rebuild(source, object, command);
+        free(command);
     }
 
     size_t to_build = 0;
@@ -327,6 +418,7 @@ static int compile_sources(const char *root, build_profile profile,
             .settings = settings,
             .include_flag = include_flag,
             .target = target,
+            .profile_opts = profile_opts,
             .failed = &failed,
         };
         if (!task_pool_submit(pool, compile_task_run, &tasks[next]))
@@ -352,6 +444,60 @@ static bool link_needed(const str_list *objects, const char *binary) {
             return true;
     }
     return false;
+}
+
+/* Build the link command into `argv`: linker, objects, raw flags (base +
+   profile, so -flto/-fsanitize reach the linker too), -o binary, and the
+   system libraries (-l<lib>). */
+static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *objects,
+                            const char *binary, const project_target *target,
+                            const project_options *profile_opts) {
+    const char *cc, *cxx;
+    toolchain_drivers(target, &cc, &cxx);
+    bool ok = str_list_push(argv, any_cpp ? cxx : cc);
+    for (size_t i = 0; ok && i < str_list_count(objects); i++)
+        ok = str_list_push(argv, str_list_get(objects, i));
+    for (size_t i = 0; ok && i < target->options.flag_count; i++)
+        ok = str_list_push(argv, target->options.flags[i]);
+    for (size_t i = 0; ok && i < profile_opts->flag_count; i++)
+        ok = str_list_push(argv, profile_opts->flags[i]);
+    if (ok)
+        ok = str_list_push(argv, ARG_OUTPUT) && str_list_push(argv, binary);
+    for (size_t i = 0; ok && i < target->link_count; i++)
+        ok = push_prefixed(argv, LINK_FLAG_PREFIX, target->link[i]);
+    return ok;
+}
+
+/* Link `objects` into `binary` when needed — `force` (something recompiled),
+   a stale/missing binary, or a changed link command — recording the command
+   fingerprint in "<binary>.cmd". Returns false only if a needed link failed. */
+static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
+                         const project_target *target, const project_options *profile_opts,
+                         bool force) {
+    str_list argv;
+    str_list_init(&argv);
+    if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts)) {
+        str_list_free(&argv);
+        return false;
+    }
+    char *command = join_args(&argv);
+
+    char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
+    command_path_for(binary, cmd_path, sizeof cmd_path);
+    char *stored = fs_read_file(cmd_path);
+    bool command_changed = command == NULL || stored == NULL
+                        || strcmp(stored, command) != 0;
+    free(stored);
+
+    bool ok = true;
+    if (force || command_changed || link_needed(objects, binary)) {
+        ok = run_str_argv(&argv) == 0;
+        if (ok && command != NULL)
+            (void)fs_write_file(cmd_path, command);
+    }
+    free(command);
+    str_list_free(&argv);
+    return ok;
 }
 
 /* Load the manifest and compile every source under `root/src` into `objects`
@@ -387,6 +533,7 @@ static int compile_project(const char *root, build_profile profile,
     *any_cpp_out = false;
     *any_compiled_out = false;
     result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
+                             profile_options_for(ctx_out, profile),
                              &sources, objects_out, any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
@@ -404,9 +551,10 @@ int build_project(const char *root, build_profile profile,
     if (result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
         compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
-        /* Re-link only when something was rebuilt or the binary is stale. */
-        if ((any_compiled || link_needed(&objects, binary))
-            && !link_all(any_cpp, &objects, binary, &ctx.target)) {
+        /* Re-link when something was rebuilt, the binary is stale, or the link
+           command changed (link_project decides and records the fingerprint). */
+        if (!link_project(any_cpp, &objects, binary, &ctx.target,
+                          profile_options_for(&ctx, profile), any_compiled)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
@@ -453,6 +601,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     }
 
     manifest_profile settings = profile_settings(&ctx, profile);
+    const project_options *profile_opts = profile_options_for(&ctx, profile);
     const char *profile_dir = profile_name(profile);
 
     /* Object of src/main.c (the app entry point), if any, to exclude from test
@@ -497,9 +646,13 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
             break;
         }
         bool recompiled = false;
-        if (needs_rebuild(test_source, test_object)) {
-            if (!compile_one(test_source, test_object, &settings, include_flag,
-                             &ctx.target)) {
+        char *command = compile_command_string(test_source, test_object, &settings,
+                                               &ctx.target, profile_opts, include_flag);
+        bool stale = needs_rebuild(test_source, test_object, command);
+        free(command);
+        if (stale) {
+            if (!compile_one(test_source, test_object, &settings, &ctx.target,
+                             profile_opts, include_flag)) {
                 fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
                 result = exit_build_failure;
                 break;
@@ -526,8 +679,8 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
             break;
         }
         bool cpp = any_cpp || source_is_cpp(test_source);
-        if ((recompiled || any_compiled || link_needed(&link_objects, test_binary))
-            && !link_all(cpp, &link_objects, test_binary, &ctx.target)) {
+        if (!link_project(cpp, &link_objects, test_binary, &ctx.target, profile_opts,
+                          recompiled || any_compiled)) {
             fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
             result = exit_build_failure;
         }

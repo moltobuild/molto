@@ -14,6 +14,11 @@ typedef enum {
     artifact_shared,
 } artifact_kind;
 
+#define PROJECT_MAX_LINK      32
+#define PROJECT_LINK_NAME_MAX 64
+#define PROJECT_MAX_OPTS      16
+#define PROJECT_OPT_LEN       96
+
 /* Build settings for each known profile. Access as ctx.profile.release, etc. */
 typedef struct {
     manifest_profile debug;
@@ -22,8 +27,24 @@ typedef struct {
     manifest_profile custom;
 } project_profiles;
 
-#define PROJECT_MAX_LINK      32
-#define PROJECT_LINK_NAME_MAX 64
+/* Extra compilation options for a scope ([target] base or a profile).
+   defines -> -D, include -> -I, flags -> passed verbatim. */
+typedef struct {
+    char defines[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t define_count;
+    char include[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t include_count;
+    char flags[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t flag_count;
+} project_options;
+
+/* Per-profile extra options, added on top of the [target] base. */
+typedef struct {
+    project_options debug;
+    project_options release;
+    project_options bench;
+    project_options custom;
+} project_profile_options;
 
 /* The `[target]` table: toolchain and compilation settings (RFC-0003). */
 typedef struct {
@@ -32,6 +53,7 @@ typedef struct {
     char cpp_std[16];   /* C++ standard, e.g. "c++20"; "" = compiler default */
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX]; /* system libraries */
     size_t link_count;
+    project_options options; /* base defines/include/flags for all profiles */
 } project_target;
 
 /* The parsed Project.toml as a typed domain model. */
@@ -41,6 +63,7 @@ typedef struct {
     artifact_kind artifact;
     project_target target;
     project_profiles profile;
+    project_profile_options profile_options; /* per-profile extra options */
 } project_ctx;
 
 /* Parse a Project.toml `toml` string into `*out`. Built-in profile defaults are

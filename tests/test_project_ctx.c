@@ -73,6 +73,23 @@ void suite_project_ctx(void) {
     CHECK(!project_parse("[package]\nname = \"x\"\n[target]\ncompiler = \"turbo\"\n",
                          &ctx, err, sizeof err));
 
+    /* defines/include/flags: base in [target], custom added per profile. */
+    project_ctx opt_ctx;
+    CHECK(project_parse(
+        "[package]\nname = \"app\"\n"
+        "[target]\ndefines = [\"BASE=1\"]\ninclude = [\"vendor\"]\nflags = [\"-Wall\"]\n"
+        "[profile.release]\nflags = [\"-flto\"]\n",
+        &opt_ctx, err, sizeof err));
+    CHECK(opt_ctx.target.options.define_count == 1);
+    CHECK(strcmp(opt_ctx.target.options.defines[0], "BASE=1") == 0);
+    CHECK(opt_ctx.target.options.include_count == 1);
+    CHECK(strcmp(opt_ctx.target.options.include[0], "vendor") == 0);
+    CHECK(opt_ctx.target.options.flag_count == 1);
+    CHECK(strcmp(opt_ctx.target.options.flags[0], "-Wall") == 0);
+    CHECK(opt_ctx.profile_options.release.flag_count == 1);
+    CHECK(strcmp(opt_ctx.profile_options.release.flags[0], "-flto") == 0);
+    CHECK(opt_ctx.profile_options.debug.flag_count == 0);
+
     /* A malformed manifest surfaces the parser's line-tagged error. */
     err[0] = '\0';
     CHECK(!project_parse("[package\nname = \"x\"\n", &ctx, err, sizeof err));
