@@ -11,6 +11,7 @@ int main(void) {
     RUN_SUITE(suite_task_pool);
     RUN_SUITE(suite_toml);
     RUN_SUITE(suite_project_ctx);
+    RUN_SUITE(suite_scaffold);
     RUN_SUITE(suite_manifest_service);
     RUN_SUITE(suite_profile);
     RUN_SUITE(suite_source_discovery);
