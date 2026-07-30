@@ -2,64 +2,98 @@
 #include "tests.h"
 
 #include <molto/cli.h>
+#include <molto/util/cli.h>
 
+#include <stdbool.h>
 #include <string.h>
+
+/* What the test command handler saw on the last run. */
+static struct {
+    bool called;
+    const char *profile;
+    bool verbose;
+    const char *positional;
+    int forwarded_count;
+    const char *forwarded0;
+} seen;
+
+static int capture_handler(const cli_args *args) {
+    seen.called = true;
+    seen.profile = cli_args_option(args, "--profile");
+    seen.verbose = cli_args_flag(args, "--verbose");
+    seen.positional = cli_args_positional(args, 0);
+    char *const *forwarded = cli_args_forwarded(args, &seen.forwarded_count);
+    seen.forwarded0 = seen.forwarded_count > 0 ? forwarded[0] : NULL;
+    return 0;
+}
+
+static const cli_option test_options[] = {
+    { "--profile", 'p', cli_opt_value, "<name>", "profile", "debug" },
+    { "--verbose", 'v', cli_opt_flag, NULL, "verbose", NULL },
+};
+
+static int run_app(int argc, char **argv) {
+    const cli_command commands[] = {
+        { "do", "a test command", "<name>", test_options,
+          sizeof test_options / sizeof test_options[0], capture_handler },
+    };
+    const cli_app app = { "testapp", "9.9.9", "tagline", commands, 1 };
+    memset(&seen, 0, sizeof seen);
+    return cli_app_run(&app, argc, argv);
+}
 
 void suite_cli(void) {
     CHECK(strlen(cli_version()) > 0);
 
-    char *argv_new[] = { "molto", "new", "demo" };
-    cli_invocation new_inv = cli_parse(3, argv_new);
-    CHECK(new_inv.command == cli_cmd_new);
-    CHECK(new_inv.arg != NULL && strcmp(new_inv.arg, "demo") == 0);
+    /* Value option "--opt value" plus a positional. */
+    char *a1[] = { "testapp", "do", "--profile", "release", "x" };
+    CHECK(run_app(5, a1) == 0);
+    CHECK(seen.called);
+    CHECK(seen.profile != NULL && strcmp(seen.profile, "release") == 0);
+    CHECK(seen.positional != NULL && strcmp(seen.positional, "x") == 0);
 
-    char *argv_help[] = { "molto", "--help" };
-    CHECK(cli_parse(2, argv_help).command == cli_cmd_help);
+    /* "--opt=value" form. */
+    char *a2[] = { "testapp", "do", "--profile=bench" };
+    CHECK(run_app(3, a2) == 0 && strcmp(seen.profile, "bench") == 0);
 
-    char *argv_help_short[] = { "molto", "-h" };
-    CHECK(cli_parse(2, argv_help_short).command == cli_cmd_help);
+    /* Short "-p value" and boolean flag "-v". */
+    char *a3[] = { "testapp", "do", "-p", "custom", "-v" };
+    CHECK(run_app(5, a3) == 0);
+    CHECK(strcmp(seen.profile, "custom") == 0);
+    CHECK(seen.verbose == true);
 
-    char *argv_version[] = { "molto", "--version" };
-    CHECK(cli_parse(2, argv_version).command == cli_cmd_version);
+    /* Short attached value "-pdebug". */
+    char *a4[] = { "testapp", "do", "-pdebug" };
+    CHECK(run_app(3, a4) == 0 && strcmp(seen.profile, "debug") == 0);
 
-    char *argv_none[] = { "molto" };
-    CHECK(cli_parse(1, argv_none).command == cli_cmd_none);
-
-    char *argv_unknown[] = { "molto", "frobnicate" };
-    CHECK(cli_parse(2, argv_unknown).command == cli_cmd_unknown);
-
-    char *argv_build[] = { "molto", "build" };
-    CHECK(cli_parse(2, argv_build).command == cli_cmd_build);
-
-    /* Option value extraction. */
-    char *argv_profile[] = { "molto", "build", "--profile", "release" };
-    const char *value = cli_option_value(4, argv_profile, "--profile");
-    CHECK(value != NULL && strcmp(value, "release") == 0);
-
-    CHECK(cli_option_value(2, argv_build, "--profile") == NULL);
-
-    char *argv_dangling[] = { "molto", "build", "--profile" };
-    CHECK(cli_option_value(3, argv_dangling, "--profile") == NULL);
-
-    /* cli_option_value stops at "--": flags after it belong to the program. */
-    char *argv_after_sep[] = { "molto", "run", "--", "--profile", "release" };
-    CHECK(cli_option_value(5, argv_after_sep, "--profile") == NULL);
+    /* Default reported when the option is absent. */
+    char *a5[] = { "testapp", "do" };
+    CHECK(run_app(2, a5) == 0);
+    CHECK(seen.profile != NULL && strcmp(seen.profile, "debug") == 0);
+    CHECK(seen.verbose == false);
 
     /* Forwarded arguments after "--". */
-    int forwarded_count = -1;
-    char **forwarded = cli_forwarded_args(5, argv_after_sep, &forwarded_count);
-    CHECK(forwarded_count == 2);
-    CHECK(forwarded != NULL && strcmp(forwarded[0], "--profile") == 0);
-    CHECK(strcmp(forwarded[1], "release") == 0);
+    char *a6[] = { "testapp", "do", "--", "alpha", "beta" };
+    CHECK(run_app(5, a6) == 0);
+    CHECK(seen.forwarded_count == 2);
+    CHECK(seen.forwarded0 != NULL && strcmp(seen.forwarded0, "alpha") == 0);
 
-    char *argv_no_sep[] = { "molto", "run" };
-    forwarded_count = -1;
-    CHECK(cli_forwarded_args(2, argv_no_sep, &forwarded_count) == NULL);
-    CHECK(forwarded_count == 0);
+    /* Unknown option -> usage error (4), handler not called. */
+    char *a7[] = { "testapp", "do", "--nope" };
+    CHECK(run_app(3, a7) == 4);
+    CHECK(!seen.called);
 
-    char *argv_trailing_sep[] = { "molto", "run", "--" };
-    forwarded_count = -1;
-    forwarded = cli_forwarded_args(3, argv_trailing_sep, &forwarded_count);
-    CHECK(forwarded_count == 0);
-    CHECK(forwarded == &argv_trailing_sep[3]); /* points past the end, count 0 */
+    /* "<command> --help" -> ok (0), handler not called. */
+    char *a8[] = { "testapp", "do", "--help" };
+    CHECK(run_app(3, a8) == 0);
+    CHECK(!seen.called);
+
+    /* Unknown command -> usage error (4). */
+    char *a9[] = { "testapp", "nope" };
+    CHECK(run_app(2, a9) == 4);
+
+    /* Missing value for a value option -> usage error (4). */
+    char *a10[] = { "testapp", "do", "--profile" };
+    CHECK(run_app(3, a10) == 4);
+    CHECK(!seen.called);
 }
