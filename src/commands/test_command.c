@@ -5,6 +5,7 @@
 #include <molto/services/build_service.h>
 #include <molto/services/process_service.h>
 #include <molto/util/str_list.h>
+#include <molto/workspace/workspace.h>
 
 #include <stdio.h>
 
@@ -37,9 +38,14 @@ int test_command_run(const char *requested_profile) {
         return exit_usage_error;
     }
 
+    char root[4096];
+    if (!workspace_find_root(root, sizeof root)) {
+        fprintf(stderr, "molto: not inside a molto workspace (no Project.toml found)\n");
+        return exit_invalid_manifest;
+    }
     str_list binaries;
     str_list_init(&binaries);
-    int code = build_tests(".", profile, &binaries);
+    int code = build_tests(root, profile, &binaries);
     if (code != exit_ok) {
         str_list_free(&binaries);
         return code;

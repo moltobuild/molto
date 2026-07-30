@@ -1,5 +1,8 @@
 # Build output
 /build/
 
+# Workspace database (molto-owned metadata)
+/.bin/
+
 # Object files
 *.o

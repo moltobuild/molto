@@ -10,6 +10,7 @@
 #include <molto/services/source_discovery.h>
 #include <molto/util/str_list.h>
 #include <molto/util/task_pool.h>
+#include <molto/workspace/wsdb.h>
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -44,7 +45,6 @@
 #define DIR_TESTS         "tests" /* where test sources are discovered */
 #define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
 #define DEPFILE_SUFFIX    ".d"    /* appended to an object path for its depfile */
-#define COMMAND_SUFFIX    ".cmd"  /* fingerprint of the command that built an artifact */
 
 /* Size of the stack buffers used to compose filesystem paths. */
 #define PATH_BUFFER_SIZE 4096
@@ -130,11 +130,6 @@ static bool make_parent_dirs(const char *path) {
         return true;
     *slash = '\0';
     return fs_make_dirs(directory);
-}
-
-/* Path of the command-fingerprint sidecar for an artifact: "<artifact>.cmd". */
-static void command_path_for(const char *artifact, char *out, size_t out_size) {
-    snprintf(out, out_size, "%s" COMMAND_SUFFIX, artifact);
 }
 
 /* Push "<prefix><value>" (e.g. "-DFOO=1") onto argv. */
@@ -244,8 +239,9 @@ static char *compile_command_string(const char *source, const char *object,
     return command;
 }
 
-/* Compile a single translation unit to `object`, then record the command that
-   produced it in "<object>.cmd" for the incremental fingerprint. */
+/* Compile a single translation unit to `object`. gcc writes the header
+   dependency file (`-MMD -MF <object>.d`) as a side effect; it is absorbed into
+   the WSDB afterwards, on the main thread. */
 static bool compile_one(const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
                         const project_options *profile_opts, const char *include_flag) {
@@ -259,17 +255,24 @@ static bool compile_one(const char *source, const char *object,
         return false;
     }
     bool ok = run_str_argv(&argv) == 0;
-    if (ok) {
-        char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
-        command_path_for(object, cmd_path, sizeof cmd_path);
-        char *command = join_args(&argv);
-        if (command != NULL) {
-            (void)fs_write_file(cmd_path, command);
-            free(command);
-        }
-    }
     str_list_free(&argv);
     return ok;
+}
+
+/* Record a freshly compiled object into the WSDB: read the prerequisites from
+   gcc's depfile (falling back to just the source), store {command, prereqs},
+   then delete the now-absorbed depfile. Runs on the main thread. */
+static void wsdb_absorb_object(wsdb *db, const char *source, const char *object,
+                               const char *command) {
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    depfile_path_for(object, depfile, sizeof depfile);
+    str_list prereqs;
+    str_list_init(&prereqs);
+    if (!depfile_read(depfile, &prereqs) || str_list_count(&prereqs) == 0)
+        (void)str_list_push(&prereqs, source);
+    wsdb_record_object(db, object, command, &prereqs);
+    str_list_free(&prereqs);
+    remove(depfile);
 }
 
 /* Load and parse `root/Project.toml` into a project context, reporting the
@@ -310,62 +313,22 @@ static void compile_task_run(void *arg) {
     }
 }
 
-/* Decide whether `source` must be recompiled into `object`. Rebuilds when:
-   the object is missing; the compile command changed (fingerprint in
-   "<object>.cmd" differs from `command`, e.g. after editing flags/profile); or
-   the source or any header from the depfile is newer than the object. Fail-safe:
-   a missing fingerprint/depfile (first build) or a deleted prerequisite all
-   force a rebuild. */
-static bool needs_rebuild(const char *source, const char *object, const char *command) {
-    if (!fs_path_exists(object))
-        return true;
-
-    /* Command fingerprint: recompile if the build command changed. */
-    char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
-    command_path_for(object, cmd_path, sizeof cmd_path);
-    char *stored = fs_read_file(cmd_path);
-    bool command_changed = command == NULL || stored == NULL
-                        || strcmp(stored, command) != 0;
-    free(stored);
-    if (command_changed)
-        return true;
-
-    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    depfile_path_for(object, depfile, sizeof depfile);
-    str_list prerequisites;
-    str_list_init(&prerequisites);
-    bool stale;
-    if (depfile_read(depfile, &prerequisites) && str_list_count(&prerequisites) > 0) {
-        stale = false;
-        for (size_t i = 0; i < str_list_count(&prerequisites); i++) {
-            if (fs_source_newer(str_list_get(&prerequisites, i), object)) {
-                stale = true;
-                break;
-            }
-        }
-    } else {
-        stale = fs_source_newer(source, object);
-    }
-    str_list_free(&prerequisites);
-    return stale;
-}
-
-/* Compile every source. Phase 1 (sequential) resolves object paths and marks
-   which units are stale; phase 2 compiles the stale ones in parallel on a
-   work-stealing pool. Reports whether C++ is present and whether anything was
-   actually recompiled. */
+/* Compile every source. Phase 1 (sequential) resolves object paths and asks the
+   WSDB which units are stale; phase 2 compiles them in parallel; phase 3 (back
+   on this thread) records the results into the WSDB. Reports whether C++ is
+   present and whether anything was recompiled. */
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
                            const project_target *target, const project_options *profile_opts,
-                           const str_list *sources, str_list *objects,
+                           wsdb *db, const str_list *sources, str_list *objects,
                            bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
     bool *needs = calloc(count, sizeof(bool));
     if (needs == NULL)
         return exit_build_failure;
 
-    /* Phase 1: resolve object paths and decide what to rebuild. Finishing all
-       str_list_push here keeps the object pointers stable for phase 2. */
+    /* Phase 1: resolve object paths and ask the WSDB what is stale. Finishing
+       all str_list_push here keeps the object pointers stable for phase 2. */
     for (size_t i = 0; i < count; i++) {
         const char *source = str_list_get(sources, i);
         if (source_is_cpp(source))
@@ -383,7 +346,7 @@ static int compile_sources(const char *root, build_profile profile,
         }
         char *command = compile_command_string(source, object, settings, target,
                                                profile_opts, include_flag);
-        needs[i] = needs_rebuild(source, object, command);
+        needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
         free(command);
     }
 
@@ -396,7 +359,7 @@ static int compile_sources(const char *root, build_profile profile,
         return exit_ok;
     }
 
-    /* Phase 2: compile the stale units concurrently. */
+    /* Phase 2: compile the stale units concurrently (no WSDB access here). */
     compile_task *tasks = calloc(to_build, sizeof(compile_task));
     task_pool *pool = task_pool_create(0);
     if (tasks == NULL || pool == NULL) {
@@ -430,6 +393,23 @@ static int compile_sources(const char *root, build_profile profile,
 
     if (result == exit_ok && atomic_load(&failed))
         result = exit_build_failure;
+
+    /* Phase 3: record the freshly built objects into the WSDB (single-threaded). */
+    if (result == exit_ok) {
+        for (size_t i = 0; i < count; i++) {
+            if (!needs[i])
+                continue;
+            const char *source = str_list_get(sources, i);
+            const char *object = str_list_get(objects, i);
+            char *command = compile_command_string(source, object, settings, target,
+                                                   profile_opts, include_flag);
+            if (command != NULL) {
+                wsdb_absorb_object(db, source, object, command);
+                free(command);
+            }
+        }
+    }
+
     *any_compiled = true;
     free(tasks);
     free(needs);
@@ -469,11 +449,11 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
 }
 
 /* Link `objects` into `binary` when needed — `force` (something recompiled),
-   a stale/missing binary, or a changed link command — recording the command
-   fingerprint in "<binary>.cmd". Returns false only if a needed link failed. */
+   a stale/missing binary, or a changed link command (per the WSDB). Records the
+   link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
                          const project_target *target, const project_options *profile_opts,
-                         bool force) {
+                         bool force, wsdb *db) {
     str_list argv;
     str_list_init(&argv);
     if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts)) {
@@ -482,18 +462,12 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     }
     char *command = join_args(&argv);
 
-    char cmd_path[PATH_BUFFER_SIZE + sizeof(COMMAND_SUFFIX)];
-    command_path_for(binary, cmd_path, sizeof cmd_path);
-    char *stored = fs_read_file(cmd_path);
-    bool command_changed = command == NULL || stored == NULL
-                        || strcmp(stored, command) != 0;
-    free(stored);
-
     bool ok = true;
-    if (force || command_changed || link_needed(objects, binary)) {
+    if (force || command == NULL || !wsdb_binary_fresh(db, binary, command)
+        || link_needed(objects, binary)) {
         ok = run_str_argv(&argv) == 0;
         if (ok && command != NULL)
-            (void)fs_write_file(cmd_path, command);
+            wsdb_record_binary(db, binary, command);
     }
     free(command);
     str_list_free(&argv);
@@ -503,7 +477,7 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
 /* Load the manifest and compile every source under `root/src` into `objects`
    (caller-initialised, caller-freed). Reports whether C++ is present and whether
    anything was recompiled. Shared by build_project and build_tests. */
-static int compile_project(const char *root, build_profile profile,
+static int compile_project(const char *root, build_profile profile, wsdb *db,
                            project_ctx *ctx_out, str_list *objects_out,
                            bool *any_cpp_out, bool *any_compiled_out) {
     int result = load_project(root, ctx_out);
@@ -533,7 +507,7 @@ static int compile_project(const char *root, build_profile profile,
     *any_cpp_out = false;
     *any_compiled_out = false;
     result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
-                             profile_options_for(ctx_out, profile),
+                             profile_options_for(ctx_out, profile), db,
                              &sources, objects_out, any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
@@ -541,28 +515,40 @@ static int compile_project(const char *root, build_profile profile,
 
 int build_project(const char *root, build_profile profile,
                   char *out_binary, size_t out_binary_size) {
+    wsdb *db = wsdb_open(root);
+    if (db == NULL) {
+        fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
+        return exit_build_failure;
+    }
+
     project_ctx ctx;
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, &ctx, &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, db, &ctx, &objects, &any_cpp, &any_compiled);
 
     if (result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
         compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
-        /* Re-link when something was rebuilt, the binary is stale, or the link
-           command changed (link_project decides and records the fingerprint). */
         if (!link_project(any_cpp, &objects, binary, &ctx.target,
-                          profile_options_for(&ctx, profile), any_compiled)) {
+                          profile_options_for(&ctx, profile), any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
-        if (result == exit_ok && out_binary != NULL)
-            snprintf(out_binary, out_binary_size, "%s", binary);
+        if (result == exit_ok) {
+            /* Prune objects orphaned by removed sources (scoped to src/). */
+            char prefix[PATH_BUFFER_SIZE];
+            snprintf(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
+                     root, profile_name(profile));
+            wsdb_prune(db, &objects, prefix);
+            if (out_binary != NULL)
+                snprintf(out_binary, out_binary_size, "%s", binary);
+        }
     }
 
     str_list_free(&objects);
+    wsdb_close(db);
     return result;
 }
 
@@ -589,14 +575,21 @@ static void test_binary_path(const char *root, const char *profile_dir,
 }
 
 int build_tests(const char *root, build_profile profile, str_list *test_binaries_out) {
+    wsdb *db = wsdb_open(root);
+    if (db == NULL) {
+        fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
+        return exit_build_failure;
+    }
+
     project_ctx ctx;
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, &ctx, &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, db, &ctx, &objects, &any_cpp, &any_compiled);
     if (result != exit_ok) {
         str_list_free(&objects);
+        wsdb_close(db);
         return result;
     }
 
@@ -648,17 +641,20 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         bool recompiled = false;
         char *command = compile_command_string(test_source, test_object, &settings,
                                                &ctx.target, profile_opts, include_flag);
-        bool stale = needs_rebuild(test_source, test_object, command);
-        free(command);
+        bool stale = command == NULL || !wsdb_object_fresh(db, test_object, command);
         if (stale) {
             if (!compile_one(test_source, test_object, &settings, &ctx.target,
                              profile_opts, include_flag)) {
                 fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
+                free(command);
                 result = exit_build_failure;
                 break;
             }
+            if (command != NULL)
+                wsdb_absorb_object(db, test_source, test_object, command);
             recompiled = true;
         }
+        free(command);
 
         char test_binary[PATH_BUFFER_SIZE];
         test_binary_path(root, profile_dir, test_source, test_binary, sizeof test_binary);
@@ -680,7 +676,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool cpp = any_cpp || source_is_cpp(test_source);
         if (!link_project(cpp, &link_objects, test_binary, &ctx.target, profile_opts,
-                          recompiled || any_compiled)) {
+                          recompiled || any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
             result = exit_build_failure;
         }
@@ -697,5 +693,6 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     str_list_free(&test_sources);
     str_list_free(&lib_objects);
     str_list_free(&objects);
+    wsdb_close(db);
     return result;
 }

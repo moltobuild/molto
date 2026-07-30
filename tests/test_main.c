@@ -7,6 +7,9 @@ int tests_failed = 0;
 int main(void) {
     printf("Running molto tests\n");
     RUN_SUITE(suite_str_list);
+    RUN_SUITE(suite_str_map);
+    RUN_SUITE(suite_workspace);
+    RUN_SUITE(suite_wsdb);
     RUN_SUITE(suite_depfile);
     RUN_SUITE(suite_task_pool);
     RUN_SUITE(suite_toml);
