@@ -90,4 +90,22 @@ void suite_build_service(void) {
     CHECK(build_project(empty, profile_debug, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
+
+    /* [target] std + link libraries are applied: this program calls sqrt() from
+       libm, so it only links when `link = ["m"]` adds -lm. */
+    char lib_root[] = "/tmp/molto_target_XXXXXX";
+    CHECK(mkdtemp(lib_root) != NULL);
+    snprintf(path, sizeof path, "%s/src", lib_root);
+    CHECK(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", lib_root);
+    CHECK(fs_write_file(path,
+        "[package]\nname = \"needs_libm\"\n"
+        "[target]\nstd = \"c11\"\nlink = [\"m\"]\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", lib_root);
+    CHECK(fs_write_file(path,
+        "#include <math.h>\n"
+        "int main(void) { return (int)sqrt(4.0) - 2; }\n"));
+    CHECK(build_project(lib_root, profile_debug, NULL, 0) == exit_ok);
+    snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
+    (void)system(cmd);
 }

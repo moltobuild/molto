@@ -51,6 +51,7 @@ typedef struct {
         char str[TOML_VALUE_MAX];
         long integer;
         bool boolean;
+        str_list array;   /* owned when type == toml_field_array */
     } value;
 } toml_entry;
 
@@ -228,6 +229,32 @@ static bool parse_header(char *text, char *section, size_t size,
     return true;
 }
 
+/* Parse a single-line array of strings, e.g. ["m", "pthread"], into `out`.
+   Elements may be basic or literal strings; a missing comma is tolerated. A
+   non-string element or a missing closing ']' is an error. */
+static bool parse_string_array(const char *text, str_list *out) {
+    const char *p = text + 1; /* skip '[' */
+    while (*p != '\0') {
+        while (*p == ' ' || *p == '\t' || *p == ',')
+            p++;
+        if (*p == ']')
+            return true;
+        if (*p != '"' && *p != '\'')
+            return false;
+        char element[TOML_VALUE_MAX];
+        const char *end = p;
+        bool ok = *p == '"'
+            ? parse_basic_string(p, element, sizeof element, &end)
+            : parse_literal_string(p, element, sizeof element, &end);
+        if (!ok)
+            return false;
+        if (!str_list_push(out, element))
+            return false;
+        p = end;
+    }
+    return false; /* no closing ']' */
+}
+
 static bool parse_key_value(toml_document *doc, const char *section, char *text,
                             char *err, size_t err_size, int line) {
     char *equals = strchr(text, '=');
@@ -276,9 +303,24 @@ static bool parse_key_value(toml_document *doc, const char *section, char *text,
             return false;
         }
         entry.type = toml_field_string;
-    } else if (value[0] == '[' || value[0] == '{') {
-        /* Array or inline table: recognized but unsupported. Skip it so a
-           [deps] section does not break parsing. */
+    } else if (value[0] == '[') {
+        str_list array;
+        str_list_init(&array);
+        if (!parse_string_array(value, &array)) {
+            str_list_free(&array);
+            set_err(err, err_size, line, "invalid array value", key);
+            return false;
+        }
+        entry.type = toml_field_array;
+        entry.value.array = array; /* ownership moves into the document */
+        if (!doc_push(doc, &entry, err, err_size)) {
+            str_list_free(&array);
+            return false;
+        }
+        return true;
+    } else if (value[0] == '{') {
+        /* Inline table: recognized but unsupported. Skip it so a [deps] section
+           with inline tables does not break parsing. */
         return true;
     } else if (strcmp(value, "true") == 0 || strcmp(value, "false") == 0) {
         entry.type = toml_field_bool;
@@ -348,6 +390,10 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
 void toml_free(toml_document *doc) {
     if (doc == NULL)
         return;
+    for (size_t i = 0; i < doc->count; i++) {
+        if (doc->items[i].type == toml_field_array)
+            str_list_free(&doc->items[i].value.array);
+    }
     free(doc->items);
     free(doc);
 }
@@ -397,6 +443,18 @@ bool toml_has_section(const toml_document *doc, const char *section) {
     return false;
 }
 
+bool toml_get_array(const toml_document *doc, const char *section,
+                    const char *key, str_list *out) {
+    const toml_entry *entry = find_entry(doc, section, key);
+    if (entry == NULL || entry->type != toml_field_array)
+        return false;
+    for (size_t i = 0; i < str_list_count(&entry->value.array); i++) {
+        if (!str_list_push(out, str_list_get(&entry->value.array, i)))
+            return false;
+    }
+    return true;
+}
+
 void toml_dump(const toml_document *doc, FILE *stream) {
     if (doc == NULL) {
         fprintf(stream, "(null document)\n");
@@ -415,6 +473,10 @@ void toml_dump(const toml_document *doc, FILE *stream) {
             case toml_field_bool:
                 fprintf(stream, "[%s] %s = bool %s\n", section, e->key,
                         e->value.boolean ? "true" : "false");
+                break;
+            case toml_field_array:
+                fprintf(stream, "[%s] %s = array[%zu]\n", section, e->key,
+                        str_list_count(&e->value.array));
                 break;
         }
     }
@@ -453,6 +515,12 @@ bool toml_bind(const toml_document *doc, const toml_field *schema,
             case toml_field_bool:
                 memcpy(destination, &entry->value.boolean, sizeof(bool));
                 break;
+            case toml_field_array:
+                /* Arrays are not bindable to scalar fields; read them with
+                   toml_get_array instead. (Unreachable: schema fields are never
+                   arrays, but kept for exhaustiveness.) */
+                set_err(err, err_size, 0, "cannot bind array field", field->key);
+                return false;
         }
     }
     return true;

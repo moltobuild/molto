@@ -16,9 +16,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Toolchain the build shells out to (v0.1 targets GCC on Linux). */
-#define CC_C   "gcc"   /* compiler/linker for C sources */
-#define CC_CPP "g++"   /* compiler/linker when any C++ source is present */
+/* Toolchain drivers per compiler family (default: GCC, v0.1 target). */
+#define CC_C       "gcc"     /* GCC C driver */
+#define CC_CPP     "g++"     /* GCC C++ driver */
+#define CC_CLANG   "clang"   /* LLVM C driver */
+#define CC_CLANGXX "clang++" /* LLVM C++ driver */
+#define CC_MSVC    "cl"      /* MSVC driver (C and C++) */
 
 /* Compiler command-line arguments. */
 #define ARG_COMPILE       "-c"   /* compile only, do not link */
@@ -27,6 +30,8 @@
 #define ARG_DEPFILE_GEN   "-MMD" /* also write a header-dependency file */
 #define ARG_DEPFILE_OUT   "-MF"  /* next argument is the dependency file path */
 #define OPT_FLAG_FORMAT   "-O%d" /* optimisation level, e.g. -O2 */
+#define STD_FLAG_FORMAT   "-std=%s" /* language standard, e.g. -std=c23 */
+#define LINK_FLAG_FORMAT  "-l%s"  /* link a system library, e.g. -lm */
 #define INCLUDE_FLAG_FORMAT "-I%s" /* add an include search directory */
 
 /* On-disk layout of a Molto project. */
@@ -45,14 +50,17 @@
 #define MANIFEST_ERROR_SIZE 256
 
 /* Fixed slots in a compile command's argv:
- *   compiler, -c, source, -o, object, -O<n>, [-g], -MMD, -MF, depfile,
- *   include, NULL
- * The optional -g means the count varies, so we size for the maximum. */
-#define COMPILE_ARGV_MAX 12
-/* Extra argv slots around the object list when linking: linker, -o, binary, NULL. */
+ *   compiler, -c, source, -o, object, -O<n>, [-g], [-std=..], -MMD, -MF,
+ *   depfile, include, NULL
+ * The optional -g and -std mean the count varies, so we size for the maximum. */
+#define COMPILE_ARGV_MAX 13
+/* Extra argv slots around the object list when linking: linker, -o, binary,
+ * NULL (system libraries are counted separately). */
 #define LINK_ARGV_EXTRA 4
 /* Size of the small buffer holding the "-O<n>" flag. */
 #define OPT_FLAG_SIZE 16
+/* Size of the buffer holding the "-std=<name>" flag. */
+#define STD_FLAG_SIZE 24
 
 /* Compose the output executable path for a package. */
 static void compose_binary_path(const char *root, build_profile profile,
@@ -68,6 +76,22 @@ static manifest_profile profile_settings(const project_ctx *ctx, build_profile p
         case profile_custom:  return ctx->profile.custom;
         case profile_debug:
         default:              return ctx->profile.debug;
+    }
+}
+
+/* Resolve the C and C++ driver names for the requested toolchain. An empty
+   `compiler` (autodetect) uses GCC, the v0.1 default. */
+static void toolchain_drivers(const project_target *target,
+                              const char **cc, const char **cxx) {
+    if (strcmp(target->compiler, CC_CLANG) == 0 || strcmp(target->compiler, "llvm") == 0) {
+        *cc = CC_CLANG;
+        *cxx = CC_CLANGXX;
+    } else if (strcmp(target->compiler, "msvc") == 0) {
+        *cc = CC_MSVC;
+        *cxx = CC_MSVC;
+    } else {
+        *cc = CC_C;
+        *cxx = CC_CPP;
     }
 }
 
@@ -101,17 +125,30 @@ static bool make_parent_dirs(const char *path) {
     return fs_make_dirs(directory);
 }
 
-/* Compile a single translation unit to `object`. */
+/* Compile a single translation unit to `object`, using the toolchain and
+   language standard from `target`. */
 static bool compile_one(const char *source, const char *object,
-                        const manifest_profile *settings, const char *include_flag) {
-    const char *compiler = source_is_cpp(source) ? CC_CPP : CC_C;
+                        const manifest_profile *settings, const char *include_flag,
+                        const project_target *target) {
+    const char *cc, *cxx;
+    toolchain_drivers(target, &cc, &cxx);
+    bool is_cpp = source_is_cpp(source);
+
     char opt_flag[OPT_FLAG_SIZE];
     snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
+
+    const char *std_value = is_cpp ? target->cpp_std : target->std;
+    bool has_std = std_value[0] != '\0';
+    char std_flag[STD_FLAG_SIZE];
+    if (has_std)
+        snprintf(std_flag, sizeof std_flag, STD_FLAG_FORMAT, std_value);
+
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     depfile_path_for(object, depfile, sizeof depfile);
+
     const char *argv[COMPILE_ARGV_MAX];
     size_t i = 0;
-    argv[i++] = compiler;
+    argv[i++] = is_cpp ? cxx : cc;
     argv[i++] = ARG_COMPILE;
     argv[i++] = source;
     argv[i++] = ARG_OUTPUT;
@@ -119,6 +156,8 @@ static bool compile_one(const char *source, const char *object,
     argv[i++] = opt_flag;
     if (settings->debug_info)
         argv[i++] = ARG_DEBUG;
+    if (has_std)
+        argv[i++] = std_flag;
     argv[i++] = ARG_DEPFILE_GEN;   /* -MMD */
     argv[i++] = ARG_DEPFILE_OUT;   /* -MF  */
     argv[i++] = depfile;
@@ -127,19 +166,31 @@ static bool compile_one(const char *source, const char *object,
     return process_run(argv) == 0;
 }
 
-/* Link every object into the final executable. */
-static bool link_all(bool any_cpp, const str_list *objects, const char *binary) {
-    const char *linker = any_cpp ? CC_CPP : CC_C;
+/* Link every object into the final executable, using the toolchain from
+   `target` and appending its system libraries (`-l<lib>`). */
+static bool link_all(bool any_cpp, const str_list *objects, const char *binary,
+                     const project_target *target) {
+    const char *cc, *cxx;
+    toolchain_drivers(target, &cc, &cxx);
+    const char *linker = any_cpp ? cxx : cc;
     size_t count = str_list_count(objects);
-    const char **argv = malloc((count + LINK_ARGV_EXTRA) * sizeof(char *));
+    size_t lib_count = target->link_count;
+    const char **argv = malloc((count + LINK_ARGV_EXTRA + lib_count) * sizeof(char *));
     if (argv == NULL)
         return false;
+    /* -l flags need storage that outlives process_run. */
+    char lib_flags[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX + sizeof("-l")];
     size_t i = 0;
     argv[i++] = linker;
     for (size_t j = 0; j < count; j++)
         argv[i++] = str_list_get(objects, j);
     argv[i++] = ARG_OUTPUT;
     argv[i++] = binary;
+    /* System libraries go after the objects so the linker resolves them. */
+    for (size_t j = 0; j < lib_count; j++) {
+        snprintf(lib_flags[j], sizeof lib_flags[j], LINK_FLAG_FORMAT, target->link[j]);
+        argv[i++] = lib_flags[j];
+    }
     argv[i++] = NULL;
     bool ok = process_run(argv) == 0;
     free(argv);
@@ -170,12 +221,14 @@ typedef struct {
     const char *object;
     const manifest_profile *settings;
     const char *include_flag;
+    const project_target *target;
     atomic_bool *failed;
 } compile_task;
 
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
-    if (!compile_one(task->source, task->object, task->settings, task->include_flag)) {
+    if (!compile_one(task->source, task->object, task->settings,
+                     task->include_flag, task->target)) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
     }
@@ -215,6 +268,7 @@ static bool needs_rebuild(const char *source, const char *object) {
    actually recompiled. */
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
+                           const project_target *target,
                            const str_list *sources, str_list *objects,
                            bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
@@ -272,6 +326,7 @@ static int compile_sources(const char *root, build_profile profile,
             .object = str_list_get(objects, i),
             .settings = settings,
             .include_flag = include_flag,
+            .target = target,
             .failed = &failed,
         };
         if (!task_pool_submit(pool, compile_task_run, &tasks[next]))
@@ -331,7 +386,7 @@ static int compile_project(const char *root, build_profile profile,
 
     *any_cpp_out = false;
     *any_compiled_out = false;
-    result = compile_sources(root, profile, &settings, include_flag,
+    result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
                              &sources, objects_out, any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
@@ -351,7 +406,7 @@ int build_project(const char *root, build_profile profile,
         compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
         /* Re-link only when something was rebuilt or the binary is stale. */
         if ((any_compiled || link_needed(&objects, binary))
-            && !link_all(any_cpp, &objects, binary)) {
+            && !link_all(any_cpp, &objects, binary, &ctx.target)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
@@ -443,7 +498,8 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool recompiled = false;
         if (needs_rebuild(test_source, test_object)) {
-            if (!compile_one(test_source, test_object, &settings, include_flag)) {
+            if (!compile_one(test_source, test_object, &settings, include_flag,
+                             &ctx.target)) {
                 fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
                 result = exit_build_failure;
                 break;
@@ -471,7 +527,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool cpp = any_cpp || source_is_cpp(test_source);
         if ((recompiled || any_compiled || link_needed(&link_objects, test_binary))
-            && !link_all(cpp, &link_objects, test_binary)) {
+            && !link_all(cpp, &link_objects, test_binary, &ctx.target)) {
             fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
             result = exit_build_failure;
         }

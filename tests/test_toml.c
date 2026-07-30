@@ -89,6 +89,34 @@ void suite_toml(void) {
     };
     CHECK(!toml_bind(doc, mismatch, 1, &defaulted, err, sizeof err));
 
+    /* String arrays are parsed and read back with toml_get_array. */
+    toml_document *arr_doc = toml_parse(
+        "[target]\nlink = [\"m\", \"pthread\"]\nempty = []\n", err, sizeof err);
+    CHECK(arr_doc != NULL);
+    if (arr_doc != NULL) {
+        str_list libs;
+        str_list_init(&libs);
+        CHECK(toml_get_array(arr_doc, "target", "link", &libs));
+        CHECK(str_list_count(&libs) == 2);
+        CHECK(strcmp(str_list_get(&libs, 0), "m") == 0);
+        CHECK(strcmp(str_list_get(&libs, 1), "pthread") == 0);
+        str_list_free(&libs);
+
+        /* Empty array is valid. */
+        str_list none_arr;
+        str_list_init(&none_arr);
+        CHECK(toml_get_array(arr_doc, "target", "empty", &none_arr));
+        CHECK(str_list_count(&none_arr) == 0);
+        str_list_free(&none_arr);
+
+        /* An array key is not readable as a scalar string. */
+        CHECK(!toml_get_string(arr_doc, "target", "link", buffer, sizeof buffer));
+        toml_free(arr_doc);
+    }
+
+    /* An unterminated array is a parse error. */
+    CHECK(toml_parse("[t]\nx = [\"a\", \"b\"\n", err, sizeof err) == NULL);
+
     /* [deps] with an inline table is skipped, not an error. */
     toml_document *with_deps = toml_parse(
         "[package]\nname = \"x\"\n[deps]\nhttp = { path = \"m\" }\n", err, sizeof err);

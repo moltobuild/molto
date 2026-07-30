@@ -22,11 +22,24 @@ typedef struct {
     manifest_profile custom;
 } project_profiles;
 
+#define PROJECT_MAX_LINK      32
+#define PROJECT_LINK_NAME_MAX 64
+
+/* The `[target]` table: toolchain and compilation settings (RFC-0003). */
+typedef struct {
+    char compiler[16];  /* "gcc"/"g++"/"clang"/"llvm"/"msvc"; "" = autodetect */
+    char std[16];       /* C standard, e.g. "c23"; "" = compiler default */
+    char cpp_std[16];   /* C++ standard, e.g. "c++20"; "" = compiler default */
+    char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX]; /* system libraries */
+    size_t link_count;
+} project_target;
+
 /* The parsed Project.toml as a typed domain model. */
 typedef struct {
     char project_name[128];
     char version[64];
     artifact_kind artifact;
+    project_target target;
     project_profiles profile;
 } project_ctx;
 

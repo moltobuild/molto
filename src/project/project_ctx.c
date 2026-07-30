@@ -34,6 +34,14 @@ static bool map_artifact(const char *name, artifact_kind *out) {
     return false;
 }
 
+/* Accepted values for [target].compiler (empty means autodetect). */
+static bool valid_compiler(const char *name) {
+    return name[0] == '\0'
+        || strcmp(name, "gcc") == 0 || strcmp(name, "g++") == 0
+        || strcmp(name, "clang") == 0 || strcmp(name, "llvm") == 0
+        || strcmp(name, "msvc") == 0;
+}
+
 bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
     seed_defaults(out);
 
@@ -44,6 +52,9 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     const toml_field schema[] = {
         TOML_STR(project_ctx, "package", "name", project_name),
         TOML_STR(project_ctx, "package", "version", version),
+        TOML_STR(project_ctx, "target", "compiler", target.compiler),
+        TOML_STR(project_ctx, "target", "std", target.std),
+        TOML_STR(project_ctx, "target", "cpp_std", target.cpp_std),
         TOML_INT(project_ctx, "profile.debug", "opt_level", profile.debug.opt_level),
         TOML_BOOL(project_ctx, "profile.debug", "debug_info", profile.debug.debug_info),
         TOML_INT(project_ctx, "profile.release", "opt_level", profile.release.opt_level),
@@ -69,6 +80,25 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
             return false;
         }
     }
+
+    /* target.compiler must be a known toolchain (if given). */
+    if (!valid_compiler(out->target.compiler)) {
+        if (err != NULL && err_size > 0)
+            snprintf(err, err_size, "unknown compiler '%s'", out->target.compiler);
+        toml_free(doc);
+        return false;
+    }
+
+    /* target.link is an array: copy up to PROJECT_MAX_LINK library names. */
+    str_list libs;
+    str_list_init(&libs);
+    if (toml_get_array(doc, "target", "link", &libs)) {
+        size_t count = str_list_count(&libs);
+        for (size_t i = 0; i < count && out->target.link_count < PROJECT_MAX_LINK; i++)
+            snprintf(out->target.link[out->target.link_count++],
+                     PROJECT_LINK_NAME_MAX, "%s", str_list_get(&libs, i));
+    }
+    str_list_free(&libs);
 
     toml_free(doc);
 
@@ -97,6 +127,16 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
     fprintf(stream, "project_name = %s\n", ctx->project_name);
     fprintf(stream, "version      = %s\n", ctx->version);
     fprintf(stream, "artifact     = %s\n", artifact_names[ctx->artifact]);
+    fprintf(stream, "target.compiler = %s\n",
+            ctx->target.compiler[0] != '\0' ? ctx->target.compiler : "(auto)");
+    fprintf(stream, "target.std      = %s\n",
+            ctx->target.std[0] != '\0' ? ctx->target.std : "(default)");
+    fprintf(stream, "target.cpp_std  = %s\n",
+            ctx->target.cpp_std[0] != '\0' ? ctx->target.cpp_std : "(default)");
+    fprintf(stream, "target.link     = [");
+    for (size_t i = 0; i < ctx->target.link_count; i++)
+        fprintf(stream, "%s%s", i > 0 ? ", " : "", ctx->target.link[i]);
+    fprintf(stream, "]\n");
     fprintf(stream, "profile.debug   = { opt_level = %d, debug_info = %s }\n",
             ctx->profile.debug.opt_level, ctx->profile.debug.debug_info ? "true" : "false");
     fprintf(stream, "profile.release = { opt_level = %d, debug_info = %s }\n",

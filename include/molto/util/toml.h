@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <molto/util/str_list.h>
+
 /*
  * A small, robust TOML parser. It supports a useful subset: [section] and
  * [a.b] headers, bare keys, inline comments, basic and literal strings, signed
@@ -50,6 +52,12 @@ void toml_free(toml_document *doc);
 /* True if at least one key was declared under `section`. */
 [[nodiscard]] bool toml_has_section(const toml_document *doc, const char *section);
 
+/* Copy the string elements of an array value into `out` (caller-initialised).
+   Returns false if the key is absent or is not a string array. Arrays must fit
+   on a single line. */
+[[nodiscard]] bool toml_get_array(const toml_document *doc, const char *section,
+                                  const char *key, str_list *out);
+
 /* Print every parsed entry (section/key/type/value) for debugging. */
 void toml_dump(const toml_document *doc, FILE *stream);
 
@@ -59,6 +67,7 @@ typedef enum {
     toml_field_string,
     toml_field_int,
     toml_field_bool,
+    toml_field_array,  /* string array; readable via toml_get_array, not bindable */
 } toml_field_type;
 
 /* One field of a binding schema: which TOML (section,key) maps to which struct
