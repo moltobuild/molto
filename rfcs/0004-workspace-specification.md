@@ -96,7 +96,8 @@ the raw file. Conceptually it offers:
   dependency graph, and recorded toolchain metadata.
 - **record** — a file's hash/timestamp, a command fingerprint, dependency edges,
   toolchain metadata.
-- **invalidate / prune** — drop entries for removed sources or stale targets.
+- **invalidate / prune** — drop entries for removed sources, headers or stale
+  targets (see Deletion and Pruning).
 - **close** — persist changes durably.
 
 **Concurrency:** a workspace has a single writer at a time, guarded by a lock in
@@ -106,7 +107,8 @@ invocation.
 
 ## Project / Workspace Discovery
 
-Molto locates the workspace root by walking upward from the current directory:
+Molto **MUST** locate the workspace root by walking upward from the current
+directory, so commands work from any subdirectory of a project:
 
 1. Start at the current working directory.
 2. If it contains `Project.toml`, it is the workspace root.
@@ -114,10 +116,40 @@ Molto locates the workspace root by walking upward from the current directory:
 4. If the filesystem root is reached with no `Project.toml`, report an error
    (not inside a Molto workspace).
 
-The `.bin/` directory is created at the discovered root on first build. This
-matches the manifest discovery described in RFC-0003. (Note: the current
-implementation only checks the working directory; closing this gap is a small
-change this RFC motivates.)
+The first directory found with a `Project.toml` wins (the nearest enclosing
+project). The `.bin/` directory is created at that root on first build. This
+matches the manifest discovery described in RFC-0003.
+
+*Current state:* the implementation only checks the working directory; a command
+run from a subdirectory fails to find the manifest. Closing this gap (the upward
+walk above) is a small, required change this RFC mandates.
+
+## Deletion and Pruning
+
+Removing a file from the project must not leave the build in a stale or
+incorrect state. Molto handles the cases as follows:
+
+- **A header is deleted.** Every translation unit whose recorded dependencies
+  included that header is **recompiled**. The missing prerequisite forces the
+  rebuild (fail-safe: a prerequisite that cannot be stat-ed is treated as
+  changed). The compiler then errors or succeeds depending on whether the
+  `#include` was also removed.
+- **A source is deleted.** Filesystem discovery no longer yields it, so it drops
+  out of the build graph; the affected target is **re-linked without its
+  object**, and the WSDB **prunes** the now-orphaned entries (the object file,
+  its depfile and its command fingerprint).
+- **A target is deleted** (e.g. a removed test). Its binary and metadata stop
+  being recorded and are pruned likewise.
+
+Pruning orphaned outputs is possible precisely because the WSDB knows the
+previous set of inputs and outputs; loose sidecar files do not make this easy.
+When in doubt, Molto rebuilds rather than trusting stale state.
+
+*Current state:* Molto already recompiles and re-links correctly in these cases
+(a deleted header fails the prerequisite check; a deleted source changes the
+link command's fingerprint, forcing a re-link). What it does **not** yet do is
+**prune** the orphaned objects/depfiles/fingerprints left under `build/`; the
+WSDB will own that.
 
 ## Relationship to Current State
 
@@ -127,8 +159,11 @@ under `build/`:
 - `<object>.d` — header dependencies emitted by the compiler (`-MMD`).
 - `<object>.cmd` / `<binary>.cmd` — the command fingerprint per artifact.
 
-These are the interim "WSDB-lite". Introducing the WSDB will absorb them into
-`.bin/`; behavior is unchanged until then.
+These are the interim "WSDB-lite". They drive correct recompiles and re-links,
+but they are **not pruned** when a source or target is deleted, so orphaned
+`.o`/`.d`/`.cmd` files accumulate under `build/`. Introducing the WSDB will
+absorb these sidecars into `.bin/` and add the pruning described above; behavior
+is otherwise unchanged until then.
 
 ## Reserved / Future
 
