@@ -37,9 +37,7 @@ MOLTEST(run_command) {
     EXPECT_TRUE(run_command_run(NULL, forwarded, 2) == 2);
 
     /* A program that dies from a signal is reported as 128 + signal, not as a
-       "failed to start" error. The sleep(1) ensures the rewritten source is
-       newer than the previous object so it actually recompiles. */
-    sleep(1);
+       "failed to start" error. */
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path,
         "#include <signal.h>\n"

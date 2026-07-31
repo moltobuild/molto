@@ -78,12 +78,24 @@ bool fs_make_dirs(const char *path) {
     return fs_make_dir(buffer);
 }
 
+/* Nanoseconds in one second, for composing a timestamp. */
+#define NANOS_PER_SECOND 1000000000LL
+
+bool fs_mtime_ns(const char *path, int64_t *out) {
+    struct stat info;
+    if (stat(path, &info) != 0)
+        return false;
+    *out = (int64_t)info.st_mtim.tv_sec * NANOS_PER_SECOND
+         + (int64_t)info.st_mtim.tv_nsec;
+    return true;
+}
+
 bool fs_source_newer(const char *source, const char *target) {
-    struct stat target_info;
-    if (stat(target, &target_info) != 0)
-        return true;
-    struct stat source_info;
-    if (stat(source, &source_info) != 0)
-        return true;
-    return source_info.st_mtime > target_info.st_mtime;
+    int64_t target_ns;
+    if (!fs_mtime_ns(target, &target_ns))
+        return true; /* missing target: rebuild */
+    int64_t source_ns;
+    if (!fs_mtime_ns(source, &source_ns))
+        return true; /* missing source: fail safe and rebuild */
+    return source_ns > target_ns;
 }

@@ -9,7 +9,7 @@
  * The Workspace Database (RFC-0004): the authoritative incremental state stored
  * in `<root>/.bin/wsdb`. It records, per output artifact, the command that
  * produced it and its prerequisites, and per input file a hybrid freshness
- * signature (mtime + size, confirmed by a content hash). All paths passed in are
+ * signature (nanosecond mtime + size, confirmed by a content hash). All paths in
  * the same root-prefixed paths the build composes.
  */
 typedef struct wsdb wsdb;

@@ -10,11 +10,12 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static long mtime_of(const char *path) {
-    struct stat info;
-    if (stat(path, &info) != 0)
-        return -1;
-    return (long)info.st_mtime;
+/* Nanosecond precision: without it, a re-link within the same second would look
+   unchanged. */
+static int64_t mtime_of(const char *path) {
+    int64_t when = -1;
+    (void)fs_mtime_ns(path, &when);
+    return when;
 }
 
 MOLTEST(build_service) {
@@ -48,16 +49,14 @@ MOLTEST(build_service) {
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     EXPECT_TRUE(fs_path_exists(binary));
-    long linked_at = mtime_of(binary);
+    int64_t linked_at = mtime_of(binary);
 
-    /* A no-op rebuild in a later second must NOT re-link (binary untouched). */
-    sleep(1);
+    /* A no-op rebuild must NOT re-link (the binary is left untouched). */
     EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
     /* Touching a header recompiles the units that include it. main.c includes
        util.h, so editing util.h must rebuild main.c and re-link. */
-    sleep(1);
     char util_header[512];
     snprintf(util_header, sizeof util_header, "%s/src/util.h", root);
     EXPECT_TRUE(fs_write_file(util_header, "int answer(void); /* touched */\n"));
@@ -66,7 +65,6 @@ MOLTEST(build_service) {
     linked_at = mtime_of(binary); /* rebase for the next step */
 
     /* Changing a source triggers recompilation and a re-link. */
-    sleep(1);
     char main_path[512];
     snprintf(main_path, sizeof main_path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(main_path,
@@ -122,8 +120,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);
     char fp_obj[512];
     snprintf(fp_obj, sizeof fp_obj, "%s/build/debug/obj/src/main.c.o", fp_root);
-    long compiled_at = mtime_of(fp_obj);
-    sleep(1);
+    int64_t compiled_at = mtime_of(fp_obj);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
     EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);

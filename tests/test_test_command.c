@@ -49,7 +49,6 @@ MOLTEST(test_command) {
     EXPECT_TRUE(fs_path_exists("build/debug/tests/test_fail"));
 
     /* Fix the failing test -> everything passes. */
-    sleep(1);
     EXPECT_TRUE(fs_write_file("tests/test_fail.c", "int main(void) { return 0; }\n"));
     EXPECT_TRUE(test_command_run(NULL) == exit_ok);
 

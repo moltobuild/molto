@@ -15,7 +15,9 @@
 
 #define WSDB_MAGIC   "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
-#define WSDB_VERSION 1u
+/* Version 2 stores input timestamps in nanoseconds (version 1 used seconds);
+   an older database is discarded and rebuilt. */
+#define WSDB_VERSION 2u
 #define WSDB_ROOT_MAX 4096
 #define WSDB_PATH    (WSDB_ROOT_MAX + 64) /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
@@ -28,7 +30,7 @@ typedef enum {
 
 typedef struct {
     wsdb_kind kind;
-    long mtime;       /* inputs: last-seen modification time (seconds) */
+    int64_t mtime_ns; /* inputs: last-seen modification time (nanoseconds) */
     uint64_t size;    /* inputs: last-seen size */
     uint64_t hash;    /* inputs: FNV-1a 64 of last-seen content */
     char *command;    /* artifacts: command fingerprint (heap) */
@@ -83,6 +85,15 @@ static void make_full(const char *root, const char *rel, char *out, size_t out_s
         snprintf(out, out_size, "%s/%s", root, rel);
 }
 
+/* Nanoseconds in one second, for composing a timestamp. */
+#define NANOS_PER_SECOND 1000000000LL
+
+/* Modification time of an already stat-ed file, in nanoseconds. */
+static int64_t stat_mtime_ns(const struct stat *info) {
+    return (int64_t)info->st_mtim.tv_sec * NANOS_PER_SECOND
+         + (int64_t)info->st_mtim.tv_nsec;
+}
+
 /* FNV-1a 64-bit hash of a file's content; 0 if it cannot be read. */
 static uint64_t hash_file(const char *path) {
     FILE *file = fopen(path, "rb");
@@ -118,13 +129,14 @@ static void record_input(wsdb *db, const char *rel) {
             return;
         }
     }
-    e->mtime = (long)info.st_mtime;
+    e->mtime_ns = stat_mtime_ns(&info);
     e->size = (uint64_t)info.st_size;
     e->hash = hash_file(full);
 }
 
 /* Has the input `rel` changed since it was recorded? Hybrid: trust mtime+size,
-   confirm with a content hash only when they differ (and refresh on a match). */
+   confirm with a content hash only when they differ (and refresh on a match).
+   Timestamps are nanosecond-precise, so edits within the same second count. */
 static bool input_unchanged(wsdb *db, const char *rel) {
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_input_kind)
@@ -134,10 +146,10 @@ static bool input_unchanged(wsdb *db, const char *rel) {
     struct stat info;
     if (stat(full, &info) != 0)
         return false; /* deleted */
-    if ((long)info.st_mtime == e->mtime && (uint64_t)info.st_size == e->size)
+    if (stat_mtime_ns(&info) == e->mtime_ns && (uint64_t)info.st_size == e->size)
         return true; /* fast path */
     if (hash_file(full) == e->hash) {
-        e->mtime = (long)info.st_mtime; /* touch without content change: refresh */
+        e->mtime_ns = stat_mtime_ns(&info); /* touched, same content: refresh */
         e->size = (uint64_t)info.st_size;
         db->dirty = true;
         return true;
@@ -298,7 +310,7 @@ static void save_entry(const char *key, void *value, void *vctx) {
     if (!c->ok)
         return;
     if (e->kind == wsdb_input_kind) {
-        c->ok = write_i64(c->f, (int64_t)e->mtime)
+        c->ok = write_i64(c->f, e->mtime_ns)
              && write_u64(c->f, e->size)
              && write_u64(c->f, e->hash);
     } else {
@@ -400,9 +412,8 @@ static void wsdb_load(wsdb *db) {
             break;
         }
         if (raw_kind == wsdb_input_kind) {
-            int64_t mtime;
-            ok = read_i64(f, &mtime) && read_u64(f, &e->size) && read_u64(f, &e->hash);
-            e->mtime = (long)mtime;
+            ok = read_i64(f, &e->mtime_ns) && read_u64(f, &e->size)
+              && read_u64(f, &e->hash);
         } else {
             char *command = read_str(f);
             if (command != NULL) {

@@ -97,7 +97,6 @@ MOLTEST(wsdb_ignores_a_touch_that_does_not_change_content) {
 
     /* Rewriting a prerequisite with identical content only moves its mtime;
        the content hash confirms nothing changed. */
-    sleep(1);
     write_at(fixture.root, "src/util.h", "int answer(void);\n");
     EXPECT_TRUE(wsdb_object_fresh(db, fixture.object, "cmd-v1"));
 
