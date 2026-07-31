@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build targets the C23 subset via -std=c2x, which needs GCC 12.
+      - name: Install GCC 12
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-12 g++-12
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      # Nothing above should have produced a warning; treat one as a failure so
+      # the build stays clean over time.
+      - name: Rebuild with warnings as errors
+        run: |
+          make clean
+          make build CFLAGS="-std=c2x -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -Werror -pthread -Iinclude"

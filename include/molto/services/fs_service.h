@@ -35,6 +35,11 @@
 /* Create `path` and any missing parent directories. Succeeds if it exists. */
 [[nodiscard]] bool fs_make_dirs(const char *path);
 
+/* Recursively delete `path` and everything below it. Succeeds if `path` does
+   not exist. Symlinks are removed, never followed, so a link inside the tree
+   cannot lead the deletion outside of it. */
+[[nodiscard]] bool fs_remove_tree(const char *path);
+
 /* Modification time of `path` in nanoseconds since the epoch. Returns false if
    the file cannot be stat-ed. Filesystems without sub-second resolution simply
    report whole seconds. */

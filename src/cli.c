@@ -1,6 +1,7 @@
 #include <molto/cli.h>
 
 #include <molto/commands/build_command.h>
+#include <molto/commands/clean_command.h>
 #include <molto/commands/init_command.h>
 #include <molto/commands/new_command.h>
 #include <molto/commands/run_command.h>
@@ -15,6 +16,12 @@
 const char *cli_version(void) {
     return MOLTO_VERSION;
 }
+
+/* The --all switch of `molto clean`. */
+static const cli_option clean_options[] = {
+    { "--all", 'a', cli_opt_flag, NULL,
+      "Also remove .bin/ (the incremental state)", NULL },
+};
 
 /* A --profile option shared by build/run/test. */
 static const cli_option profile_option[] = {
@@ -47,6 +54,10 @@ static int handle_test(const cli_args *args) {
     return test_command_run(cli_args_option(args, "--profile"));
 }
 
+static int handle_clean(const cli_args *args) {
+    return clean_command_run(cli_args_flag(args, "--all"));
+}
+
 static int handle_unimplemented(const cli_args *args) {
     fprintf(stderr, "molto: '%s' is not implemented yet "
                     "(see rfcs/0002-cli-specification.md)\n",
@@ -65,6 +76,8 @@ static const cli_command commands[] = {
       profile_option, sizeof profile_option / sizeof profile_option[0], handle_run },
     { "test", "Build and run the project's tests", NULL,
       profile_option, sizeof profile_option / sizeof profile_option[0], handle_test },
+    { "clean", "Remove build output", NULL,
+      clean_options, sizeof clean_options / sizeof clean_options[0], handle_clean },
     { "bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented },
     { "lint", "Run diagnostics and static checks", NULL, NULL, 0, handle_unimplemented },
     { "add", "Add a dependency", "<dep>", NULL, 0, handle_unimplemented },

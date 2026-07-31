@@ -1,11 +1,13 @@
 #include <molto/services/fs_service.h>
 
+#include <dirent.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 bool fs_path_exists(const char *path) {
     struct stat info;
@@ -92,6 +94,34 @@ bool fs_make_dirs(const char *path) {
         buffer[i] = '/';
     }
     return fs_make_dir(buffer);
+}
+
+/* Size of the buffer used to compose the path of an entry being deleted. */
+#define REMOVE_PATH_SIZE 4096
+
+bool fs_remove_tree(const char *path) {
+    if (!fs_is_dir_no_follow(path)) {
+        /* A file, a symlink, or nothing at all. */
+        return remove(path) == 0 || !fs_path_exists(path);
+    }
+    DIR *dir = opendir(path);
+    if (dir == NULL)
+        return false;
+    bool ok = true;
+    const struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        char child[REMOVE_PATH_SIZE];
+        if (!fs_format_path(child, sizeof child, "%s/%s", path, entry->d_name)) {
+            ok = false;
+            continue;
+        }
+        if (!fs_remove_tree(child))
+            ok = false;
+    }
+    closedir(dir);
+    return rmdir(path) == 0 && ok;
 }
 
 /* Nanoseconds in one second, for composing a timestamp. */

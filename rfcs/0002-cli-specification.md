@@ -67,6 +67,20 @@ Discovers and runs tests from the conventional `tests/` directory. No test
 file list is required; discovery follows the filesystem convention from
 RFC-0001.
 
+### `molto clean`
+
+```
+molto clean [--all]
+```
+
+Removes `build/`, the directory holding compiled output. With `--all`, also
+removes `.bin/`, discarding the incremental state so the next build starts
+from nothing.
+
+Only directories Molto produced are removed; the manifest and the sources are
+never touched. Running it on an already clean workspace succeeds: the point is
+to end up without those directories, not to have found them.
+
 ### `molto bench`
 
 Discovers and runs benchmarks from the conventional `bench/` directory,

@@ -187,3 +187,70 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
+    char root[] = "/tmp/molto_cpp_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "[package]\nname = \"cpp_app\"\n"
+        "[target]\ncpp_std = \"c++17\"\n"));
+    /* Uses <string> and a C++17 feature, so it only builds when the C++ driver
+       and cpp_std are both applied. */
+    snprintf(path, sizeof path, "%s/src/main.cpp", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#include <string>\n"
+        "int main() {\n"
+        "    if (auto text = std::string(\"molto\"); text.size() == 5) return 0;\n"
+        "    return 1;\n"
+        "}\n"));
+
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+
+    char binary[512];
+    snprintf(binary, sizeof binary, "%s/build/debug/cpp_app", root);
+    ASSERT_TRUE(fs_path_exists(binary));
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
+    EXPECT_TRUE(system(cmd) == 0);
+
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(build_honours_the_release_profile) {
+    char root[] = "/tmp/molto_release_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "[package]\nname = \"fast\"\n"
+        "[profile.release]\nopt_level = 2\ndebug_info = false\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    EXPECT_TRUE(build_project(root, profile_release, NULL, 0) == exit_ok);
+
+    /* Each profile gets its own output tree, so debug and release coexist. */
+    char release_binary[512];
+    snprintf(release_binary, sizeof release_binary, "%s/build/release/fast", root);
+    EXPECT_TRUE(fs_path_exists(release_binary));
+    char debug_binary[512];
+    snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast", root);
+    EXPECT_FALSE(fs_path_exists(debug_binary));
+
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(fs_path_exists(debug_binary));
+    EXPECT_TRUE(fs_path_exists(release_binary));
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}

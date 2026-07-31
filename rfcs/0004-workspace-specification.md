@@ -24,10 +24,11 @@ produced each artifact, and toolchain metadata. This state must be:
 - **machine-owned**: never hand-edited, safe to delete, and mutated only through
   a single sanctioned API so concurrent invocations cannot corrupt it.
 
-Today this information is scattered across sidecar files under `build/` (the
+This information used to be scattered across sidecar files under `build/` (the
 `.o.d` header-dependency files and the `.o.cmd` / `<binary>.cmd` command
-fingerprints). That is an interim "WSDB-lite"; the WSDB consolidates it into one
-versioned store.
+fingerprints). The WSDB consolidates it into one versioned store: the `.cmd`
+sidecars are gone, and the compiler's `.o.d` files are absorbed into the store
+and deleted as soon as they are read.
 
 ## The Workspace
 
@@ -81,8 +82,8 @@ Invariants:
 - The concrete byte layout is implementation-defined and may evolve behind the
   version header; this RFC fixes the contents and invariants, not the encoding.
 
-The WSDB consolidates the interim sidecars (`.o.d`, `.o.cmd`, `<binary>.cmd`)
-into one store.
+The WSDB replaced the interim sidecars (`.o.d`, `.o.cmd`, `<binary>.cmd`) with
+one store.
 
 ## Workspace API
 
@@ -120,9 +121,8 @@ The first directory found with a `Project.toml` wins (the nearest enclosing
 project). The `.bin/` directory is created at that root on first build. This
 matches the manifest discovery described in RFC-0003.
 
-*Current state:* the implementation only checks the working directory; a command
-run from a subdirectory fails to find the manifest. Closing this gap (the upward
-walk above) is a small, required change this RFC mandates.
+*Current state:* implemented. `workspace_find_root` performs the upward walk,
+so `build`, `run` and `test` work from any subdirectory of a workspace.
 
 ## Deletion and Pruning
 
@@ -145,30 +145,39 @@ Pruning orphaned outputs is possible precisely because the WSDB knows the
 previous set of inputs and outputs; loose sidecar files do not make this easy.
 When in doubt, Molto rebuilds rather than trusting stale state.
 
-*Current state:* Molto already recompiles and re-links correctly in these cases
-(a deleted header fails the prerequisite check; a deleted source changes the
-link command's fingerprint, forcing a re-link). What it does **not** yet do is
-**prune** the orphaned objects/depfiles/fingerprints left under `build/`; the
-WSDB will own that.
+*Current state:* implemented. Recompiles and re-links were already correct (a
+deleted header fails the prerequisite check; a deleted source changes the link
+command's fingerprint). Pruning now covers both kinds of output — objects and
+binaries — for sources and for tests, so a deleted test no longer leaves an
+executable that `molto test` would keep running. Inputs are never deleted: they
+are the user's files.
 
-## Relationship to Current State
+## Implementation Status
 
-Until the WSDB is implemented, Molto keeps incremental state as sidecar files
-under `build/`:
+Implemented: `.bin/` with an exclusive `flock`, the magic + version header, the
+fail-safe discard on a corrupt, truncated or version-incompatible file, the
+atomic save (staging file + rename), the hybrid freshness signature
+(nanosecond mtime + size, confirmed by a content hash), absorption of the
+compiler's depfiles, and pruning of orphaned objects and binaries.
 
-- `<object>.d` — header dependencies emitted by the compiler (`-MMD`).
-- `<object>.cmd` / `<binary>.cmd` — the command fingerprint per artifact.
+Not implemented yet, and each waiting on a feature rather than on this RFC:
 
-These are the interim "WSDB-lite". They drive correct recompiles and re-links,
-but they are **not pruned** when a source or target is deleted, so orphaned
-`.o`/`.d`/`.cmd` files accumulate under `build/`. Introducing the WSDB will
-absorb these sidecars into `.bin/` and add the pruning described above; behavior
-is otherwise unchanged until then.
+- **The dependency graph.** The store has three entry kinds (input, object,
+  binary) and no notion of a declared dependency, because dependency resolution
+  does not exist yet.
+- **Toolchain metadata.** The compiler's identity and version are only implicit
+  inside the recorded command fingerprint; there is no entry to query them.
+- **The build graph as a structure.** The store is a flat key/value map, not a
+  model of targets. There is no bench target because there is no `molto bench`.
+- **`invalidate`.** The API offers `prune`; explicit invalidation has not been
+  needed.
 
 ## Reserved / Future
 
 - Multi-package workspaces (`[workspace]` with `members`).
-- The concrete WSDB binary schema and its migration story.
+- The concrete WSDB binary schema and its migration story. A version bump
+  currently discards the whole file and rebuilds, which is fail-safe and cheap;
+  a real migration path is only worth it once a rebuild becomes expensive.
 - Cross-invocation caching and integration with the registry (`spec.md`
   sections 15-16), targeted for v0.3.
 
