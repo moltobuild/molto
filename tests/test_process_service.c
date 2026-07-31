@@ -18,3 +18,19 @@ MOLTEST(process_service) {
     const char *killed[] = { "sh", "-c", "kill -TERM $$", NULL };
     EXPECT_TRUE(process_run(killed) == 128 + 15); /* SIGTERM = 15 */
 }
+
+MOLTEST(process_exports_env_only_to_the_child) {
+    /* The child sees the variable... */
+    const char *const argv[] = {
+        "sh", "-c", "test \"$MOLTO_PROBE\" = \"exported\"", NULL
+    };
+    const process_env_var vars[] = { { "MOLTO_PROBE", "exported" } };
+    EXPECT_EQ(0, process_run_env(argv, vars, 1));
+
+    /* ...and molto's own environment is left alone, so one project's [env]
+       cannot leak into anything else this process does. */
+    EXPECT_NULL(getenv("MOLTO_PROBE"));
+
+    /* Without the variable, the same command fails. */
+    EXPECT_TRUE(process_run_env(argv, NULL, 0) != 0);
+}

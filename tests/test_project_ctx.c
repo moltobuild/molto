@@ -10,7 +10,6 @@ static const char *full_manifest(void) {
         "[package]\n"
         "name = \"demo_app\"      # the package\n"
         "version = \"1.2.3\"\n"
-        "artifact = \"shared\"\n"
         "\n"
         "[profile.release]\n"
         "opt_level = 2\n"
@@ -24,7 +23,6 @@ MOLTEST(project_parses_package_fields) {
 
     EXPECT_STREQ("demo_app", ctx.project_name);
     EXPECT_STREQ("1.2.3", ctx.version);
-    EXPECT_EQ(artifact_shared, ctx.artifact);
 }
 
 MOLTEST(project_applies_declared_profile) {
@@ -57,7 +55,6 @@ MOLTEST(project_defaults_optional_fields) {
     ASSERT_TRUE(project_parse("[package]\nname = \"tiny\"\n", &minimal, err, sizeof err));
 
     EXPECT_STREQ("0.0.0", minimal.version);
-    EXPECT_EQ(artifact_static, minimal.artifact);
     /* No [target] declared: autodetect (empty) and no link libraries. */
     EXPECT_STREQ("", minimal.target.compiler);
     EXPECT_STREQ("", minimal.target.std);
@@ -75,6 +72,13 @@ MOLTEST(project_rejects_invalid_manifests) {
     /* Unknown artifact kind and unknown compiler are errors. */
     EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"weird\"\n",
                                &ctx, err, sizeof err));
+
+    /* A known artifact kind is refused too: none of them changes what is built
+       yet, and silently ignoring the key would misreport what happened. */
+    err[0] = '\0';
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"static\"\n",
+                               &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "not supported yet"));
     EXPECT_FALSE(project_parse("[package]\nname = \"x\"\n[target]\ncompiler = \"turbo\"\n",
                                &ctx, err, sizeof err));
 
@@ -181,4 +185,35 @@ MOLTEST(project_rejects_more_link_libraries_than_it_can_hold) {
     project_ctx ctx;
     EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "[target].link"));
+}
+
+MOLTEST(project_reads_the_env_table) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(
+        "[package]\nname = \"app\"\n"
+        "[env]\nMOLTO_LOG = \"debug\"\nPKG_CONFIG_PATH = \"/opt/lib/pkgconfig\"\n",
+        &ctx, err, sizeof err));
+
+    /* Keys are discovered, not declared in a schema: any name is valid. */
+    ASSERT_EQ(2, ctx.env.count);
+    EXPECT_STREQ("MOLTO_LOG", ctx.env.names[0]);
+    EXPECT_STREQ("debug", ctx.env.values[0]);
+    EXPECT_STREQ("PKG_CONFIG_PATH", ctx.env.names[1]);
+    EXPECT_STREQ("/opt/lib/pkgconfig", ctx.env.values[1]);
+}
+
+MOLTEST(project_rejects_a_non_string_env_value) {
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse("[package]\nname = \"app\"\n[env]\nLEVEL = 3\n",
+                               &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[env].LEVEL"));
+}
+
+MOLTEST(project_without_env_has_none) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n", &ctx, err, sizeof err));
+    EXPECT_EQ(0, ctx.env.count);
 }

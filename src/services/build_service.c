@@ -187,8 +187,21 @@ static char *join_args(const str_list *argv) {
     return out;
 }
 
-/* Run a command held in a str_list argv (adds the NULL terminator). */
-static int run_str_argv(const str_list *argv) {
+size_t project_env_to_vars(const project_env *env, process_env_var *vars,
+                           size_t capacity) {
+    if (env == NULL)
+        return 0;
+    size_t count = env->count < capacity ? env->count : capacity;
+    for (size_t i = 0; i < count; i++) {
+        vars[i].name = env->names[i];
+        vars[i].value = env->values[i];
+    }
+    return count;
+}
+
+/* Run a command held in a str_list argv (adds the NULL terminator), exporting
+   the project's [env] variables to the child. */
+static int run_str_argv(const str_list *argv, const project_env *env) {
     size_t count = str_list_count(argv);
     const char **cargv = malloc((count + 1) * sizeof(char *));
     if (cargv == NULL)
@@ -196,7 +209,10 @@ static int run_str_argv(const str_list *argv) {
     for (size_t i = 0; i < count; i++)
         cargv[i] = str_list_get(argv, i);
     cargv[count] = NULL;
-    int status = process_run(cargv);
+
+    process_env_var vars[PROJECT_MAX_ENV];
+    size_t var_count = project_env_to_vars(env, vars, PROJECT_MAX_ENV);
+    int status = process_run_env(cargv, vars, var_count);
     free(cargv);
     return status;
 }
@@ -266,7 +282,8 @@ static char *compile_command_string(const char *source, const char *object,
    the WSDB afterwards, on the main thread. */
 static bool compile_one(const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
-                        const project_options *profile_opts, const char *include_flag) {
+                        const project_options *profile_opts, const char *include_flag,
+                        const project_env *env) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if (!depfile_path_for(object, depfile, sizeof depfile))
         return false;
@@ -277,7 +294,7 @@ static bool compile_one(const char *source, const char *object,
         str_list_free(&argv);
         return false;
     }
-    bool ok = run_str_argv(&argv) == 0;
+    bool ok = run_str_argv(&argv, env) == 0;
     str_list_free(&argv);
     return ok;
 }
@@ -352,6 +369,7 @@ typedef struct {
     const char *include_flag;
     const project_target *target;
     const project_options *profile_opts;
+    const project_env *env;
     atomic_bool *failed;
     bool succeeded; /* written only by the worker owning this task */
 } compile_task;
@@ -359,7 +377,8 @@ typedef struct {
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
     task->succeeded = compile_one(task->source, task->object, task->settings,
-                                  task->target, task->profile_opts, task->include_flag);
+                                  task->target, task->profile_opts, task->include_flag,
+                                  task->env);
     if (!task->succeeded) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
@@ -373,8 +392,8 @@ static void compile_task_run(void *arg) {
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
                            const project_target *target, const project_options *profile_opts,
-                           wsdb *db, const str_list *sources, str_list *objects,
-                           bool *any_cpp, bool *any_compiled) {
+                           const project_env *env, wsdb *db, const str_list *sources,
+                           str_list *objects, bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
     bool *needs = calloc(count, sizeof(bool));
     if (needs == NULL)
@@ -438,6 +457,7 @@ static int compile_sources(const char *root, build_profile profile,
             .include_flag = include_flag,
             .target = target,
             .profile_opts = profile_opts,
+            .env = env,
             .failed = &failed,
         };
         if (!task_pool_submit(pool, compile_task_run, &tasks[queued]))
@@ -510,7 +530,7 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
    link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
                          const project_target *target, const project_options *profile_opts,
-                         bool force, wsdb *db) {
+                         const project_env *env, bool force, wsdb *db) {
     str_list argv;
     str_list_init(&argv);
     if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts)) {
@@ -522,7 +542,7 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     bool ok = true;
     if (force || command == NULL || !wsdb_binary_fresh(db, binary, command)
         || link_needed(objects, binary)) {
-        ok = run_str_argv(&argv) == 0;
+        ok = run_str_argv(&argv, env) == 0;
         if (ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", binary);
     }
@@ -576,7 +596,7 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     *any_cpp_out = false;
     *any_compiled_out = false;
     result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
-                             profile_options_for(ctx_out, profile), db,
+                             profile_options_for(ctx_out, profile), &ctx_out->env, db,
                              &sources, objects_out, any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
@@ -605,7 +625,8 @@ int build_project(const char *root, build_profile profile,
             return exit_build_failure;
         }
         if (!link_project(any_cpp, &objects, binary, &ctx.target,
-                          profile_options_for(&ctx, profile), any_compiled, db)) {
+                          profile_options_for(&ctx, profile), &ctx.env,
+                          any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
@@ -743,7 +764,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         bool stale = command == NULL || !wsdb_object_fresh(db, test_object, command);
         if (stale) {
             if (!compile_one(test_source, test_object, &settings, &ctx.target,
-                             profile_opts, include_flag)) {
+                             profile_opts, include_flag, &ctx.env)) {
                 fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
                 free(command);
                 result = exit_build_failure;
@@ -777,7 +798,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool cpp = any_cpp || source_is_cpp(test_source);
         if (!link_project(cpp, &link_objects, test_binary, &ctx.target, profile_opts,
-                          recompiled || any_compiled, db)) {
+                          &ctx.env, recompiled || any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
             result = exit_build_failure;
         }

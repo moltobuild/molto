@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 #include <molto/build/profile.h>
+#include <molto/project/project_ctx.h>
+#include <molto/services/process_service.h>
 #include <molto/util/str_list.h>
 
 /* Build the project rooted at `root` (may be ".") using `profile`.
@@ -13,6 +15,13 @@
    (`out_binary_size` bytes). Returns a molto_exit_code. */
 [[nodiscard]] int build_project(const char *root, build_profile profile,
                                 char *out_binary, size_t out_binary_size);
+
+/* Translate a manifest's [env] table into the plain pairs process_service
+   expects, writing at most `capacity` of them. Returns how many were written.
+   Lives here because the build service is what bridges the manifest model and
+   the process service; neither of those needs to know about the other. */
+size_t project_env_to_vars(const project_env *env, process_env_var *vars,
+                           size_t capacity);
 
 /* Build the project's test executables: compiles `root/src` and then compiles
    and links each source under `root/tests` into its own executable at

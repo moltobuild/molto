@@ -52,6 +52,12 @@ void toml_free(toml_document *doc);
 /* True if at least one key was declared under `section`. */
 [[nodiscard]] bool toml_has_section(const toml_document *doc, const char *section);
 
+/* Append the keys declared under `section`, in declaration order, to `out`
+   (caller-initialised). For sections whose keys are not known in advance, such
+   as a table of environment variables. Returns false on allocation failure. */
+[[nodiscard]] bool toml_section_keys(const toml_document *doc, const char *section,
+                                     str_list *out);
+
 /* Copy the string elements of an array value into `out` (caller-initialised).
    Returns false if the key is absent or is not a string array. Arrays must fit
    on a single line. */

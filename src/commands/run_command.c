@@ -2,7 +2,9 @@
 
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/project/project_ctx.h>
 #include <molto/services/build_service.h>
+#include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
 #include <molto/workspace/workspace.h>
 
@@ -31,6 +33,19 @@ int run_command_run(const char *requested_profile,
     if (code != exit_ok)
         return code;
 
+    /* The program runs with the same [env] the build used, so a variable the
+       project needs is there whether it is compiled or executed. */
+    char manifest[4096];
+    project_ctx ctx;
+    char err[256] = "";
+    if (!fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root)
+        || !project_load(manifest, &ctx, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
+        return exit_invalid_manifest;
+    }
+    process_env_var vars[PROJECT_MAX_ENV];
+    size_t var_count = project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV);
+
     const char **argv = malloc((size_t)(forwarded_count + 2) * sizeof(char *));
     if (argv == NULL)
         return exit_build_failure;
@@ -40,7 +55,7 @@ int run_command_run(const char *requested_profile,
     argv[forwarded_count + 1] = NULL;
 
     fprintf(stderr, "Running %s\n", binary);
-    int status = process_run(argv);
+    int status = process_run_env(argv, vars, var_count);
     free(argv);
 
     if (status < 0) {

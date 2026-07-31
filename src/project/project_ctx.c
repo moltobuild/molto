@@ -87,6 +87,42 @@ static bool valid_compiler(const char *name) {
     return ok;
 }
 
+/* Read the [env] table. Its keys are the variable names, so they are discovered
+   rather than declared in a schema. Values must be strings. */
+[[nodiscard]] static bool read_env(const toml_document *doc, project_env *out,
+                                   char *err, size_t err_size) {
+    str_list names;
+    str_list_init(&names);
+    if (!toml_section_keys(doc, "env", &names)) {
+        str_list_free(&names);
+        return set_error(err, err_size, "could not read the [env] table");
+    }
+
+    bool ok = true;
+    size_t total = str_list_count(&names);
+    for (size_t i = 0; ok && i < total; i++) {
+        const char *name = str_list_get(&names, i);
+        if (out->count >= PROJECT_MAX_ENV) {
+            ok = set_error(err, err_size, "[env] has more than %d entries", PROJECT_MAX_ENV);
+            break;
+        }
+        char value[PROJECT_ENV_VALUE_MAX];
+        if (!toml_get_string(doc, "env", name, value, sizeof value))
+            ok = set_error(err, err_size, "[env].%s must be a string", name);
+        else if (!fs_format_path(out->names[out->count], PROJECT_ENV_NAME_MAX, "%s", name))
+            ok = set_error(err, err_size, "[env] name '%s' is longer than %d characters",
+                           name, PROJECT_ENV_NAME_MAX - 1);
+        else if (!fs_format_path(out->values[out->count], PROJECT_ENV_VALUE_MAX,
+                                 "%s", value))
+            ok = set_error(err, err_size, "[env].%s is longer than %d characters",
+                           name, PROJECT_ENV_VALUE_MAX - 1);
+        else
+            out->count++;
+    }
+    str_list_free(&names);
+    return ok;
+}
+
 /* Read defines/include/flags of a section into `out`. */
 [[nodiscard]] static bool read_options(const toml_document *doc, const char *section,
                                        project_options *out, char *err, size_t err_size) {
@@ -133,6 +169,14 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
             toml_free(doc);
             return set_error(err, err_size, "unknown artifact kind '%s'", artifact);
         }
+        /* No artifact kind changes what gets built yet: every project links an
+           executable, and libraries would need ar / -shared / -fPIC. Accepting
+           the key and quietly ignoring it would be a lie, so it is refused
+           until it means something. */
+        toml_free(doc);
+        return set_error(err, err_size,
+                         "artifact '%s' is not supported yet "
+                         "(this version always builds an executable)", artifact);
     }
 
     /* target.compiler must be a known toolchain (if given). */
@@ -164,8 +208,10 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     }
     str_list_free(&libs);
 
-    /* Base compilation options ([target]) and per-profile additions. */
-    ok = ok && read_options(doc, "target", &out->target.options, err, err_size)
+    /* Base compilation options ([target]), the [env] table, and per-profile
+       additions. */
+    ok = ok && read_env(doc, &out->env, err, err_size)
+            && read_options(doc, "target", &out->target.options, err, err_size)
             && read_options(doc, "profile.debug", &out->profile_options.debug,
                             err, err_size)
             && read_options(doc, "profile.release", &out->profile_options.release,

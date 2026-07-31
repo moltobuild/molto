@@ -443,6 +443,16 @@ bool toml_has_section(const toml_document *doc, const char *section) {
     return false;
 }
 
+bool toml_section_keys(const toml_document *doc, const char *section, str_list *out) {
+    for (size_t i = 0; i < doc->count; i++) {
+        if (strcmp(doc->items[i].section, section) != 0)
+            continue;
+        if (!str_list_push(out, doc->items[i].key))
+            return false;
+    }
+    return true;
+}
+
 bool toml_get_array(const toml_document *doc, const char *section,
                     const char *key, str_list *out) {
     const toml_entry *entry = find_entry(doc, section, key);

@@ -88,6 +88,11 @@ debug_info = true
 Publishing metadata (`description`, `license`, `authors`, `repository`, …) is
 **reserved** for a future revision (see Reserved Sections).
 
+**Current state:** `artifact` is **rejected** when declared. No kind changes
+what gets built yet — every project links an executable, and `static`/`shared`
+would require `ar`, `-shared` and `-fPIC` — so accepting the key and ignoring
+it would misreport what Molto did. It is refused until it means something.
+
 ## `[target]`
 
 Build configuration, kept compiler-agnostic (RFC-0001, Non-Goals): Molto
@@ -121,6 +126,11 @@ A cross-compilation `triple` (and per-OS override tables such as
 A table of `KEY = "value"` pairs. Each variable is injected both into the
 environment of the compiler/linker invocations and into the execution of the
 program under `molto run` and `molto test`. Values are strings.
+
+Variables are exported **in the child process**, after forking and before the
+command is executed: Molto's own environment is never modified, so one
+project's `[env]` cannot leak into anything else the process does. A
+non-string value is a manifest error.
 
 ## `[profile.*]`
 

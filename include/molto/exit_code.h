@@ -8,6 +8,10 @@ typedef enum {
     exit_invalid_manifest = 2,
     exit_dependency_failure = 3,
     exit_usage_error = 4,
+    /* The command exists in the CLI but has no implementation yet. Distinct
+       from a build failure so a script can tell "this broke" from "this does
+       not exist yet". */
+    exit_not_implemented = 5,
 } molto_exit_code;
 
 #endif /* MOLTO_EXIT_CODE_H */

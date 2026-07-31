@@ -48,9 +48,10 @@ static int handle_test(const cli_args *args) {
 }
 
 static int handle_unimplemented(const cli_args *args) {
-    fprintf(stderr, "molto: command '%s' is not yet implemented\n",
+    fprintf(stderr, "molto: '%s' is not implemented yet "
+                    "(see rfcs/0002-cli-specification.md)\n",
             cli_args_command_name(args));
-    return exit_build_failure;
+    return exit_not_implemented;
 }
 
 /* --- command table --- */

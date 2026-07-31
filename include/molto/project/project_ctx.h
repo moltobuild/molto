@@ -18,6 +18,9 @@ typedef enum {
 #define PROJECT_LINK_NAME_MAX 64
 #define PROJECT_MAX_OPTS      16
 #define PROJECT_OPT_LEN       96
+#define PROJECT_MAX_ENV       32
+#define PROJECT_ENV_NAME_MAX  64
+#define PROJECT_ENV_VALUE_MAX 256
 
 /* Build settings for each known profile. Access as ctx.profile.release, etc. */
 typedef struct {
@@ -56,12 +59,21 @@ typedef struct {
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;
 
+/* The `[env]` table: variables exported to every process Molto spawns for this
+   project — compiler, linker and `molto run` (RFC-0003). */
+typedef struct {
+    char names[PROJECT_MAX_ENV][PROJECT_ENV_NAME_MAX];
+    char values[PROJECT_MAX_ENV][PROJECT_ENV_VALUE_MAX];
+    size_t count;
+} project_env;
+
 /* The parsed Project.toml as a typed domain model. */
 typedef struct {
     char project_name[128];
     char version[64];
     artifact_kind artifact;
     project_target target;
+    project_env env;
     project_profiles profile;
     project_profile_options profile_options; /* per-profile extra options */
 } project_ctx;

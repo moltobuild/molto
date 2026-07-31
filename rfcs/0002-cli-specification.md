@@ -113,6 +113,25 @@ possible (see `spec.md` section 18).
 | 2    | Invalid or missing `Project.toml`           |
 | 3    | Dependency resolution failure               |
 | 4    | Invalid CLI usage (bad flags/args)          |
+| 5    | Command declared in the CLI but not implemented yet |
+
+A command listed in `--help` but not yet implemented MUST exit with 5, never
+with 1: a script has to be able to tell "this is not built yet" apart from
+"the build failed".
+
+### `molto run` and the program's exit code
+
+`molto run` is the one command whose exit status is not Molto's own. Once the
+build succeeds and the program starts, Molto is a transparent launcher:
+
+- the program's exit code is propagated verbatim, including values that
+  overlap the table above;
+- a program killed by signal N reports 128 + N, following shell convention;
+- the codes above only describe failures that happen **before** the program
+  runs (an invalid manifest, a failed build, a bad profile name).
+
+A caller that needs to distinguish Molto's failures from the program's should
+run `molto build` first and then the executable directly.
 
 ## Related RFCs
 
