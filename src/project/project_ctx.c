@@ -3,8 +3,23 @@
 #include <molto/services/fs_service.h>
 #include <molto/util/toml.h>
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Write a manifest error and return false, so callers can `return set_error(...)`. */
+static bool set_error(char *err, size_t err_size, const char *format, ...)
+    __attribute__((format(printf, 3, 4)));
+
+static bool set_error(char *err, size_t err_size, const char *format, ...) {
+    if (err != NULL && err_size > 0) {
+        va_list args;
+        va_start(args, format);
+        vsnprintf(err, err_size, format, args);
+        va_end(args);
+    }
+    return false;
+}
 
 /* Built-in profile defaults (RFC-0003 / spec section 13). Live here because
    they are project-level policy, not tied to the compiler backend. */
@@ -42,28 +57,45 @@ static bool valid_compiler(const char *name) {
         || strcmp(name, "msvc") == 0;
 }
 
-/* Copy a string array from `doc[section][key]` into a fixed-size destination,
-   capping at PROJECT_MAX_OPTS entries. */
-static void read_option_array(const toml_document *doc, const char *section,
-                              const char *key,
-                              char dest[PROJECT_MAX_OPTS][PROJECT_OPT_LEN],
-                              size_t *count) {
+/* Copy a string array from `doc[section][key]` into a fixed-size destination.
+   Overflowing the capacity — or a single value that does not fit — is an error
+   rather than a silent truncation: dropping a flag would produce a green build
+   that used different options than the manifest asked for. */
+[[nodiscard]] static bool read_option_array(const toml_document *doc, const char *section,
+                                            const char *key,
+                                            char dest[PROJECT_MAX_OPTS][PROJECT_OPT_LEN],
+                                            size_t *count, char *err, size_t err_size) {
     str_list values;
     str_list_init(&values);
+    bool ok = true;
     if (toml_get_array(doc, section, key, &values)) {
         size_t total = str_list_count(&values);
-        for (size_t i = 0; i < total && *count < PROJECT_MAX_OPTS; i++)
-            snprintf(dest[(*count)++], PROJECT_OPT_LEN, "%s", str_list_get(&values, i));
+        for (size_t i = 0; ok && i < total; i++) {
+            const char *value = str_list_get(&values, i);
+            if (*count >= PROJECT_MAX_OPTS)
+                ok = set_error(err, err_size, "[%s].%s has more than %d entries",
+                               section, key, PROJECT_MAX_OPTS);
+            else if (!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
+                ok = set_error(err, err_size,
+                               "[%s].%s entry '%s' is longer than %d characters",
+                               section, key, value, PROJECT_OPT_LEN - 1);
+            else
+                (*count)++;
+        }
     }
     str_list_free(&values);
+    return ok;
 }
 
 /* Read defines/include/flags of a section into `out`. */
-static void read_options(const toml_document *doc, const char *section,
-                         project_options *out) {
-    read_option_array(doc, section, "defines", out->defines, &out->define_count);
-    read_option_array(doc, section, "include", out->include, &out->include_count);
-    read_option_array(doc, section, "flags", out->flags, &out->flag_count);
+[[nodiscard]] static bool read_options(const toml_document *doc, const char *section,
+                                       project_options *out, char *err, size_t err_size) {
+    return read_option_array(doc, section, "defines", out->defines,
+                             &out->define_count, err, err_size)
+        && read_option_array(doc, section, "include", out->include,
+                             &out->include_count, err, err_size)
+        && read_option_array(doc, section, "flags", out->flags,
+                             &out->flag_count, err, err_size);
 }
 
 bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
@@ -98,46 +130,57 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     char artifact[16];
     if (toml_get_string(doc, "package", "artifact", artifact, sizeof artifact)) {
         if (!map_artifact(artifact, &out->artifact)) {
-            if (err != NULL && err_size > 0)
-                snprintf(err, err_size, "unknown artifact kind '%s'", artifact);
             toml_free(doc);
-            return false;
+            return set_error(err, err_size, "unknown artifact kind '%s'", artifact);
         }
     }
 
     /* target.compiler must be a known toolchain (if given). */
     if (!valid_compiler(out->target.compiler)) {
-        if (err != NULL && err_size > 0)
-            snprintf(err, err_size, "unknown compiler '%s'", out->target.compiler);
         toml_free(doc);
-        return false;
+        return set_error(err, err_size, "unknown compiler '%s'", out->target.compiler);
     }
 
-    /* target.link is an array: copy up to PROJECT_MAX_LINK library names. */
+    /* target.link is an array of library names, with the same no-silent-loss
+       rule as the option arrays above. */
     str_list libs;
     str_list_init(&libs);
+    bool ok = true;
     if (toml_get_array(doc, "target", "link", &libs)) {
         size_t count = str_list_count(&libs);
-        for (size_t i = 0; i < count && out->target.link_count < PROJECT_MAX_LINK; i++)
-            snprintf(out->target.link[out->target.link_count++],
-                     PROJECT_LINK_NAME_MAX, "%s", str_list_get(&libs, i));
+        for (size_t i = 0; ok && i < count; i++) {
+            const char *lib = str_list_get(&libs, i);
+            if (out->target.link_count >= PROJECT_MAX_LINK)
+                ok = set_error(err, err_size, "[target].link has more than %d entries",
+                               PROJECT_MAX_LINK);
+            else if (!fs_format_path(out->target.link[out->target.link_count],
+                                     PROJECT_LINK_NAME_MAX, "%s", lib))
+                ok = set_error(err, err_size,
+                               "[target].link entry '%s' is longer than %d characters",
+                               lib, PROJECT_LINK_NAME_MAX - 1);
+            else
+                out->target.link_count++;
+        }
     }
     str_list_free(&libs);
 
     /* Base compilation options ([target]) and per-profile additions. */
-    read_options(doc, "target", &out->target.options);
-    read_options(doc, "profile.debug", &out->profile_options.debug);
-    read_options(doc, "profile.release", &out->profile_options.release);
-    read_options(doc, "profile.bench", &out->profile_options.bench);
-    read_options(doc, "profile.custom", &out->profile_options.custom);
+    ok = ok && read_options(doc, "target", &out->target.options, err, err_size)
+            && read_options(doc, "profile.debug", &out->profile_options.debug,
+                            err, err_size)
+            && read_options(doc, "profile.release", &out->profile_options.release,
+                            err, err_size)
+            && read_options(doc, "profile.bench", &out->profile_options.bench,
+                            err, err_size)
+            && read_options(doc, "profile.custom", &out->profile_options.custom,
+                            err, err_size);
 
     toml_free(doc);
-
-    if (!manifest_is_valid_name(out->project_name)) {
-        if (err != NULL && err_size > 0)
-            snprintf(err, err_size, "package name is missing or not snake_case");
+    if (!ok)
         return false;
-    }
+
+    if (!manifest_is_valid_name(out->project_name))
+        return set_error(err, err_size, "package name is missing or not snake_case");
     return true;
 }
 

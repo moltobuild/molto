@@ -143,3 +143,47 @@ MOLTEST(build_service) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
     (void)system(cmd);
 }
+
+MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
+    char root[] = "/tmp/molto_partial_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"partial\"\n"));
+    snprintf(path, sizeof path, "%s/src/good.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int good(void) { return 0; }\n"));
+    snprintf(path, sizeof path, "%s/src/bad.c", root);
+    EXPECT_TRUE(fs_write_file(path, "this is not valid C\n"));
+
+    /* The build fails because of bad.c... */
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_build_failure);
+
+    /* ...but good.c did compile, and its object is recorded as up to date. */
+    char good_object[512];
+    snprintf(good_object, sizeof good_object, "%s/build/debug/obj/src/good.c.o", root);
+    ASSERT_TRUE(fs_path_exists(good_object));
+    int64_t compiled_at = mtime_of(good_object);
+
+    /* A second attempt only retries the broken unit: the good object is left
+       alone instead of being thrown away and rebuilt. */
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(mtime_of(good_object) == compiled_at);
+
+    /* No stale depfile is left behind for the unit that failed. */
+    char bad_depfile[512];
+    snprintf(bad_depfile, sizeof bad_depfile, "%s/build/debug/obj/src/bad.c.o.d", root);
+    EXPECT_FALSE(fs_path_exists(bad_depfile));
+
+    /* Fixing the broken unit completes the build. */
+    snprintf(path, sizeof path, "%s/src/bad.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}

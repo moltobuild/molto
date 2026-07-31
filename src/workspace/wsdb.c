@@ -22,6 +22,12 @@
 #define WSDB_PATH    (WSDB_ROOT_MAX + 64) /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
 
+/* The directory Molto owns inside a workspace, and the files it keeps there. */
+#define DIR_BIN       ".bin"
+#define FILE_DATABASE "wsdb"
+#define FILE_STAGING  "wsdb.tmp" /* written, then renamed over FILE_DATABASE */
+#define FILE_LOCK     "lock"
+
 typedef enum {
     wsdb_input_kind = 0,
     wsdb_object_kind = 1,
@@ -70,19 +76,26 @@ static void entry_set_command(wsdb_entry *e, const char *command) {
 
 /* --- path helpers (keys are stored relative to the workspace root) --- */
 
-static void relativize(const char *root, const char *path, char *out, size_t out_size) {
+/* False if the path did not fit: a truncated key would alias another entry. */
+[[nodiscard]] static bool relativize(const char *root, const char *path,
+                                     char *out, size_t out_size) {
     size_t root_len = strlen(root);
     if (strncmp(path, root, root_len) == 0 && path[root_len] == '/')
-        snprintf(out, out_size, "%s", path + root_len + 1);
-    else
-        snprintf(out, out_size, "%s", path);
+        return fs_format_path(out, out_size, "%s", path + root_len + 1);
+    return fs_format_path(out, out_size, "%s", path);
 }
 
-static void make_full(const char *root, const char *rel, char *out, size_t out_size) {
+[[nodiscard]] static bool make_full(const char *root, const char *rel,
+                                    char *out, size_t out_size) {
     if (rel[0] == '/')
-        snprintf(out, out_size, "%s", rel);
-    else
-        snprintf(out, out_size, "%s/%s", root, rel);
+        return fs_format_path(out, out_size, "%s", rel);
+    return fs_format_path(out, out_size, "%s/%s", root, rel);
+}
+
+/* Path of one of the files Molto owns under `<root>/.bin/`. */
+[[nodiscard]] static bool bin_path(const char *root, const char *name,
+                                   char *out, size_t out_size) {
+    return fs_format_path(out, out_size, "%s/" DIR_BIN "/%s", root, name);
 }
 
 /* Nanoseconds in one second, for composing a timestamp. */
@@ -114,24 +127,27 @@ static uint64_t hash_file(const char *path) {
 
 /* --- freshness --- */
 
-/* Record/refresh the input signature for `rel` (a key). */
-static void record_input(wsdb *db, const char *rel) {
+/* Record/refresh the input signature for `rel` (a key). False means the input
+   has no baseline, so whatever depends on it will be rebuilt. */
+[[nodiscard]] static bool record_input(wsdb *db, const char *rel) {
     char full[WSDB_PATH];
-    make_full(db->root, rel, full, sizeof full);
+    if (!make_full(db->root, rel, full, sizeof full))
+        return false;
     struct stat info;
     if (stat(full, &info) != 0)
-        return;
+        return false;
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_input_kind) {
         e = entry_new(wsdb_input_kind);
         if (e == NULL || !str_map_put(db->entries, rel, e)) {
             entry_free(e);
-            return;
+            return false;
         }
     }
     e->mtime_ns = stat_mtime_ns(&info);
     e->size = (uint64_t)info.st_size;
     e->hash = hash_file(full);
+    return true;
 }
 
 /* Has the input `rel` changed since it was recorded? Hybrid: trust mtime+size,
@@ -142,7 +158,8 @@ static bool input_unchanged(wsdb *db, const char *rel) {
     if (e == NULL || e->kind != wsdb_input_kind)
         return false; /* no baseline -> treat as changed */
     char full[WSDB_PATH];
-    make_full(db->root, rel, full, sizeof full);
+    if (!make_full(db->root, rel, full, sizeof full))
+        return false;
     struct stat info;
     if (stat(full, &info) != 0)
         return false; /* deleted */
@@ -159,7 +176,8 @@ static bool input_unchanged(wsdb *db, const char *rel) {
 
 bool wsdb_object_fresh(wsdb *db, const char *object, const char *command) {
     char rel[WSDB_PATH];
-    relativize(db->root, object, rel, sizeof rel);
+    if (!relativize(db->root, object, rel, sizeof rel))
+        return false;
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_object_kind)
         return false;
@@ -175,33 +193,40 @@ bool wsdb_object_fresh(wsdb *db, const char *object, const char *command) {
     return true;
 }
 
-void wsdb_record_object(wsdb *db, const char *object, const char *command,
+bool wsdb_record_object(wsdb *db, const char *object, const char *command,
                         const str_list *prereqs) {
     char rel[WSDB_PATH];
-    relativize(db->root, object, rel, sizeof rel);
+    if (!relativize(db->root, object, rel, sizeof rel))
+        return false;
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_object_kind) {
         e = entry_new(wsdb_object_kind);
         if (e == NULL || !str_map_put(db->entries, rel, e)) {
             entry_free(e);
-            return;
+            return false;
         }
     }
     entry_set_command(e, command);
     str_list_free(&e->prereqs);
     str_list_init(&e->prereqs);
+    db->dirty = true;
+    /* A prerequisite we fail to record leaves the object without a complete
+       baseline, so report it: the object is simply rebuilt next time. */
+    bool ok = true;
     for (size_t i = 0; i < str_list_count(prereqs); i++) {
         char prel[WSDB_PATH];
-        relativize(db->root, str_list_get(prereqs, i), prel, sizeof prel);
-        if (str_list_push(&e->prereqs, prel))
-            record_input(db, prel);
+        if (!relativize(db->root, str_list_get(prereqs, i), prel, sizeof prel)
+            || !str_list_push(&e->prereqs, prel)
+            || !record_input(db, prel))
+            ok = false;
     }
-    db->dirty = true;
+    return ok;
 }
 
 bool wsdb_binary_fresh(wsdb *db, const char *binary, const char *command) {
     char rel[WSDB_PATH];
-    relativize(db->root, binary, rel, sizeof rel);
+    if (!relativize(db->root, binary, rel, sizeof rel))
+        return false;
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_binary_kind)
         return false;
@@ -211,19 +236,21 @@ bool wsdb_binary_fresh(wsdb *db, const char *binary, const char *command) {
     return stat(binary, &info) == 0;
 }
 
-void wsdb_record_binary(wsdb *db, const char *binary, const char *command) {
+bool wsdb_record_binary(wsdb *db, const char *binary, const char *command) {
     char rel[WSDB_PATH];
-    relativize(db->root, binary, rel, sizeof rel);
+    if (!relativize(db->root, binary, rel, sizeof rel))
+        return false;
     wsdb_entry *e = str_map_get(db->entries, rel);
     if (e == NULL || e->kind != wsdb_binary_kind) {
         e = entry_new(wsdb_binary_kind);
         if (e == NULL || !str_map_put(db->entries, rel, e)) {
             entry_free(e);
-            return;
+            return false;
         }
     }
     entry_set_command(e, command);
     db->dirty = true;
+    return true;
 }
 
 /* --- pruning --- */
@@ -256,14 +283,23 @@ static void prune_collect(const char *key, void *value, void *vctx) {
 
 void wsdb_prune(wsdb *db, const str_list *live, const char *prefix) {
     char prefix_rel[WSDB_PATH];
-    relativize(db->root, prefix, prefix_rel, sizeof prefix_rel);
+    if (!relativize(db->root, prefix, prefix_rel, sizeof prefix_rel))
+        return;
 
+    /* An incomplete live set would make a live artifact look orphaned, so a
+       failure here cancels the prune: keeping a stale file beats deleting a
+       good one. */
     str_list live_rel;
     str_list_init(&live_rel);
-    for (size_t i = 0; i < str_list_count(live); i++) {
+    bool ok = true;
+    for (size_t i = 0; ok && i < str_list_count(live); i++) {
         char rel[WSDB_PATH];
-        relativize(db->root, str_list_get(live, i), rel, sizeof rel);
-        (void)str_list_push(&live_rel, rel);
+        ok = relativize(db->root, str_list_get(live, i), rel, sizeof rel)
+          && str_list_push(&live_rel, rel);
+    }
+    if (!ok) {
+        str_list_free(&live_rel);
+        return;
     }
 
     str_list to_remove;
@@ -274,8 +310,9 @@ void wsdb_prune(wsdb *db, const str_list *live, const char *prefix) {
     for (size_t i = 0; i < str_list_count(&to_remove); i++) {
         const char *rel = str_list_get(&to_remove, i);
         char full[WSDB_PATH];
-        make_full(db->root, rel, full, sizeof full);
-        remove(full); /* delete the orphaned object file */
+        if (!make_full(db->root, rel, full, sizeof full))
+            continue;
+        remove(full); /* delete the orphaned artifact */
         str_map_remove(db->entries, rel);
         db->dirty = true;
     }
@@ -325,7 +362,8 @@ static void save_entry(const char *key, void *value, void *vctx) {
 
 static bool wsdb_save(wsdb *db) {
     char tmp[WSDB_PATH];
-    snprintf(tmp, sizeof tmp, "%s/.bin/wsdb.tmp", db->root);
+    if (!bin_path(db->root, FILE_STAGING, tmp, sizeof tmp))
+        return false;
     FILE *f = fopen(tmp, "wb");
     if (f == NULL)
         return false;
@@ -343,7 +381,10 @@ static bool wsdb_save(wsdb *db) {
         return false;
     }
     char path[WSDB_PATH];
-    snprintf(path, sizeof path, "%s/.bin/wsdb", db->root);
+    if (!bin_path(db->root, FILE_DATABASE, path, sizeof path)) {
+        remove(tmp);
+        return false;
+    }
     return rename(tmp, path) == 0;
 }
 
@@ -371,11 +412,20 @@ static char *read_str(FILE *f) {
     return s;
 }
 
+/* True if a byte read from the file names a kind we know. Anything else is
+   corruption, not a future format: the version header covers real upgrades. */
+static bool kind_is_known(int raw_kind) {
+    return raw_kind == wsdb_input_kind
+        || raw_kind == wsdb_object_kind
+        || raw_kind == wsdb_binary_kind;
+}
+
 /* Load the DB into a fresh map; on any inconsistency the whole file is
    discarded and the DB stays empty (fail-safe). */
 static void wsdb_load(wsdb *db) {
     char path[WSDB_PATH];
-    snprintf(path, sizeof path, "%s/.bin/wsdb", db->root);
+    if (!bin_path(db->root, FILE_DATABASE, path, sizeof path))
+        return;
     FILE *f = fopen(path, "rb");
     if (f == NULL)
         return;
@@ -400,7 +450,7 @@ static void wsdb_load(wsdb *db) {
     bool ok = true;
     for (uint32_t i = 0; ok && i < count; i++) {
         int raw_kind = fgetc(f);
-        char *key = raw_kind == EOF ? NULL : read_str(f);
+        char *key = kind_is_known(raw_kind) ? read_str(f) : NULL;
         if (key == NULL) {
             ok = false;
             break;
@@ -464,15 +514,19 @@ wsdb *wsdb_open(const char *root) {
     }
 
     char bindir[WSDB_PATH];
-    snprintf(bindir, sizeof bindir, "%s/.bin", root);
-    if (!fs_make_dirs(bindir)) {
+    if (!fs_format_path(bindir, sizeof bindir, "%s/" DIR_BIN, root)
+        || !fs_make_dirs(bindir)) {
         str_map_destroy(db->entries);
         free(db);
         return NULL;
     }
 
     char lockpath[WSDB_PATH];
-    snprintf(lockpath, sizeof lockpath, "%s/.bin/lock", root);
+    if (!bin_path(root, FILE_LOCK, lockpath, sizeof lockpath)) {
+        str_map_destroy(db->entries);
+        free(db);
+        return NULL;
+    }
     db->lock_fd = open(lockpath, O_CREAT | O_RDWR, 0644);
     if (db->lock_fd < 0 || flock(db->lock_fd, LOCK_EX | LOCK_NB) != 0) {
         if (db->lock_fd >= 0)
@@ -487,13 +541,13 @@ wsdb *wsdb_open(const char *root) {
     return db;
 }
 
-void wsdb_close(wsdb *db) {
+bool wsdb_close(wsdb *db) {
     if (db == NULL)
-        return;
-    if (db->dirty)
-        (void)wsdb_save(db);
+        return true;
+    bool saved = !db->dirty || wsdb_save(db);
     if (db->lock_fd >= 0)
         close(db->lock_fd); /* releases the flock */
     str_map_destroy(db->entries);
     free(db);
+    return saved;
 }

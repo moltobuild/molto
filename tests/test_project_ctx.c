@@ -126,3 +126,59 @@ MOLTEST(project_reads_options_base_and_per_profile) {
     EXPECT_STREQ("-flto", ctx.profile_options.release.flags[0]);
     EXPECT_EQ(0, ctx.profile_options.debug.flag_count);
 }
+
+/* Build a manifest whose [target].defines array holds `count` entries. */
+static void manifest_with_defines(char *out, size_t out_size, size_t count) {
+    int pos = snprintf(out, out_size, "[package]\nname = \"app\"\n[target]\ndefines = [");
+    for (size_t i = 0; i < count; i++)
+        pos += snprintf(out + pos, out_size - (size_t)pos, "%s\"D%zu=1\"",
+                        i > 0 ? ", " : "", i);
+    snprintf(out + pos, out_size - (size_t)pos, "]\n");
+}
+
+MOLTEST(project_rejects_more_options_than_it_can_hold) {
+    char err[256] = "";
+    char manifest[2048];
+    project_ctx ctx;
+
+    /* Exactly at capacity is fine. */
+    manifest_with_defines(manifest, sizeof manifest, PROJECT_MAX_OPTS);
+    EXPECT_TRUE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_EQ(PROJECT_MAX_OPTS, ctx.target.options.define_count);
+
+    /* One more used to be dropped in silence, producing a green build with
+       fewer defines than the manifest asked for. */
+    manifest_with_defines(manifest, sizeof manifest, PROJECT_MAX_OPTS + 1);
+    err[0] = '\0';
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[target].defines"));
+}
+
+MOLTEST(project_rejects_an_overlong_option) {
+    char err[256] = "";
+    char manifest[512];
+    char value[PROJECT_OPT_LEN + 8];
+    memset(value, 'x', sizeof value - 1);
+    value[sizeof value - 1] = '\0';
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\n[target]\nflags = [\"%s\"]\n", value);
+
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[target].flags"));
+}
+
+MOLTEST(project_rejects_more_link_libraries_than_it_can_hold) {
+    char err[256] = "";
+    char manifest[2048];
+    int pos = snprintf(manifest, sizeof manifest,
+                       "[package]\nname = \"app\"\n[target]\nlink = [");
+    for (size_t i = 0; i < PROJECT_MAX_LINK + 1; i++)
+        pos += snprintf(manifest + pos, sizeof manifest - (size_t)pos, "%s\"lib%zu\"",
+                        i > 0 ? ", " : "", i);
+    snprintf(manifest + pos, sizeof manifest - (size_t)pos, "]\n");
+
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[target].link"));
+}

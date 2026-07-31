@@ -11,13 +11,17 @@
 
 static bool make_subdir(const char *root, const char *sub) {
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/%s", root, sub);
+    if (!fs_format_path(path, sizeof path, "%s/%s", root, sub))
+        return false;
     return fs_make_dir(path);
 }
 
 static int write_manifest(const char *root, const char *name) {
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/Project.toml", root);
+    if (!fs_format_path(path, sizeof path, "%s/Project.toml", root)) {
+        fprintf(stderr, "molto: path too long to compose (%s)\n", root);
+        return exit_build_failure;
+    }
     if (fs_path_exists(path)) {
         fprintf(stderr, "molto: '%s' already exists\n", path);
         return exit_invalid_manifest;
@@ -47,7 +51,10 @@ static const char main_template[] =
 
 static int write_main(const char *root) {
     char path[PATH_MAX];
-    snprintf(path, sizeof path, "%s/src/main.c", root);
+    if (!fs_format_path(path, sizeof path, "%s/src/main.c", root)) {
+        fprintf(stderr, "molto: path too long to compose (%s)\n", root);
+        return exit_build_failure;
+    }
     if (fs_path_exists(path))
         return exit_ok; /* never clobber an existing entry point */
     if (!fs_write_file(path, main_template)) {

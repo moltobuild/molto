@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* A throwaway workspace with one object and its two prerequisites. */
@@ -189,5 +191,80 @@ MOLTEST(wsdb_recovers_from_a_corrupt_database) {
     EXPECT_FALSE(wsdb_object_fresh(db, fixture.object, "cmd-v1"));
 
     wsdb_close(db);
+    fixture_teardown(&fixture);
+}
+
+/* Header of a well-formed database file: magic, version, entry count. */
+static bool write_wsdb_header(FILE *file, uint32_t version, uint32_t count) {
+    return fwrite("MOLTOWSDB", 1, 9, file) == 9
+        && fwrite(&version, sizeof version, 1, file) == 1
+        && fwrite(&count, sizeof count, 1, file) == 1;
+}
+
+/* Length-prefixed string, as the database stores them. */
+static bool write_wsdb_string(FILE *file, const char *text) {
+    uint32_t length = (uint32_t)strlen(text);
+    return fwrite(&length, sizeof length, 1, file) == 1
+        && fwrite(text, 1, length, file) == length;
+}
+
+/* An artifact entry: kind byte, key, command, and (objects only) prerequisites. */
+static bool write_wsdb_artifact(FILE *file, int kind, const char *key, const char *command,
+                                bool with_prereqs) {
+    if (fputc(kind, file) == EOF || !write_wsdb_string(file, key)
+        || !write_wsdb_string(file, command))
+        return false;
+    if (!with_prereqs)
+        return true;
+    uint32_t prereq_count = 0;
+    return fwrite(&prereq_count, sizeof prereq_count, 1, file) == 1;
+}
+
+MOLTEST(wsdb_discards_a_database_with_an_unknown_entry_kind) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    /* A structurally valid file whose first entry carries a kind byte that names
+       nothing. The rest of the file parses fine, so only an explicit check
+       catches it — and one bad entry condemns the whole file. */
+    char dbfile[256];
+    snprintf(dbfile, sizeof dbfile, "%s/.bin", fixture.root);
+    ASSERT_TRUE(fs_make_dirs(dbfile));
+    snprintf(dbfile, sizeof dbfile, "%s/.bin/wsdb", fixture.root);
+    FILE *file = fopen(dbfile, "wb");
+    ASSERT_NOT_NULL(file);
+    EXPECT_TRUE(write_wsdb_header(file, 2u, 2u));
+    EXPECT_TRUE(write_wsdb_artifact(file, 99, "build/debug/obj/src/ghost.c.o",
+                                    "cmd-ghost", false));
+    EXPECT_TRUE(write_wsdb_artifact(file, 1, "build/debug/obj/src/main.c.o",
+                                    "cmd-v1", true));
+    EXPECT_TRUE(fclose(file) == 0);
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+    /* The well-formed second entry is discarded along with the corrupt one. */
+    EXPECT_FALSE(wsdb_object_fresh(db, fixture.object, "cmd-v1"));
+
+    EXPECT_TRUE(wsdb_close(db));
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(wsdb_reports_a_state_it_could_not_save) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+    wsdb_record_object(db, fixture.object, "cmd-v1", &fixture.prereqs);
+
+    /* Make .bin/ read-only so the atomic save cannot write its staging file.
+       Losing the incremental state must be reported, not swallowed. */
+    char bindir[256];
+    snprintf(bindir, sizeof bindir, "%s/.bin", fixture.root);
+    ASSERT_TRUE(chmod(bindir, 0500) == 0);
+
+    EXPECT_FALSE(wsdb_close(db));
+
+    EXPECT_TRUE(chmod(bindir, 0700) == 0);
     fixture_teardown(&fixture);
 }

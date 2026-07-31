@@ -57,10 +57,19 @@
 /* Size of the buffer holding the "-std=<name>" flag. */
 #define STD_FLAG_SIZE 24
 
+/* Report a path that did not fit its buffer. Truncating one would silently
+   alias another artifact, so every composition failure surfaces here. */
+static bool report_long_path(const char *what) {
+    fprintf(stderr, "molto: path too long to compose (%s)\n", what);
+    return false;
+}
+
 /* Compose the output executable path for a package. */
-static void compose_binary_path(const char *root, build_profile profile,
-                                const char *name, char *out, size_t out_size) {
-    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_name(profile), name);
+[[nodiscard]] static bool compose_binary_path(const char *root, build_profile profile,
+                                              const char *name, char *out, size_t out_size) {
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s",
+                          root, profile_name(profile), name)
+        || report_long_path(name);
 }
 
 /* Select the settings for `profile` from a parsed project context. */
@@ -104,27 +113,30 @@ static void toolchain_drivers(const project_target *target,
 
 /* Map a source path to its object path, mirroring the source tree under
    `root/build/<profile_dir>/obj`. */
-static void object_path_for(const char *root, const char *profile_dir,
-                            const char *source, char *out, size_t out_size) {
+[[nodiscard]] static bool object_path_for(const char *root, const char *profile_dir,
+                                          const char *source, char *out, size_t out_size) {
     size_t root_len = strlen(root);
     const char *relative = source;
     if (strncmp(source, root, root_len) == 0 && source[root_len] == '/')
         relative = source + root_len + 1;
-    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX,
-             root, profile_dir, relative);
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX,
+                          root, profile_dir, relative)
+        || report_long_path(source);
 }
 
 /* The dependency file gcc writes next to an object: "<object>.d". Used both to
    tell the compiler where to write it and to read it back when deciding whether
    to rebuild, so the two paths always match. */
-static void depfile_path_for(const char *object, char *out, size_t out_size) {
-    snprintf(out, out_size, "%s" DEPFILE_SUFFIX, object);
+[[nodiscard]] static bool depfile_path_for(const char *object, char *out, size_t out_size) {
+    return fs_format_path(out, out_size, "%s" DEPFILE_SUFFIX, object)
+        || report_long_path(object);
 }
 
 /* Create the parent directory chain for `path`. */
 static bool make_parent_dirs(const char *path) {
     char directory[PATH_BUFFER_SIZE];
-    snprintf(directory, sizeof directory, "%s", path);
+    if (!fs_format_path(directory, sizeof directory, "%s", path))
+        return report_long_path(path);
     char *slash = strrchr(directory, '/');
     if (slash == NULL)
         return true;
@@ -135,7 +147,8 @@ static bool make_parent_dirs(const char *path) {
 /* Push "<prefix><value>" (e.g. "-DFOO=1") onto argv. */
 static bool push_prefixed(str_list *argv, const char *prefix, const char *value) {
     char buffer[PROJECT_OPT_LEN + 4];
-    snprintf(buffer, sizeof buffer, "%s%s", prefix, value);
+    if (!fs_format_path(buffer, sizeof buffer, "%s%s", prefix, value))
+        return report_long_path(value);
     return str_list_push(argv, buffer);
 }
 
@@ -151,7 +164,9 @@ static bool push_options(str_list *argv, const project_options *options) {
     return ok;
 }
 
-/* Join argv items into one space-separated heap string (caller frees). */
+/* Join argv items into one space-separated heap string (caller frees). The
+   buffer is sized from the same strings, so a short write means something went
+   wrong and the fingerprint would be wrong too: report it as a failure. */
 static char *join_args(const str_list *argv) {
     size_t total = 1;
     for (size_t i = 0; i < str_list_count(argv); i++)
@@ -160,9 +175,15 @@ static char *join_args(const str_list *argv) {
     if (out == NULL)
         return NULL;
     size_t pos = 0;
-    for (size_t i = 0; i < str_list_count(argv); i++)
-        pos += (size_t)snprintf(out + pos, total - pos, "%s%s",
-                                i > 0 ? " " : "", str_list_get(argv, i));
+    for (size_t i = 0; i < str_list_count(argv); i++) {
+        int written = snprintf(out + pos, total - pos, "%s%s",
+                               i > 0 ? " " : "", str_list_get(argv, i));
+        if (written < 0 || (size_t)written >= total - pos) {
+            free(out);
+            return NULL;
+        }
+        pos += (size_t)written;
+    }
     return out;
 }
 
@@ -228,7 +249,8 @@ static char *compile_command_string(const char *source, const char *object,
                                      const project_options *profile_opts,
                                      const char *include_flag) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    depfile_path_for(object, depfile, sizeof depfile);
+    if (!depfile_path_for(object, depfile, sizeof depfile))
+        return NULL;
     str_list argv;
     str_list_init(&argv);
     char *command = NULL;
@@ -246,7 +268,8 @@ static bool compile_one(const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
                         const project_options *profile_opts, const char *include_flag) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    depfile_path_for(object, depfile, sizeof depfile);
+    if (!depfile_path_for(object, depfile, sizeof depfile))
+        return false;
     str_list argv;
     str_list_init(&argv);
     if (!build_compile_argv(&argv, source, object, settings, target,
@@ -261,25 +284,44 @@ static bool compile_one(const char *source, const char *object,
 
 /* Record a freshly compiled object into the WSDB: read the prerequisites from
    gcc's depfile (falling back to just the source), store {command, prereqs},
-   then delete the now-absorbed depfile. Runs on the main thread. */
-static void wsdb_absorb_object(wsdb *db, const char *source, const char *object,
-                               const char *command) {
+   then delete the now-absorbed depfile. Runs on the main thread. Returns false
+   if the object could not be recorded, which only costs a rebuild next time. */
+[[nodiscard]] static bool wsdb_absorb_object(wsdb *db, const char *source,
+                                             const char *object, const char *command) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    depfile_path_for(object, depfile, sizeof depfile);
+    if (!depfile_path_for(object, depfile, sizeof depfile))
+        return false;
     str_list prereqs;
     str_list_init(&prereqs);
-    if (!depfile_read(depfile, &prereqs) || str_list_count(&prereqs) == 0)
-        (void)str_list_push(&prereqs, source);
-    wsdb_record_object(db, object, command, &prereqs);
+    if (!depfile_read(depfile, &prereqs) || str_list_count(&prereqs) == 0) {
+        if (!str_list_push(&prereqs, source)) {
+            str_list_free(&prereqs);
+            return false;
+        }
+    }
+    bool ok = wsdb_record_object(db, object, command, &prereqs);
     str_list_free(&prereqs);
     remove(depfile);
+    return ok;
+}
+
+/* Drop the depfile left behind by a unit that failed to compile: nothing will
+   absorb it, and a stale one would outlive the source it describes. */
+static void discard_depfile(const char *object) {
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    if (depfile_path_for(object, depfile, sizeof depfile))
+        remove(depfile);
 }
 
 /* Load and parse `root/Project.toml` into a project context, reporting the
    detailed parse error to stderr on failure. */
 static int load_project(const char *root, project_ctx *out) {
     char manifest_path[PATH_BUFFER_SIZE];
-    snprintf(manifest_path, sizeof manifest_path, "%s/" MANIFEST_FILENAME, root);
+    if (!fs_format_path(manifest_path, sizeof manifest_path,
+                        "%s/" MANIFEST_FILENAME, root)) {
+        (void)report_long_path(root);
+        return exit_invalid_manifest;
+    }
     if (!fs_path_exists(manifest_path)) {
         fprintf(stderr, "molto: no " MANIFEST_FILENAME " in '%s'\n", root);
         return exit_invalid_manifest;
@@ -292,6 +334,15 @@ static int load_project(const char *root, project_ctx *out) {
     return exit_ok;
 }
 
+/* Close the workspace database, saying so if the incremental state could not be
+   persisted. The build itself still stands; the next one just will not be
+   incremental, and silence there would look like a mysterious full rebuild. */
+static void warn_if_not_saved(wsdb *db) {
+    if (!wsdb_close(db))
+        fprintf(stderr, "molto: warning: could not save the workspace database; "
+                        "the next build will not be incremental\n");
+}
+
 /* One parallel compilation task: compile `source` into `object`, recording a
    shared failure flag. Runs on a task_pool worker. */
 typedef struct {
@@ -302,12 +353,14 @@ typedef struct {
     const project_target *target;
     const project_options *profile_opts;
     atomic_bool *failed;
+    bool succeeded; /* written only by the worker owning this task */
 } compile_task;
 
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
-    if (!compile_one(task->source, task->object, task->settings, task->target,
-                     task->profile_opts, task->include_flag)) {
+    task->succeeded = compile_one(task->source, task->object, task->settings,
+                                  task->target, task->profile_opts, task->include_flag);
+    if (!task->succeeded) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
     }
@@ -334,7 +387,10 @@ static int compile_sources(const char *root, build_profile profile,
         if (source_is_cpp(source))
             *any_cpp = true;
         char object[PATH_BUFFER_SIZE];
-        object_path_for(root, profile_name(profile), source, object, sizeof object);
+        if (!object_path_for(root, profile_name(profile), source, object, sizeof object)) {
+            free(needs);
+            return exit_build_failure;
+        }
         if (!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
             free(needs);
@@ -371,11 +427,11 @@ static int compile_sources(const char *root, build_profile profile,
 
     atomic_bool failed = false;
     int result = exit_ok;
-    size_t next = 0;
+    size_t queued = 0;
     for (size_t i = 0; i < count && result == exit_ok; i++) {
         if (!needs[i])
             continue;
-        tasks[next] = (compile_task){
+        tasks[queued] = (compile_task){
             .source = str_list_get(sources, i),
             .object = str_list_get(objects, i),
             .settings = settings,
@@ -384,9 +440,9 @@ static int compile_sources(const char *root, build_profile profile,
             .profile_opts = profile_opts,
             .failed = &failed,
         };
-        if (!task_pool_submit(pool, compile_task_run, &tasks[next]))
+        if (!task_pool_submit(pool, compile_task_run, &tasks[queued]))
             result = exit_build_failure;
-        next++;
+        queued++;
     }
     task_pool_wait(pool);
     task_pool_destroy(pool);
@@ -394,20 +450,21 @@ static int compile_sources(const char *root, build_profile profile,
     if (result == exit_ok && atomic_load(&failed))
         result = exit_build_failure;
 
-    /* Phase 3: record the freshly built objects into the WSDB (single-threaded). */
-    if (result == exit_ok) {
-        for (size_t i = 0; i < count; i++) {
-            if (!needs[i])
-                continue;
-            const char *source = str_list_get(sources, i);
-            const char *object = str_list_get(objects, i);
-            char *command = compile_command_string(source, object, settings, target,
-                                                   profile_opts, include_flag);
-            if (command != NULL) {
-                wsdb_absorb_object(db, source, object, command);
-                free(command);
-            }
+    /* Phase 3: record what was actually built (single-threaded). This runs even
+       when a unit failed, so the units that did compile are not thrown away and
+       recompiled on the next run. */
+    for (size_t i = 0; i < queued; i++) {
+        const compile_task *task = &tasks[i];
+        if (!task->succeeded) {
+            discard_depfile(task->object);
+            continue;
         }
+        char *command = compile_command_string(task->source, task->object, settings,
+                                               target, profile_opts, include_flag);
+        if (command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
+            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n",
+                    task->source);
+        free(command);
     }
 
     *any_compiled = true;
@@ -466,8 +523,8 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     if (force || command == NULL || !wsdb_binary_fresh(db, binary, command)
         || link_needed(objects, binary)) {
         ok = run_str_argv(&argv) == 0;
-        if (ok && command != NULL)
-            wsdb_record_binary(db, binary, command);
+        if (ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
+            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", binary);
     }
     free(command);
     str_list_free(&argv);
@@ -486,7 +543,10 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     manifest_profile settings = profile_settings(ctx_out, profile);
 
     char src_dir[PATH_BUFFER_SIZE];
-    snprintf(src_dir, sizeof src_dir, "%s/" DIR_SRC, root);
+    if (!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
+        (void)report_long_path(root);
+        return exit_build_failure;
+    }
     if (!fs_is_dir(src_dir)) {
         fprintf(stderr, "molto: no " DIR_SRC " directory in '%s'\n", root);
         return exit_build_failure;
@@ -494,7 +554,12 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
 
     str_list sources;
     str_list_init(&sources);
-    if (!source_discovery_collect(src_dir, &sources) || str_list_count(&sources) == 0) {
+    if (!source_discovery_collect(src_dir, &sources)) {
+        fprintf(stderr, "molto: could not read the sources under '%s'\n", src_dir);
+        str_list_free(&sources);
+        return exit_build_failure;
+    }
+    if (str_list_count(&sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
         str_list_free(&sources);
         return exit_build_failure;
@@ -502,7 +567,11 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
 
     /* Extra room over src_dir for the "-I" prefix and the terminating NUL. */
     char include_flag[PATH_BUFFER_SIZE + 4];
-    snprintf(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir);
+    if (!fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)) {
+        (void)report_long_path(src_dir);
+        str_list_free(&sources);
+        return exit_build_failure;
+    }
 
     *any_cpp_out = false;
     *any_compiled_out = false;
@@ -530,7 +599,11 @@ int build_project(const char *root, build_profile profile,
 
     if (result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
-        compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary);
+        if (!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
+            str_list_free(&objects);
+            (void)wsdb_close(db);
+            return exit_build_failure;
+        }
         if (!link_project(any_cpp, &objects, binary, &ctx.target,
                           profile_options_for(&ctx, profile), any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
@@ -539,16 +612,20 @@ int build_project(const char *root, build_profile profile,
         if (result == exit_ok) {
             /* Prune objects orphaned by removed sources (scoped to src/). */
             char prefix[PATH_BUFFER_SIZE];
-            snprintf(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
-                     root, profile_name(profile));
-            wsdb_prune(db, &objects, prefix);
-            if (out_binary != NULL)
-                snprintf(out_binary, out_binary_size, "%s", binary);
+            if (fs_format_path(prefix, sizeof prefix,
+                               "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
+                               root, profile_name(profile)))
+                wsdb_prune(db, &objects, prefix);
+            if (out_binary != NULL && !fs_format_path(out_binary, out_binary_size,
+                                                     "%s", binary)) {
+                (void)report_long_path(binary);
+                result = exit_build_failure;
+            }
         }
     }
 
     str_list_free(&objects);
-    wsdb_close(db);
+    warn_if_not_saved(db);
     return result;
 }
 
@@ -563,15 +640,18 @@ static const char *relative_to_root(const char *root, const char *path) {
 
 /* Output path of a test executable: build/<profile>/tests/<name>, mirroring the
    test source's path under tests/ with its extension stripped. */
-static void test_binary_path(const char *root, const char *profile_dir,
-                             const char *test_source, char *out, size_t out_size) {
+[[nodiscard]] static bool test_binary_path(const char *root, const char *profile_dir,
+                                           const char *test_source, char *out,
+                                           size_t out_size) {
     char stem[PATH_BUFFER_SIZE];
-    snprintf(stem, sizeof stem, "%s", relative_to_root(root, test_source));
+    if (!fs_format_path(stem, sizeof stem, "%s", relative_to_root(root, test_source)))
+        return report_long_path(test_source);
     char *dot = strrchr(stem, '.');
     char *slash = strrchr(stem, '/');
     if (dot != NULL && (slash == NULL || dot > slash))
         *dot = '\0';
-    snprintf(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem);
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem)
+        || report_long_path(test_source);
 }
 
 int build_tests(const char *root, build_profile profile, str_list *test_binaries_out) {
@@ -589,7 +669,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     int result = compile_project(root, profile, db, &ctx, &objects, &any_cpp, &any_compiled);
     if (result != exit_ok) {
         str_list_free(&objects);
-        wsdb_close(db);
+        warn_if_not_saved(db);
         return result;
     }
 
@@ -600,9 +680,14 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     /* Object of src/main.c (the app entry point), if any, to exclude from test
        links: each test brings its own main(). */
     char main_source[PATH_BUFFER_SIZE];
-    snprintf(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root);
     char main_object[PATH_BUFFER_SIZE];
-    object_path_for(root, profile_dir, main_source, main_object, sizeof main_object);
+    if (!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root)
+        || !object_path_for(root, profile_dir, main_source, main_object,
+                            sizeof main_object)) {
+        str_list_free(&objects);
+        warn_if_not_saved(db);
+        return exit_build_failure;
+    }
     bool has_main = fs_path_exists(main_source);
 
     /* Library objects = every src object except the app's main object. */
@@ -617,24 +702,32 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     }
 
     char src_dir[PATH_BUFFER_SIZE];
-    snprintf(src_dir, sizeof src_dir, "%s/" DIR_SRC, root);
     char include_flag[PATH_BUFFER_SIZE + 4];
-    snprintf(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir);
-
     char tests_dir[PATH_BUFFER_SIZE];
-    snprintf(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root);
+    if (result == exit_ok
+        && (!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)
+            || !fs_format_path(include_flag, sizeof include_flag,
+                               INCLUDE_FLAG_FORMAT, src_dir)
+            || !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root))) {
+        (void)report_long_path(root);
+        result = exit_build_failure;
+    }
+
     str_list test_sources;
     str_list_init(&test_sources);
     /* No tests/ directory (or empty) is not an error: nothing to build. */
-    if (result == exit_ok && fs_is_dir(tests_dir))
-        (void)source_discovery_collect(tests_dir, &test_sources);
+    if (result == exit_ok && fs_is_dir(tests_dir)
+        && !source_discovery_collect(tests_dir, &test_sources)) {
+        fprintf(stderr, "molto: could not read the tests under '%s'\n", tests_dir);
+        result = exit_build_failure;
+    }
 
     for (size_t i = 0; i < str_list_count(&test_sources) && result == exit_ok; i++) {
         const char *test_source = str_list_get(&test_sources, i);
 
         char test_object[PATH_BUFFER_SIZE];
-        object_path_for(root, profile_dir, test_source, test_object, sizeof test_object);
-        if (!make_parent_dirs(test_object)) {
+        if (!object_path_for(root, profile_dir, test_source, test_object, sizeof test_object)
+            || !make_parent_dirs(test_object)) {
             result = exit_build_failure;
             break;
         }
@@ -650,15 +743,17 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
                 result = exit_build_failure;
                 break;
             }
-            if (command != NULL)
-                wsdb_absorb_object(db, test_source, test_object, command);
+            if (command == NULL
+                || !wsdb_absorb_object(db, test_source, test_object, command))
+                fprintf(stderr, "molto: warning: could not record '%s' as up to date\n",
+                        test_source);
             recompiled = true;
         }
         free(command);
 
         char test_binary[PATH_BUFFER_SIZE];
-        test_binary_path(root, profile_dir, test_source, test_binary, sizeof test_binary);
-        if (!make_parent_dirs(test_binary)) {
+        if (!test_binary_path(root, profile_dir, test_source, test_binary, sizeof test_binary)
+            || !make_parent_dirs(test_binary)) {
             result = exit_build_failure;
             break;
         }
@@ -693,6 +788,6 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     str_list_free(&test_sources);
     str_list_free(&lib_objects);
     str_list_free(&objects);
-    wsdb_close(db);
+    warn_if_not_saved(db);
     return result;
 }

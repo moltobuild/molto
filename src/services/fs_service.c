@@ -1,5 +1,6 @@
 #include <molto/services/fs_service.h>
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,6 +59,16 @@ char *fs_read_file(const char *path) {
 bool fs_is_dir(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+bool fs_format_path(char *out, size_t size, const char *format, ...) {
+    if (size == 0)
+        return false;
+    va_list args;
+    va_start(args, format);
+    int written = vsnprintf(out, size, format, args);
+    va_end(args);
+    return written >= 0 && (size_t)written < size;
 }
 
 bool fs_make_dirs(const char *path) {
