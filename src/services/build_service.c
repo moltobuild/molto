@@ -722,12 +722,18 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         result = exit_build_failure;
     }
 
+    /* Objects of the tests that still exist, so the ones left by a deleted test
+       can be told apart and pruned. */
+    str_list test_objects;
+    str_list_init(&test_objects);
+
     for (size_t i = 0; i < str_list_count(&test_sources) && result == exit_ok; i++) {
         const char *test_source = str_list_get(&test_sources, i);
 
         char test_object[PATH_BUFFER_SIZE];
         if (!object_path_for(root, profile_dir, test_source, test_object, sizeof test_object)
-            || !make_parent_dirs(test_object)) {
+            || !make_parent_dirs(test_object)
+            || !str_list_push(&test_objects, test_object)) {
             result = exit_build_failure;
             break;
         }
@@ -785,6 +791,20 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
     }
 
+    /* A deleted test leaves behind an object and an executable that `molto test`
+       would happily keep running. Prune both (RFC-0004). */
+    if (result == exit_ok) {
+        char prefix[PATH_BUFFER_SIZE];
+        if (fs_format_path(prefix, sizeof prefix,
+                           "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_TESTS "/",
+                           root, profile_dir))
+            wsdb_prune(db, &test_objects, prefix);
+        if (fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/",
+                           root, profile_dir))
+            wsdb_prune(db, test_binaries_out, prefix);
+    }
+
+    str_list_free(&test_objects);
     str_list_free(&test_sources);
     str_list_free(&lib_objects);
     str_list_free(&objects);

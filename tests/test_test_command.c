@@ -2,7 +2,10 @@
 
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
+#include <molto/build/profile.h>
+#include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/util/str_list.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +56,60 @@ MOLTEST(test_command) {
     EXPECT_TRUE(test_command_run(NULL) == exit_ok);
 
     EXPECT_TRUE(chdir(previous) == 0);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(test_build_prunes_a_deleted_test) {
+    char root[] = "/tmp/molto_test_prune_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/tests", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"pruner\"\n"));
+    snprintf(path, sizeof path, "%s/src/lib.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int lib(void) { return 0; }\n"));
+    snprintf(path, sizeof path, "%s/tests/keep.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+    char doomed[512];
+    snprintf(doomed, sizeof doomed, "%s/tests/doomed.c", root);
+    EXPECT_TRUE(fs_write_file(doomed, "int main(void) { return 0; }\n"));
+
+    str_list binaries;
+    str_list_init(&binaries);
+    ASSERT_TRUE(build_tests(root, profile_debug, &binaries) == exit_ok);
+    EXPECT_EQ(2, str_list_count(&binaries));
+    str_list_free(&binaries);
+
+    char doomed_binary[512];
+    snprintf(doomed_binary, sizeof doomed_binary, "%s/build/debug/tests/doomed", root);
+    char doomed_object[512];
+    snprintf(doomed_object, sizeof doomed_object,
+             "%s/build/debug/obj/tests/doomed.c.o", root);
+    EXPECT_TRUE(fs_path_exists(doomed_binary));
+    EXPECT_TRUE(fs_path_exists(doomed_object));
+
+    /* Deleting the source used to leave a ghost executable behind, which
+       `molto test` would keep running forever. */
+    EXPECT_TRUE(remove(doomed) == 0);
+    str_list_init(&binaries);
+    ASSERT_TRUE(build_tests(root, profile_debug, &binaries) == exit_ok);
+    EXPECT_EQ(1, str_list_count(&binaries));
+    str_list_free(&binaries);
+
+    EXPECT_FALSE(fs_path_exists(doomed_binary));
+    EXPECT_FALSE(fs_path_exists(doomed_object));
+
+    /* The surviving test is untouched. */
+    char keep_binary[512];
+    snprintf(keep_binary, sizeof keep_binary, "%s/build/debug/tests/keep", root);
+    EXPECT_TRUE(fs_path_exists(keep_binary));
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);

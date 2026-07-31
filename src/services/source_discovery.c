@@ -25,7 +25,10 @@ static bool is_source(const char *path) {
 /* Size of the buffer used to compose the path of a discovered entry. */
 #define DISCOVERY_PATH_SIZE 4096
 
-bool source_discovery_collect(const char *root, str_list *out) {
+/* Walk `root`, appending every source found below it. Symlinked directories are
+   not descended into: a cycle of links would recurse forever. Linked files are
+   still collected — following one is bounded, walking one is not. */
+static bool collect_recursive(const char *root, str_list *out) {
     DIR *dir = opendir(root);
     if (dir == NULL)
         return false;
@@ -39,11 +42,20 @@ bool source_discovery_collect(const char *root, str_list *out) {
             ok = false;
             break;
         }
-        if (fs_is_dir(path))
-            ok = source_discovery_collect(path, out);
-        else if (is_source(entry->d_name))
+        if (fs_is_dir_no_follow(path))
+            ok = collect_recursive(path, out);
+        else if (!fs_is_dir(path) && is_source(entry->d_name))
             ok = str_list_push(out, path);
     }
     closedir(dir);
     return ok;
+}
+
+bool source_discovery_collect(const char *root, str_list *out) {
+    if (!collect_recursive(root, out))
+        return false;
+    /* Directory order varies between filesystems and would leak into the order
+       of the objects on the link line; sorting keeps a build reproducible. */
+    str_list_sort(out);
+    return true;
 }

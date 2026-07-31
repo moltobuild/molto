@@ -23,6 +23,10 @@ void str_list_init(str_list *list);
 /* Element at `index`, or NULL if out of range. */
 [[nodiscard]] const char *str_list_get(const str_list *list, size_t index);
 
+/* Sort the elements in ascending byte order, so a list built from directory
+   entries does not depend on the order the filesystem happened to return. */
+void str_list_sort(str_list *list);
+
 /* Free every element and reset the list to empty. */
 void str_list_free(str_list *list);
 

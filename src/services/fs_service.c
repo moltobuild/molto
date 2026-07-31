@@ -61,6 +61,11 @@ bool fs_is_dir(const char *path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
+bool fs_is_dir_no_follow(const char *path) {
+    struct stat info;
+    return lstat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
 bool fs_format_path(char *out, size_t size, const char *format, ...) {
     if (size == 0)
         return false;

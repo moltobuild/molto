@@ -40,6 +40,18 @@ const char *str_list_get(const str_list *list, size_t index) {
     return list->items[index];
 }
 
+/* Compare two elements through the pointers qsort hands to the callback. */
+static int compare_items(const void *left, const void *right) {
+    const char *const *a = left;
+    const char *const *b = right;
+    return strcmp(*a, *b);
+}
+
+void str_list_sort(str_list *list) {
+    if (list->count > 1)
+        qsort(list->items, list->count, sizeof(char *), compare_items);
+}
+
 void str_list_free(str_list *list) {
     for (size_t i = 0; i < list->count; i++)
         free(list->items[i]);

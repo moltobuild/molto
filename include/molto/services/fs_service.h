@@ -21,6 +21,11 @@
 /* Return true if `path` exists and is a directory. */
 [[nodiscard]] bool fs_is_dir(const char *path);
 
+/* Return true if `path` is a directory, without following a symlink to one.
+   Walking into linked directories can loop forever when the links form a
+   cycle, so a tree walk asks this instead of fs_is_dir. */
+[[nodiscard]] bool fs_is_dir_no_follow(const char *path);
+
 /* Compose a path into `out`. Returns false if the result did not fit, so a
    truncated path is reported instead of being used: two long source paths that
    truncate to the same object path would otherwise overwrite each other. */

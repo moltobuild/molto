@@ -269,10 +269,16 @@ static bool list_contains(const str_list *list, const char *value) {
     return false;
 }
 
+/* Outputs Molto produces and therefore may delete. Inputs are the user's files
+   and are never touched, however stale their entry looks. */
+static bool kind_is_output(wsdb_kind kind) {
+    return kind == wsdb_object_kind || kind == wsdb_binary_kind;
+}
+
 static void prune_collect(const char *key, void *value, void *vctx) {
     struct prune_ctx *ctx = vctx;
     wsdb_entry *e = value;
-    if (e->kind != wsdb_object_kind)
+    if (!kind_is_output(e->kind))
         return;
     if (strncmp(key, ctx->prefix, strlen(ctx->prefix)) != 0)
         return;
