@@ -21,6 +21,10 @@ LIB_SRC  := $(shell find src -name '*.c' ! -name 'main.c')
 MAIN_SRC := src/main.c
 TEST_SRC := $(shell find tests -name '*.c')
 
+# moltest: the test framework, a standalone module linked only into the tests.
+MOLTEST_DIR := modules/moltest
+MOLTEST_SRC := $(shell find $(MOLTEST_DIR)/src -name '*.c')
+
 LIB_OBJ  := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 MAIN_OBJ := $(MAIN_SRC:%.c=$(BUILD_DIR)/%.o)
 
@@ -44,9 +48,10 @@ run: build
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-$(TEST_BIN): $(LIB_OBJ) $(TEST_SRC)
+$(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -Itests $(LIB_OBJ) $(TEST_SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I$(MOLTEST_DIR)/include $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) \
+	    -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

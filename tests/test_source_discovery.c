@@ -1,5 +1,4 @@
-#include "test_framework.h"
-#include "tests.h"
+#include <moltest.h>
 
 #include <molto/services/fs_service.h>
 #include <molto/services/source_discovery.h>
@@ -21,35 +20,35 @@ static bool contains_suffix(const str_list *list, const char *suffix) {
     return false;
 }
 
-void suite_source_discovery(void) {
-    CHECK(source_is_cpp("x.cpp"));
-    CHECK(source_is_cpp("x.cc"));
-    CHECK(!source_is_cpp("x.c"));
-    CHECK(!source_is_cpp("x.h"));
+MOLTEST(source_discovery) {
+    EXPECT_TRUE(source_is_cpp("x.cpp"));
+    EXPECT_TRUE(source_is_cpp("x.cc"));
+    EXPECT_TRUE(!source_is_cpp("x.c"));
+    EXPECT_TRUE(!source_is_cpp("x.h"));
 
     char root[] = "/tmp/molto_disc_XXXXXX";
-    CHECK(mkdtemp(root) != NULL);
+    EXPECT_TRUE(mkdtemp(root) != NULL);
 
     char path[512];
     snprintf(path, sizeof path, "%s/sub", root);
-    CHECK(fs_make_dirs(path));
+    EXPECT_TRUE(fs_make_dirs(path));
     snprintf(path, sizeof path, "%s/a.c", root);
-    CHECK(fs_write_file(path, "int a;\n"));
+    EXPECT_TRUE(fs_write_file(path, "int a;\n"));
     snprintf(path, sizeof path, "%s/sub/b.cpp", root);
-    CHECK(fs_write_file(path, "int b;\n"));
+    EXPECT_TRUE(fs_write_file(path, "int b;\n"));
     snprintf(path, sizeof path, "%s/sub/c.h", root);
-    CHECK(fs_write_file(path, "int c;\n"));
+    EXPECT_TRUE(fs_write_file(path, "int c;\n"));
     snprintf(path, sizeof path, "%s/d.cc", root);
-    CHECK(fs_write_file(path, "int d;\n"));
+    EXPECT_TRUE(fs_write_file(path, "int d;\n"));
 
     str_list found;
     str_list_init(&found);
-    CHECK(source_discovery_collect(root, &found));
-    CHECK(str_list_count(&found) == 3); /* a.c, b.cpp, d.cc; c.h excluded */
-    CHECK(contains_suffix(&found, "/a.c"));
-    CHECK(contains_suffix(&found, "/b.cpp"));
-    CHECK(contains_suffix(&found, "/d.cc"));
-    CHECK(!contains_suffix(&found, "/c.h"));
+    EXPECT_TRUE(source_discovery_collect(root, &found));
+    EXPECT_TRUE(str_list_count(&found) == 3); /* a.c, b.cpp, d.cc; c.h excluded */
+    EXPECT_TRUE(contains_suffix(&found, "/a.c"));
+    EXPECT_TRUE(contains_suffix(&found, "/b.cpp"));
+    EXPECT_TRUE(contains_suffix(&found, "/d.cc"));
+    EXPECT_TRUE(!contains_suffix(&found, "/c.h"));
     str_list_free(&found);
 
     char cmd[600];

@@ -1,23 +1,22 @@
-#include "test_framework.h"
-#include "tests.h"
+#include <moltest.h>
 
 #include <molto/build/profile.h>
 
 #include <string.h>
 
-void suite_profile(void) {
+MOLTEST(profile) {
     build_profile profile = profile_debug;
 
-    CHECK(profile_parse("debug", &profile) && profile == profile_debug);
-    CHECK(profile_parse("release", &profile) && profile == profile_release);
-    CHECK(profile_parse("bench", &profile) && profile == profile_bench);
-    CHECK(profile_parse("custom", &profile) && profile == profile_custom);
+    EXPECT_TRUE(profile_parse("debug", &profile) && profile == profile_debug);
+    EXPECT_TRUE(profile_parse("release", &profile) && profile == profile_release);
+    EXPECT_TRUE(profile_parse("bench", &profile) && profile == profile_bench);
+    EXPECT_TRUE(profile_parse("custom", &profile) && profile == profile_custom);
 
-    CHECK(!profile_parse("nope", &profile));
-    CHECK(!profile_parse(NULL, &profile));
+    EXPECT_TRUE(!profile_parse("nope", &profile));
+    EXPECT_TRUE(!profile_parse(NULL, &profile));
 
-    CHECK(strcmp(profile_name(profile_debug), "debug") == 0);
-    CHECK(strcmp(profile_name(profile_release), "release") == 0);
-    CHECK(strcmp(profile_name(profile_bench), "bench") == 0);
-    CHECK(strcmp(profile_name(profile_custom), "custom") == 0);
+    EXPECT_TRUE(strcmp(profile_name(profile_debug), "debug") == 0);
+    EXPECT_TRUE(strcmp(profile_name(profile_release), "release") == 0);
+    EXPECT_TRUE(strcmp(profile_name(profile_bench), "bench") == 0);
+    EXPECT_TRUE(strcmp(profile_name(profile_custom), "custom") == 0);
 }

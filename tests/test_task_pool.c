@@ -1,5 +1,4 @@
-#include "test_framework.h"
-#include "tests.h"
+#include <moltest.h>
 
 #include <molto/util/task_pool.h>
 
@@ -20,23 +19,23 @@ static void slow_task(void *arg) {
 /* Submit `n` tasks to a pool of `workers` and assert each ran exactly once. */
 static void run_batch(size_t workers, int n, task_fn fn) {
     task_pool *pool = task_pool_create(workers);
-    CHECK(pool != NULL);
+    EXPECT_TRUE(pool != NULL);
     if (pool == NULL)
         return;
-    CHECK(task_pool_workers(pool) == workers);
+    EXPECT_TRUE(task_pool_workers(pool) == workers);
 
     atomic_int counter = 0;
     bool submitted = true;
     for (int i = 0; i < n; i++)
         submitted &= task_pool_submit(pool, fn, &counter);
-    CHECK(submitted);
+    EXPECT_TRUE(submitted);
 
     task_pool_wait(pool);
-    CHECK(atomic_load(&counter) == n);
+    EXPECT_TRUE(atomic_load(&counter) == n);
     task_pool_destroy(pool);
 }
 
-void suite_task_pool(void) {
+MOLTEST(task_pool) {
     /* Every task runs exactly once, across worker counts and N >> workers.
        workers == 1 covers the "single core drains the whole queue" case. */
     run_batch(1, 1000, increment_task);
@@ -48,26 +47,26 @@ void suite_task_pool(void) {
 
     /* Auto worker count and pool reuse across batches. */
     task_pool *pool = task_pool_create(0);
-    CHECK(pool != NULL);
+    EXPECT_TRUE(pool != NULL);
     if (pool == NULL)
         return;
-    CHECK(task_pool_workers(pool) >= 1);
+    EXPECT_TRUE(task_pool_workers(pool) >= 1);
 
     atomic_int counter = 0;
     bool submitted = true;
     for (int i = 0; i < 500; i++)
         submitted &= task_pool_submit(pool, increment_task, &counter);
-    CHECK(submitted);
+    EXPECT_TRUE(submitted);
     task_pool_wait(pool);
-    CHECK(atomic_load(&counter) == 500);
+    EXPECT_TRUE(atomic_load(&counter) == 500);
 
     atomic_store(&counter, 0);
     submitted = true;
     for (int i = 0; i < 300; i++)
         submitted &= task_pool_submit(pool, increment_task, &counter);
-    CHECK(submitted);
+    EXPECT_TRUE(submitted);
     task_pool_wait(pool);
-    CHECK(atomic_load(&counter) == 300);
+    EXPECT_TRUE(atomic_load(&counter) == 300);
 
     task_pool_destroy(pool);
 }

@@ -1,12 +1,12 @@
-#include "test_framework.h"
-#include "tests.h"
+#include <moltest.h>
 
 #include <molto/project/project_ctx.h>
 
 #include <string.h>
 
-void suite_project_ctx(void) {
-    const char *manifest =
+/* A manifest exercising the package and profile tables. */
+static const char *full_manifest(void) {
+    return
         "[package]\n"
         "name = \"demo_app\"      # the package\n"
         "version = \"1.2.3\"\n"
@@ -15,83 +15,114 @@ void suite_project_ctx(void) {
         "[profile.release]\n"
         "opt_level = 2\n"
         "debug_info = true\n";
+}
 
+MOLTEST(project_parses_package_fields) {
     char err[256] = "";
     project_ctx ctx;
-    CHECK(project_parse(manifest, &ctx, err, sizeof err));
+    ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
 
-    CHECK(strcmp(ctx.project_name, "demo_app") == 0);
-    CHECK(strcmp(ctx.version, "1.2.3") == 0);
-    CHECK(ctx.artifact == artifact_shared);
+    EXPECT_STREQ("demo_app", ctx.project_name);
+    EXPECT_STREQ("1.2.3", ctx.version);
+    EXPECT_EQ(artifact_shared, ctx.artifact);
+}
 
-    /* Declared profile overrides the built-in defaults. */
-    CHECK(ctx.profile.release.opt_level == 2);
-    CHECK(ctx.profile.release.debug_info == true);
+MOLTEST(project_applies_declared_profile) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
 
-    /* [target] absent -> autodetect defaults (empty strings, no link libs). */
-    CHECK(ctx.target.compiler[0] == '\0');
-    CHECK(ctx.target.std[0] == '\0');
-    CHECK(ctx.target.link_count == 0);
+    /* The declared profile overrides the built-in defaults. */
+    EXPECT_EQ(2, ctx.profile.release.opt_level);
+    EXPECT_TRUE(ctx.profile.release.debug_info);
+}
 
-    /* Undeclared profiles keep their built-in defaults. */
-    CHECK(ctx.profile.debug.opt_level == 0 && ctx.profile.debug.debug_info == true);
-    CHECK(ctx.profile.bench.opt_level == 3 && ctx.profile.bench.debug_info == false);
-    CHECK(ctx.profile.custom.opt_level == 2 && ctx.profile.custom.debug_info == true);
+MOLTEST(project_keeps_builtin_profile_defaults) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
 
-    /* Defaults when optional package fields are absent. */
+    /* Profiles that were not declared keep their built-in values. */
+    EXPECT_EQ(0, ctx.profile.debug.opt_level);
+    EXPECT_TRUE(ctx.profile.debug.debug_info);
+    EXPECT_EQ(3, ctx.profile.bench.opt_level);
+    EXPECT_FALSE(ctx.profile.bench.debug_info);
+    EXPECT_EQ(2, ctx.profile.custom.opt_level);
+    EXPECT_TRUE(ctx.profile.custom.debug_info);
+}
+
+MOLTEST(project_defaults_optional_fields) {
+    char err[256] = "";
     project_ctx minimal;
-    CHECK(project_parse("[package]\nname = \"tiny\"\n", &minimal, err, sizeof err));
-    CHECK(strcmp(minimal.version, "0.0.0") == 0);
-    CHECK(minimal.artifact == artifact_static);
+    ASSERT_TRUE(project_parse("[package]\nname = \"tiny\"\n", &minimal, err, sizeof err));
 
-    /* Missing or invalid name is an error. */
-    CHECK(!project_parse("[package]\nversion = \"1.0.0\"\n", &ctx, err, sizeof err));
-    CHECK(!project_parse("[package]\nname = \"Bad_Name\"\n", &ctx, err, sizeof err));
+    EXPECT_STREQ("0.0.0", minimal.version);
+    EXPECT_EQ(artifact_static, minimal.artifact);
+    /* No [target] declared: autodetect (empty) and no link libraries. */
+    EXPECT_STREQ("", minimal.target.compiler);
+    EXPECT_STREQ("", minimal.target.std);
+    EXPECT_EQ(0, minimal.target.link_count);
+}
 
-    /* Unknown artifact kind is an error. */
-    CHECK(!project_parse("[package]\nname = \"x\"\nartifact = \"weird\"\n",
-                         &ctx, err, sizeof err));
+MOLTEST(project_rejects_invalid_manifests) {
+    char err[256] = "";
+    project_ctx ctx;
 
-    /* [target] is read: compiler, std, cpp_std and the link array. */
-    project_ctx target_ctx;
-    CHECK(project_parse(
+    /* A missing or non-snake_case package name is an error. */
+    EXPECT_FALSE(project_parse("[package]\nversion = \"1.0.0\"\n", &ctx, err, sizeof err));
+    EXPECT_FALSE(project_parse("[package]\nname = \"Bad_Name\"\n", &ctx, err, sizeof err));
+
+    /* Unknown artifact kind and unknown compiler are errors. */
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"weird\"\n",
+                               &ctx, err, sizeof err));
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\n[target]\ncompiler = \"turbo\"\n",
+                               &ctx, err, sizeof err));
+
+    /* A malformed manifest surfaces the parser's line-tagged error. */
+    err[0] = '\0';
+    EXPECT_FALSE(project_parse("[package\nname = \"x\"\n", &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
+}
+
+MOLTEST(project_reads_target_table) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(
         "[package]\nname = \"app\"\n"
         "[target]\n"
         "compiler = \"clang\"\n"
         "std = \"c23\"\n"
         "cpp_std = \"c++20\"\n"
         "link = [\"m\", \"pthread\"]\n",
-        &target_ctx, err, sizeof err));
-    CHECK(strcmp(target_ctx.target.compiler, "clang") == 0);
-    CHECK(strcmp(target_ctx.target.std, "c23") == 0);
-    CHECK(strcmp(target_ctx.target.cpp_std, "c++20") == 0);
-    CHECK(target_ctx.target.link_count == 2);
-    CHECK(strcmp(target_ctx.target.link[0], "m") == 0);
-    CHECK(strcmp(target_ctx.target.link[1], "pthread") == 0);
+        &ctx, err, sizeof err));
 
-    /* Unknown compiler is an error. */
-    CHECK(!project_parse("[package]\nname = \"x\"\n[target]\ncompiler = \"turbo\"\n",
-                         &ctx, err, sizeof err));
+    EXPECT_STREQ("clang", ctx.target.compiler);
+    EXPECT_STREQ("c23", ctx.target.std);
+    EXPECT_STREQ("c++20", ctx.target.cpp_std);
+    EXPECT_EQ(2, ctx.target.link_count);
+    EXPECT_STREQ("m", ctx.target.link[0]);
+    EXPECT_STREQ("pthread", ctx.target.link[1]);
+}
 
-    /* defines/include/flags: base in [target], custom added per profile. */
-    project_ctx opt_ctx;
-    CHECK(project_parse(
+MOLTEST(project_reads_options_base_and_per_profile) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(
         "[package]\nname = \"app\"\n"
         "[target]\ndefines = [\"BASE=1\"]\ninclude = [\"vendor\"]\nflags = [\"-Wall\"]\n"
         "[profile.release]\nflags = [\"-flto\"]\n",
-        &opt_ctx, err, sizeof err));
-    CHECK(opt_ctx.target.options.define_count == 1);
-    CHECK(strcmp(opt_ctx.target.options.defines[0], "BASE=1") == 0);
-    CHECK(opt_ctx.target.options.include_count == 1);
-    CHECK(strcmp(opt_ctx.target.options.include[0], "vendor") == 0);
-    CHECK(opt_ctx.target.options.flag_count == 1);
-    CHECK(strcmp(opt_ctx.target.options.flags[0], "-Wall") == 0);
-    CHECK(opt_ctx.profile_options.release.flag_count == 1);
-    CHECK(strcmp(opt_ctx.profile_options.release.flags[0], "-flto") == 0);
-    CHECK(opt_ctx.profile_options.debug.flag_count == 0);
+        &ctx, err, sizeof err));
 
-    /* A malformed manifest surfaces the parser's line-tagged error. */
-    err[0] = '\0';
-    CHECK(!project_parse("[package\nname = \"x\"\n", &ctx, err, sizeof err));
-    CHECK(strstr(err, "Project.toml:1") != NULL);
+    /* Base options from [target] apply to every profile. */
+    EXPECT_EQ(1, ctx.target.options.define_count);
+    EXPECT_STREQ("BASE=1", ctx.target.options.defines[0]);
+    EXPECT_EQ(1, ctx.target.options.include_count);
+    EXPECT_STREQ("vendor", ctx.target.options.include[0]);
+    EXPECT_EQ(1, ctx.target.options.flag_count);
+    EXPECT_STREQ("-Wall", ctx.target.options.flags[0]);
+
+    /* Per-profile options are added on top, only for that profile. */
+    EXPECT_EQ(1, ctx.profile_options.release.flag_count);
+    EXPECT_STREQ("-flto", ctx.profile_options.release.flags[0]);
+    EXPECT_EQ(0, ctx.profile_options.debug.flag_count);
 }
