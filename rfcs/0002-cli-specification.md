@@ -39,7 +39,16 @@ specification is required so that:
 
 Creates a new project directory named `<name>` containing a `Project.toml`
 and the conventional `src/`, `tests/` layout described in RFC-0001
-(Philosophy).
+(Philosophy), plus a starter `src/main.c` so the project builds and runs
+immediately.
+
+It also writes a `.gitignore` listing the two directories Molto owns,
+`build/` and `.bin/`. Both are derived from the sources and safe to delete
+(RFC-0004), so neither belongs in version control — and without this, the
+first `git add -A` would commit a binary workspace database that changes on
+every build. Molto writes the file but does not initialize a repository:
+generating an inert text file is not the same as assuming a version control
+system. Any of these files that already exists is left untouched.
 
 ### `molto init`
 

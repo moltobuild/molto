@@ -47,3 +47,53 @@ MOLTEST(scaffold) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+MOLTEST(scaffold_ignores_the_directories_molto_owns) {
+    char root[] = "/tmp/molto_ignore_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char project[600];
+    snprintf(project, sizeof project, "%s/demo", root);
+    ASSERT_TRUE(scaffold_project(project, "demo") == exit_ok);
+
+    /* Without this, `git add -A` on a fresh project commits the build output
+       and the workspace database, which is binary and changes on every build. */
+    char path[700];
+    snprintf(path, sizeof path, "%s/.gitignore", project);
+    ASSERT_TRUE(fs_path_exists(path));
+    char *ignore = fs_read_file(path);
+    ASSERT_NOT_NULL(ignore);
+    EXPECT_NOT_NULL(strstr(ignore, "/build/"));
+    EXPECT_NOT_NULL(strstr(ignore, "/.bin/"));
+    free(ignore);
+
+    char cmd[700];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(scaffold_keeps_an_existing_gitignore) {
+    char root[] = "/tmp/molto_keepignore_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char project[600];
+    snprintf(project, sizeof project, "%s/demo", root);
+    ASSERT_TRUE(fs_make_dirs(project));
+
+    /* A project being adopted may already have one: it is the user's file. */
+    char path[700];
+    snprintf(path, sizeof path, "%s/.gitignore", project);
+    ASSERT_TRUE(fs_write_file(path, "*.log\n"));
+
+    ASSERT_TRUE(scaffold_project(project, "demo") == exit_ok);
+
+    char *ignore = fs_read_file(path);
+    ASSERT_NOT_NULL(ignore);
+    EXPECT_NOT_NULL(strstr(ignore, "*.log"));
+    EXPECT_NULL(strstr(ignore, "/build/"));
+    free(ignore);
+
+    char cmd[700];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}

@@ -49,15 +49,28 @@ static const char main_template[] =
     "    return 0;\n"
     "}\n";
 
-static int write_main(const char *root) {
+/* The two directories Molto owns and writes into. Both are derived from the
+   sources and safe to delete (RFC-0004), so neither belongs in version
+   control — and `.bin/` in particular holds a binary file that changes on
+   every build. */
+static const char gitignore_template[] =
+    "# Build output\n"
+    "/build/\n"
+    "\n"
+    "# Workspace database (molto-owned metadata)\n"
+    "/.bin/\n";
+
+/* Write one of the starter files, leaving an existing one untouched. */
+static int write_starter_file(const char *root, const char *relative,
+                              const char *content) {
     char path[PATH_MAX];
-    if (!fs_format_path(path, sizeof path, "%s/src/main.c", root)) {
+    if (!fs_format_path(path, sizeof path, "%s/%s", root, relative)) {
         fprintf(stderr, "molto: path too long to compose (%s)\n", root);
         return exit_build_failure;
     }
     if (fs_path_exists(path))
-        return exit_ok; /* never clobber an existing entry point */
-    if (!fs_write_file(path, main_template)) {
+        return exit_ok; /* never clobber what the user already has */
+    if (!fs_write_file(path, content)) {
         fprintf(stderr, "molto: failed to write '%s'\n", path);
         return exit_build_failure;
     }
@@ -80,5 +93,8 @@ int scaffold_project(const char *root, const char *name) {
     int result = write_manifest(root, name);
     if (result != exit_ok)
         return result;
-    return write_main(root);
+    result = write_starter_file(root, "src/main.c", main_template);
+    if (result != exit_ok)
+        return result;
+    return write_starter_file(root, ".gitignore", gitignore_template);
 }
