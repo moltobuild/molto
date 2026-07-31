@@ -42,6 +42,13 @@ and the conventional `src/`, `tests/` layout described in RFC-0001
 (Philosophy), plus a starter `src/main.c` so the project builds and runs
 immediately.
 
+The generated manifest declares `[target].std`. Left undeclared, the language
+standard is whatever the local compiler defaults to, which varies by toolchain
+and version — the project would compile differently on different machines,
+against the determinism RFC-0001 promises. The remaining `[target]` keys are
+written commented out, so the manifest documents what can be set without
+setting it.
+
 It also writes a `.gitignore` listing the two directories Molto owns,
 `build/` and `.bin/`. Both are derived from the sources and safe to delete
 (RFC-0004), so neither belongs in version control — and without this, the

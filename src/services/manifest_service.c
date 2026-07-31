@@ -19,10 +19,24 @@ bool manifest_is_valid_name(const char *name) {
     return true;
 }
 
+/* The starter manifest. `std` is declared rather than left to the compiler's
+   default, which varies by toolchain and version, so the project picks its own
+   language standard instead of inheriting whatever the machine happens to have.
+   The remaining [target] keys are commented out: they document what can be set
+   without adding settings the project did not ask for. */
 static const char manifest_template[] =
     "[package]\n"
     "name = \"%s\"\n"
     "version = \"0.1.0\"\n"
+    "\n"
+    "[target]\n"
+    "std = \"c17\"          # C standard passed as -std=\n"
+    "# compiler = \"gcc\"   # gcc | clang | msvc; absent = autodetect\n"
+    "# cpp_std = \"c++17\"  # C++ standard for C++ translation units\n"
+    "# link = [\"m\"]       # system libraries: -lm\n"
+    "# defines = []       # -D...\n"
+    "# include = []       # -I...\n"
+    "# flags = []         # passed verbatim to the compiler and the linker\n"
     "\n"
     "[profile.debug]\n"
     "opt_level = 0\n"
