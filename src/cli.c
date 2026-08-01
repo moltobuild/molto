@@ -11,7 +11,7 @@
 
 #include <stdio.h>
 
-#define MOLTO_VERSION "0.1.0"
+#define MOLTO_VERSION "0.2.0"
 
 const char *cli_version(void) {
     return MOLTO_VERSION;
