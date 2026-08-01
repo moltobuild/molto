@@ -1,6 +1,7 @@
 #ifndef MOLTO_BUILD_SERVICE_H
 #define MOLTO_BUILD_SERVICE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include <molto/build/profile.h>
@@ -12,8 +13,11 @@
    Discovers sources under `root/src`, compiles them incrementally, and links
    an executable at `root/build/<profile>/<package-name>`. When `out_binary` is
    not NULL and the build succeeds, the executable path is written into it
-   (`out_binary_size` bytes). Returns a molto_exit_code. */
+   (`out_binary_size` bytes). `refresh_toolchain` re-resolves the compiler
+   instead of using the one recorded in the workspace database.
+   Returns a molto_exit_code. */
 [[nodiscard]] int build_project(const char *root, build_profile profile,
+                                bool refresh_toolchain,
                                 char *out_binary, size_t out_binary_size);
 
 /* Translate a manifest's [env] table into the plain pairs process_service
@@ -30,6 +34,6 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars,
    `test_binaries_out` (caller-initialised, caller-freed). A missing or empty
    tests/ directory is not an error. Returns a molto_exit_code. */
 [[nodiscard]] int build_tests(const char *root, build_profile profile,
-                              str_list *test_binaries_out);
+                              bool refresh_toolchain, str_list *test_binaries_out);
 
 #endif /* MOLTO_BUILD_SERVICE_H */

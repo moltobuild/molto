@@ -96,6 +96,11 @@ Responsibilities:
 
 Inspired by rustup.
 
+Molto does not choose compilers. A manifest states the capabilities a project
+needs and pickup answers which local binary provides them, so the manifest
+never names a machine. Molto records that answer in the WSDB and asks again
+only when the requirements change or the compiler is replaced.
+
 ---
 
 ## Registry

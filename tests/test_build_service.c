@@ -45,14 +45,14 @@ MOLTEST(build_service) {
         "int main(void) { printf(\"hi\\n\"); return answer(); }\n"));
 
     /* First build compiles and links. */
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     EXPECT_TRUE(fs_path_exists(binary));
     int64_t linked_at = mtime_of(binary);
 
     /* A no-op rebuild must NOT re-link (the binary is left untouched). */
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
     /* Touching a header recompiles the units that include it. main.c includes
@@ -60,7 +60,7 @@ MOLTEST(build_service) {
     char util_header[512];
     snprintf(util_header, sizeof util_header, "%s/src/util.h", root);
     EXPECT_TRUE(fs_write_file(util_header, "int answer(void); /* touched */\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
     linked_at = mtime_of(binary); /* rebase for the next step */
 
@@ -70,7 +70,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(main_path,
         "#include <stdio.h>\n"
         "int main(void) { printf(\"hi again\\n\"); return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
 
     /* The produced binary runs successfully. */
@@ -84,7 +84,7 @@ MOLTEST(build_service) {
     /* A directory without Project.toml is an invalid-manifest error. */
     char empty[] = "/tmp/molto_empty_XXXXXX";
     EXPECT_TRUE(mkdtemp(empty) != NULL);
-    EXPECT_TRUE(build_project(empty, profile_debug, NULL, 0) == exit_invalid_manifest);
+    EXPECT_TRUE(build_project(empty, profile_debug, false, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
 
@@ -102,7 +102,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(path,
         "#include <math.h>\n"
         "int main(void) { return (int)sqrt(4.0) - 2; }\n"));
-    EXPECT_TRUE(build_project(lib_root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(lib_root, profile_debug, false, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
     (void)system(cmd);
 
@@ -117,13 +117,13 @@ MOLTEST(build_service) {
     snprintf(path, sizeof path, "%s/Project.toml", fp_root);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 0\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, false, NULL, 0) == exit_ok);
     char fp_obj[512];
     snprintf(fp_obj, sizeof fp_obj, "%s/build/debug/obj/src/main.c.o", fp_root);
     int64_t compiled_at = mtime_of(fp_obj);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(fp_obj) > compiled_at); /* recompiled due to changed opt_level */
     snprintf(cmd, sizeof cmd, "rm -rf %s", fp_root);
     (void)system(cmd);
@@ -139,7 +139,7 @@ MOLTEST(build_service) {
         "[package]\nname = \"def\"\n[target]\ndefines = [\"ANSWER=42\"]\n"));
     snprintf(path, sizeof path, "%s/src/main.c", def_root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return ANSWER - 42; }\n"));
-    EXPECT_TRUE(build_project(def_root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(def_root, profile_debug, false, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
     (void)system(cmd);
 }
@@ -159,7 +159,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     EXPECT_TRUE(fs_write_file(path, "this is not valid C\n"));
 
     /* The build fails because of bad.c... */
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_build_failure);
 
     /* ...but good.c did compile, and its object is recorded as up to date. */
     char good_object[512];
@@ -169,7 +169,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
 
     /* A second attempt only retries the broken unit: the good object is left
        alone instead of being thrown away and rebuilt. */
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_build_failure);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at);
 
     /* No stale depfile is left behind for the unit that failed. */
@@ -180,7 +180,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     /* Fixing the broken unit completes the build. */
     snprintf(path, sizeof path, "%s/src/bad.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
 
     char cmd[600];
@@ -196,9 +196,12 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     snprintf(path, sizeof path, "%s/src", root);
     EXPECT_TRUE(fs_make_dirs(path));
     snprintf(path, sizeof path, "%s/Project.toml", root);
+    /* Asks for GCC on purpose. Clang picks the newest GCC installation for its
+       C++ headers, and a machine with gcc-12 but no g++-12 leaves it unable to
+       include <string> — a real property of the host, not of this build. */
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"cpp_app\"\n"
-        "[target]\ncpp_std = \"c++17\"\n"));
+        "[target]\ncompiler = \"gcc\"\ncpp_std = \"c++17\"\n"));
     /* Uses <string> and a C++17 feature, so it only builds when the C++ driver
        and cpp_std are both applied. */
     snprintf(path, sizeof path, "%s/src/main.cpp", root);
@@ -209,7 +212,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
         "    return 1;\n"
         "}\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
 
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/cpp_app", root);
@@ -236,7 +239,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_release, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_release, false, NULL, 0) == exit_ok);
 
     /* Each profile gets its own output tree, so debug and release coexist. */
     char release_binary[512];
@@ -246,7 +249,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast", root);
     EXPECT_FALSE(fs_path_exists(debug_binary));
 
-    EXPECT_TRUE(build_project(root, profile_debug, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
     EXPECT_TRUE(fs_path_exists(debug_binary));
     EXPECT_TRUE(fs_path_exists(release_binary));
 

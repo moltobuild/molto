@@ -15,9 +15,9 @@
 
 #define WSDB_MAGIC   "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
-/* Version 2 stores input timestamps in nanoseconds (version 1 used seconds);
-   an older database is discarded and rebuilt. */
-#define WSDB_VERSION 2u
+/* Version 3 adds the resolved-toolchain kind (version 2 stored input timestamps
+   in nanoseconds); an older database is discarded and rebuilt. */
+#define WSDB_VERSION 3u
 #define WSDB_ROOT_MAX 4096
 #define WSDB_PATH    (WSDB_ROOT_MAX + 64) /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
@@ -32,7 +32,17 @@ typedef enum {
     wsdb_input_kind = 0,
     wsdb_object_kind = 1,
     wsdb_binary_kind = 2,
+    /* A toolchain resolved for this workspace. Its command is the request that
+       produced it, and its prereqs hold the answer: keeping it here is what
+       spares an external query on every build. */
+    wsdb_toolchain_kind = 3,
 } wsdb_kind;
+
+/* Kinds whose entry carries a list alongside its command: prerequisites for an
+   object, the resolved answer for a toolchain. */
+static bool kind_has_list(int kind) {
+    return kind == wsdb_object_kind || kind == wsdb_toolchain_kind;
+}
 
 typedef struct {
     wsdb_kind kind;
@@ -253,6 +263,57 @@ bool wsdb_record_binary(wsdb *db, const char *binary, const char *command) {
     return true;
 }
 
+/* --- resolved toolchains --- */
+
+bool wsdb_toolchain_fresh(wsdb *db, const char *key, const char *request) {
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if (e == NULL || e->kind != wsdb_toolchain_kind)
+        return false;
+    if (e->command == NULL || strcmp(e->command, request) != 0)
+        return false;
+    if (str_list_count(&e->prereqs) == 0)
+        return false;
+    /* The compiler is the first value and was recorded as an input, so this is
+       the same check that guards a source file: replaced binary, stale answer. */
+    return input_unchanged(db, str_list_get(&e->prereqs, 0));
+}
+
+bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request,
+                           const str_list *values) {
+    if (str_list_count(values) == 0)
+        return false;
+
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if (e == NULL || e->kind != wsdb_toolchain_kind) {
+        e = entry_new(wsdb_toolchain_kind);
+        if (e == NULL || !str_map_put(db->entries, key, e)) {
+            entry_free(e);
+            return false;
+        }
+    }
+    entry_set_command(e, request);
+    str_list_free(&e->prereqs);
+    str_list_init(&e->prereqs);
+    db->dirty = true;
+
+    bool ok = true;
+    for (size_t i = 0; i < str_list_count(values); i++)
+        ok = str_list_push(&e->prereqs, str_list_get(values, i)) && ok;
+    /* Only the compiler is an input; the rest are plain facts about it. */
+    return ok && record_input(db, str_list_get(&e->prereqs, 0));
+}
+
+bool wsdb_toolchain_values(wsdb *db, const char *key, str_list *out) {
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if (e == NULL || e->kind != wsdb_toolchain_kind)
+        return false;
+    for (size_t i = 0; i < str_list_count(&e->prereqs); i++) {
+        if (!str_list_push(out, str_list_get(&e->prereqs, i)))
+            return false;
+    }
+    return true;
+}
+
 /* --- pruning --- */
 
 struct prune_ctx {
@@ -358,7 +419,7 @@ static void save_entry(const char *key, void *value, void *vctx) {
              && write_u64(c->f, e->hash);
     } else {
         c->ok = write_str(c->f, e->command != NULL ? e->command : "");
-        if (c->ok && e->kind == wsdb_object_kind) {
+        if (c->ok && kind_has_list(e->kind)) {
             c->ok = write_u32(c->f, (uint32_t)str_list_count(&e->prereqs));
             for (size_t i = 0; c->ok && i < str_list_count(&e->prereqs); i++)
                 c->ok = write_str(c->f, str_list_get(&e->prereqs, i));
@@ -423,8 +484,10 @@ static char *read_str(FILE *f) {
 static bool kind_is_known(int raw_kind) {
     return raw_kind == wsdb_input_kind
         || raw_kind == wsdb_object_kind
-        || raw_kind == wsdb_binary_kind;
+        || raw_kind == wsdb_binary_kind
+        || raw_kind == wsdb_toolchain_kind;
 }
+
 
 /* Load the DB into a fresh map; on any inconsistency the whole file is
    discarded and the DB stays empty (fail-safe). */
@@ -474,7 +537,7 @@ static void wsdb_load(wsdb *db) {
             char *command = read_str(f);
             if (command != NULL) {
                 e->command = command;
-                if (raw_kind == wsdb_object_kind) {
+                if (kind_has_list(raw_kind)) {
                     uint32_t prereq_count;
                     ok = read_u32(f, &prereq_count) && prereq_count <= WSDB_STRING_MAX;
                     for (uint32_t p = 0; ok && p < prereq_count; p++) {

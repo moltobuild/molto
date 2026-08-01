@@ -51,11 +51,16 @@ typedef struct {
 
 /* The `[target]` table: toolchain and compilation settings (RFC-0003). */
 typedef struct {
-    char compiler[16];  /* "gcc"/"g++"/"clang"/"llvm"/"msvc"; "" = autodetect */
+    char compiler[16];  /* preferred vendor: "gcc"/"clang"/"msvc"; "" = any */
     char std[16];       /* C standard, e.g. "c23"; "" = compiler default */
     char cpp_std[16];   /* C++ standard, e.g. "c++20"; "" = compiler default */
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX]; /* system libraries */
     size_t link_count;
+    /* Compiler features the project needs, proven rather than assumed (see
+       pickup). Naming capabilities instead of a binary is what keeps a
+       manifest portable between machines. */
+    char requires[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t requires_count;
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;
 

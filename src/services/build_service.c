@@ -8,6 +8,7 @@
 #include <molto/services/manifest_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/util/str_list.h>
 #include <molto/util/task_pool.h>
 #include <molto/workspace/wsdb.h>
@@ -16,13 +17,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Toolchain drivers per compiler family (default: GCC, v0.1 target). */
-#define CC_C       "gcc"     /* GCC C driver */
-#define CC_CPP     "g++"     /* GCC C++ driver */
-#define CC_CLANG   "clang"   /* LLVM C driver */
-#define CC_CLANGXX "clang++" /* LLVM C++ driver */
-#define CC_MSVC    "cl"      /* MSVC driver (C and C++) */
 
 /* Compiler command-line arguments. */
 #define ARG_COMPILE       "-c"   /* compile only, do not link */
@@ -95,20 +89,13 @@ static const project_options *profile_options_for(const project_ctx *ctx,
     }
 }
 
-/* Resolve the C and C++ driver names for the requested toolchain. An empty
-   `compiler` (autodetect) uses GCC, the v0.1 default. */
-static void toolchain_drivers(const project_target *target,
-                              const char **cc, const char **cxx) {
-    if (strcmp(target->compiler, CC_CLANG) == 0 || strcmp(target->compiler, "llvm") == 0) {
-        *cc = CC_CLANG;
-        *cxx = CC_CLANGXX;
-    } else if (strcmp(target->compiler, "msvc") == 0) {
-        *cc = CC_MSVC;
-        *cxx = CC_MSVC;
-    } else {
-        *cc = CC_C;
-        *cxx = CC_CPP;
-    }
+/* The driver to invoke for a translation unit. NULL when C++ is needed and the
+   resolved toolchain has no C++ driver: reporting that beats invoking the C one
+   and letting the linker fail with something unrelated. */
+static const char *driver_for(const resolved_toolchain *chain, bool is_cpp) {
+    if (!is_cpp)
+        return chain->cc;
+    return chain->cxx[0] != '\0' ? chain->cxx : NULL;
 }
 
 /* Map a source path to its object path, mirroring the source tree under
@@ -223,15 +210,18 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
 static bool build_compile_argv(str_list *argv, const char *source, const char *object,
                                const manifest_profile *settings, const project_target *target,
                                const project_options *profile_opts, const char *include_flag,
-                               const char *depfile) {
-    const char *cc, *cxx;
-    toolchain_drivers(target, &cc, &cxx);
+                               const char *depfile, const resolved_toolchain *chain) {
     bool is_cpp = source_is_cpp(source);
+    const char *driver = driver_for(chain, is_cpp);
+    if (driver == NULL) {
+        fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", source);
+        return false;
+    }
 
     char opt_flag[OPT_FLAG_SIZE];
     snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
 
-    bool ok = str_list_push(argv, is_cpp ? cxx : cc)
+    bool ok = str_list_push(argv, driver)
            && str_list_push(argv, ARG_COMPILE)
            && str_list_push(argv, source)
            && str_list_push(argv, ARG_OUTPUT)
@@ -263,7 +253,8 @@ static char *compile_command_string(const char *source, const char *object,
                                      const manifest_profile *settings,
                                      const project_target *target,
                                      const project_options *profile_opts,
-                                     const char *include_flag) {
+                                     const char *include_flag,
+                                     const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if (!depfile_path_for(object, depfile, sizeof depfile))
         return NULL;
@@ -271,7 +262,7 @@ static char *compile_command_string(const char *source, const char *object,
     str_list_init(&argv);
     char *command = NULL;
     if (build_compile_argv(&argv, source, object, settings, target,
-                           profile_opts, include_flag, depfile))
+                           profile_opts, include_flag, depfile, chain))
         command = join_args(&argv);
     str_list_free(&argv);
     return command;
@@ -283,14 +274,14 @@ static char *compile_command_string(const char *source, const char *object,
 static bool compile_one(const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
                         const project_options *profile_opts, const char *include_flag,
-                        const project_env *env) {
+                        const project_env *env, const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if (!depfile_path_for(object, depfile, sizeof depfile))
         return false;
     str_list argv;
     str_list_init(&argv);
     if (!build_compile_argv(&argv, source, object, settings, target,
-                            profile_opts, include_flag, depfile)) {
+                            profile_opts, include_flag, depfile, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -370,6 +361,7 @@ typedef struct {
     const project_target *target;
     const project_options *profile_opts;
     const project_env *env;
+    const resolved_toolchain *chain;
     atomic_bool *failed;
     bool succeeded; /* written only by the worker owning this task */
 } compile_task;
@@ -378,7 +370,7 @@ static void compile_task_run(void *arg) {
     compile_task *task = arg;
     task->succeeded = compile_one(task->source, task->object, task->settings,
                                   task->target, task->profile_opts, task->include_flag,
-                                  task->env);
+                                  task->env, task->chain);
     if (!task->succeeded) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
@@ -392,7 +384,8 @@ static void compile_task_run(void *arg) {
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
                            const project_target *target, const project_options *profile_opts,
-                           const project_env *env, wsdb *db, const str_list *sources,
+                           const project_env *env, const resolved_toolchain *chain,
+                           wsdb *db, const str_list *sources,
                            str_list *objects, bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
     bool *needs = calloc(count, sizeof(bool));
@@ -420,7 +413,7 @@ static int compile_sources(const char *root, build_profile profile,
             return exit_build_failure;
         }
         char *command = compile_command_string(source, object, settings, target,
-                                               profile_opts, include_flag);
+                                               profile_opts, include_flag, chain);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
         free(command);
     }
@@ -458,6 +451,7 @@ static int compile_sources(const char *root, build_profile profile,
             .target = target,
             .profile_opts = profile_opts,
             .env = env,
+            .chain = chain,
             .failed = &failed,
         };
         if (!task_pool_submit(pool, compile_task_run, &tasks[queued]))
@@ -480,7 +474,7 @@ static int compile_sources(const char *root, build_profile profile,
             continue;
         }
         char *command = compile_command_string(task->source, task->object, settings,
-                                               target, profile_opts, include_flag);
+                                               target, profile_opts, include_flag, chain);
         if (command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n",
                     task->source);
@@ -508,10 +502,14 @@ static bool link_needed(const str_list *objects, const char *binary) {
    system libraries (-l<lib>). */
 static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *objects,
                             const char *binary, const project_target *target,
-                            const project_options *profile_opts) {
-    const char *cc, *cxx;
-    toolchain_drivers(target, &cc, &cxx);
-    bool ok = str_list_push(argv, any_cpp ? cxx : cc);
+                            const project_options *profile_opts,
+                            const resolved_toolchain *chain) {
+    const char *driver = driver_for(chain, any_cpp);
+    if (driver == NULL) {
+        fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", binary);
+        return false;
+    }
+    bool ok = str_list_push(argv, driver);
     for (size_t i = 0; ok && i < str_list_count(objects); i++)
         ok = str_list_push(argv, str_list_get(objects, i));
     for (size_t i = 0; ok && i < target->options.flag_count; i++)
@@ -530,10 +528,11 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
    link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
                          const project_target *target, const project_options *profile_opts,
-                         const project_env *env, bool force, wsdb *db) {
+                         const project_env *env, const resolved_toolchain *chain,
+                         bool force, wsdb *db) {
     str_list argv;
     str_list_init(&argv);
-    if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts)) {
+    if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -555,11 +554,13 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
    (caller-initialised, caller-freed). Reports whether C++ is present and whether
    anything was recompiled. Shared by build_project and build_tests. */
 static int compile_project(const char *root, build_profile profile, wsdb *db,
-                           project_ctx *ctx_out, str_list *objects_out,
+                           bool refresh_toolchain, project_ctx *ctx_out,
+                           resolved_toolchain *chain_out, str_list *objects_out,
                            bool *any_cpp_out, bool *any_compiled_out) {
     int result = load_project(root, ctx_out);
     if (result != exit_ok)
         return result;
+
     manifest_profile settings = profile_settings(ctx_out, profile);
 
     char src_dir[PATH_BUFFER_SIZE];
@@ -585,6 +586,19 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
         return exit_build_failure;
     }
 
+    /* Which compiler to use is settled once per build, after the sources are
+       known: a project with C++ in it needs a toolchain that has a C++ driver,
+       and that is part of the question. */
+    bool needs_cpp = false;
+    for (size_t i = 0; i < str_list_count(&sources); i++)
+        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&sources, i));
+    result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain,
+                               chain_out);
+    if (result != exit_ok) {
+        str_list_free(&sources);
+        return result;
+    }
+
     /* Extra room over src_dir for the "-I" prefix and the terminating NUL. */
     char include_flag[PATH_BUFFER_SIZE + 4];
     if (!fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)) {
@@ -596,13 +610,14 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     *any_cpp_out = false;
     *any_compiled_out = false;
     result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
-                             profile_options_for(ctx_out, profile), &ctx_out->env, db,
-                             &sources, objects_out, any_cpp_out, any_compiled_out);
+                             profile_options_for(ctx_out, profile), &ctx_out->env,
+                             chain_out, db, &sources, objects_out,
+                             any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
 }
 
-int build_project(const char *root, build_profile profile,
+int build_project(const char *root, build_profile profile, bool refresh_toolchain,
                   char *out_binary, size_t out_binary_size) {
     wsdb *db = wsdb_open(root);
     if (db == NULL) {
@@ -611,11 +626,13 @@ int build_project(const char *root, build_profile profile,
     }
 
     project_ctx ctx;
+    resolved_toolchain chain;
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, db, &ctx, &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain,
+                                 &objects, &any_cpp, &any_compiled);
 
     if (result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
@@ -625,7 +642,7 @@ int build_project(const char *root, build_profile profile,
             return exit_build_failure;
         }
         if (!link_project(any_cpp, &objects, binary, &ctx.target,
-                          profile_options_for(&ctx, profile), &ctx.env,
+                          profile_options_for(&ctx, profile), &ctx.env, &chain,
                           any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
@@ -675,7 +692,8 @@ static const char *relative_to_root(const char *root, const char *path) {
         || report_long_path(test_source);
 }
 
-int build_tests(const char *root, build_profile profile, str_list *test_binaries_out) {
+int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
+                str_list *test_binaries_out) {
     wsdb *db = wsdb_open(root);
     if (db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -683,11 +701,13 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
     }
 
     project_ctx ctx;
+    resolved_toolchain chain;
     str_list objects;
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, db, &ctx, &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain,
+                                 &objects, &any_cpp, &any_compiled);
     if (result != exit_ok) {
         str_list_free(&objects);
         warn_if_not_saved(db);
@@ -760,11 +780,12 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool recompiled = false;
         char *command = compile_command_string(test_source, test_object, &settings,
-                                               &ctx.target, profile_opts, include_flag);
+                                               &ctx.target, profile_opts, include_flag,
+                                               &chain);
         bool stale = command == NULL || !wsdb_object_fresh(db, test_object, command);
         if (stale) {
             if (!compile_one(test_source, test_object, &settings, &ctx.target,
-                             profile_opts, include_flag, &ctx.env)) {
+                             profile_opts, include_flag, &ctx.env, &chain)) {
                 fprintf(stderr, "molto: failed to compile '%s'\n", test_source);
                 free(command);
                 result = exit_build_failure;
@@ -798,7 +819,7 @@ int build_tests(const char *root, build_profile profile, str_list *test_binaries
         }
         bool cpp = any_cpp || source_is_cpp(test_source);
         if (!link_project(cpp, &link_objects, test_binary, &ctx.target, profile_opts,
-                          &ctx.env, recompiled || any_compiled, db)) {
+                          &ctx.env, &chain, recompiled || any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", test_binary);
             result = exit_build_failure;
         }

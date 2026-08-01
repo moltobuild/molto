@@ -23,10 +23,13 @@ static const cli_option clean_options[] = {
       "Also remove .bin/ (the incremental state)", NULL },
 };
 
-/* A --profile option shared by build/run/test. */
-static const cli_option profile_option[] = {
+/* The options shared by build/run/test. --refresh-toolchain asks again which
+   compiler satisfies [target] instead of reusing the recorded answer. */
+static const cli_option build_options[] = {
     { "--profile", 'p', cli_opt_value, "<name>",
       "Build profile (debug, release, bench, custom)", "debug" },
+    { "--refresh-toolchain", 0, cli_opt_flag, NULL,
+      "Resolve the compiler again instead of reusing the cached one", NULL },
 };
 
 /* --- command handlers: thin adapters over the *_command_run functions --- */
@@ -40,18 +43,23 @@ static int handle_init(const cli_args *args) {
     return init_command_run();
 }
 
+static bool wants_refresh(const cli_args *args) {
+    return cli_args_flag(args, "--refresh-toolchain");
+}
+
 static int handle_build(const cli_args *args) {
-    return build_command_run(cli_args_option(args, "--profile"));
+    return build_command_run(cli_args_option(args, "--profile"), wants_refresh(args));
 }
 
 static int handle_run(const cli_args *args) {
     int forwarded_count = 0;
     char *const *forwarded = cli_args_forwarded(args, &forwarded_count);
-    return run_command_run(cli_args_option(args, "--profile"), forwarded, forwarded_count);
+    return run_command_run(cli_args_option(args, "--profile"), wants_refresh(args),
+                           forwarded, forwarded_count);
 }
 
 static int handle_test(const cli_args *args) {
-    return test_command_run(cli_args_option(args, "--profile"));
+    return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args));
 }
 
 static int handle_clean(const cli_args *args) {
@@ -71,11 +79,11 @@ static const cli_command commands[] = {
     { "new", "Create a new project in a new directory", "<name>", NULL, 0, handle_new },
     { "init", "Initialize a project in the current directory", NULL, NULL, 0, handle_init },
     { "build", "Compile the project", NULL,
-      profile_option, sizeof profile_option / sizeof profile_option[0], handle_build },
+      build_options, sizeof build_options / sizeof build_options[0], handle_build },
     { "run", "Build and run the project (args after -- go to the program)", NULL,
-      profile_option, sizeof profile_option / sizeof profile_option[0], handle_run },
+      build_options, sizeof build_options / sizeof build_options[0], handle_run },
     { "test", "Build and run the project's tests", NULL,
-      profile_option, sizeof profile_option / sizeof profile_option[0], handle_test },
+      build_options, sizeof build_options / sizeof build_options[0], handle_test },
     { "clean", "Remove build output", NULL,
       clean_options, sizeof clean_options / sizeof clean_options[0], handle_clean },
     { "bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented },

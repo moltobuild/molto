@@ -85,6 +85,28 @@ Invariants:
 The WSDB replaced the interim sidecars (`.o.d`, `.o.cmd`, `<binary>.cmd`) with
 one store.
 
+### Resolved toolchains
+
+Which compiler satisfies a manifest is the answer to a question put to an
+external resolver (RFC-0003). The WSDB records it, so a build does not ask
+again on every invocation.
+
+The entry is keyed by language, fingerprinted by the request that produced it,
+and holds the resolved drivers. The compiler itself is recorded as an **input**,
+so the freshness machinery that watches source files also watches it.
+
+It is resolved again when:
+
+- the request changes — a different `requires`, `std`, vendor, or the arrival of
+  C++ sources in a project that had none;
+- the compiler it named is replaced or removed;
+- `--refresh-toolchain` asks for it.
+
+Installing a *newer* compiler does **not** invalidate it. A build that silently
+changed compiler because something was installed would recompile everything and
+possibly behave differently, without the project having changed. Choosing a new
+one is an explicit act.
+
 ## Workspace API
 
 All access to workspace metadata goes through the Workspace API — the only

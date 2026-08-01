@@ -30,11 +30,11 @@ MOLTEST(run_command) {
     EXPECT_TRUE(chdir(root) == 0);
 
     /* Build + run with no forwarded arguments -> program returns 0. */
-    EXPECT_TRUE(run_command_run(NULL, NULL, 0) == 0);
+    EXPECT_TRUE(run_command_run(NULL, false, NULL, 0) == 0);
 
     /* Forwarded arguments reach the program (argc - 1 == 2). */
     char *forwarded[] = { "alpha", "beta" };
-    EXPECT_TRUE(run_command_run(NULL, forwarded, 2) == 2);
+    EXPECT_TRUE(run_command_run(NULL, false, forwarded, 2) == 2);
 
     /* A program that dies from a signal is reported as 128 + signal, not as a
        "failed to start" error. */
@@ -42,7 +42,7 @@ MOLTEST(run_command) {
     EXPECT_TRUE(fs_write_file(path,
         "#include <signal.h>\n"
         "int main(void) { raise(SIGTERM); return 0; }\n"));
-    EXPECT_TRUE(run_command_run(NULL, NULL, 0) == 128 + SIGTERM);
+    EXPECT_TRUE(run_command_run(NULL, false, NULL, 0) == 128 + SIGTERM);
 
     EXPECT_TRUE(chdir(previous) == 0);
 

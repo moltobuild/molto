@@ -208,6 +208,10 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     }
     str_list_free(&libs);
 
+    /* target.requires: the features the project needs from a compiler. */
+    ok = ok && read_option_array(doc, "target", "requires", out->target.requires,
+                                 &out->target.requires_count, err, err_size);
+
     /* Base compilation options ([target]), the [env] table, and per-profile
        additions. */
     ok = ok && read_env(doc, &out->env, err, err_size)

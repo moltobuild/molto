@@ -31,7 +31,7 @@ static void run_one_test(const char *binary, size_t *passed, size_t *failed) {
     }
 }
 
-int test_command_run(const char *requested_profile) {
+int test_command_run(const char *requested_profile, bool refresh_toolchain) {
     build_profile profile = profile_debug;
     if (requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
@@ -45,7 +45,7 @@ int test_command_run(const char *requested_profile) {
     }
     str_list binaries;
     str_list_init(&binaries);
-    int code = build_tests(root, profile, &binaries);
+    int code = build_tests(root, profile, refresh_toolchain, &binaries);
     if (code != exit_ok) {
         str_list_free(&binaries);
         return code;

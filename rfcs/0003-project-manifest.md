@@ -34,13 +34,14 @@ version  = "0.1.0"
 artifact = "static"        # source | static | shared, default: static
 
 [target]
-compiler = "gcc"            # gcc | g++ | clang | llvm | msvc
+compiler = "gcc"            # preferred vendor; optional
 std      = "c23"            # C standard passed as -std=
 cpp_std  = "c++20"          # C++ standard for C++ translation units
 link     = ["m", "pthread"] # system libraries: -lm -lpthread
 defines  = ["NDEBUG"]       # -DNDEBUG (base for all profiles)
 include  = ["vendor/include"] # -Ivendor/include
 flags    = ["-fno-omit-frame-pointer"] # raw, verbatim
+requires = ["attr_nodiscard"] # features that must really compile
 
 [env]
 MOLTO_LOG = "debug"        # injected into compilation and execution
@@ -100,7 +101,8 @@ orchestrates the toolchain, it does not replace it.
 
 | Key        | Type          | Required | Description                                                                                          |
 |------------|---------------|----------|------------------------------------------------------------------------------------------------------|
-| `compiler` | string        | no       | Toolchain to orchestrate: `gcc`/`g++` (GCC), `clang`/`llvm` (LLVM), `msvc`. Absent → autodetected.  |
+| `compiler` | string        | no       | Preferred vendor: `gcc`, `clang`/`llvm`, `apple-clang`, `msvc`. Absent → any vendor may answer.      |
+| `requires` | array[string] | no       | Compiler features the project needs, e.g. `["attr_nodiscard"]`. Proven, not assumed.                 |
 | `std`      | string        | no       | C standard, e.g. `"c23"`, `"c17"`, `"c11"`; translated to `-std=`. Absent → compiler default.        |
 | `cpp_std`  | string        | no       | C++ standard for C++ translation units, e.g. `"c++20"`.                                              |
 | `link`     | array[string] | no       | System libraries to link, e.g. `["m", "pthread"]` → `-lm -lpthread`.                                 |
@@ -113,13 +115,49 @@ orchestrates the toolchain, it does not replace it.
 to every profile; a `[profile.*]` may declare the same keys, which are **added
 on top** for that profile (see below).
 
-Molto selects the correct C vs C++ driver per source file: for `compiler = "gcc"`
-it compiles `.c` with `gcc` and `.cpp`/`.cc` with `g++`; likewise `clang`/`clang++`
-for LLVM. Toolchain availability follows the roadmap (`spec.md` section 19): GCC
-on Linux in v0.1, Clang in v0.2, MSVC afterwards.
+Molto selects the correct driver per source file: the C one for `.c`, the C++
+one for `.cpp`/`.cc`. Both come from the same resolved toolchain, so a project
+mixing the two languages never mixes compilers. A project with C++ sources
+needs a toolchain that has a C++ driver, which is part of what gets resolved:
+a machine with `gcc-12` but no `g++-12` cannot build C++ with it, and that is
+reported rather than discovered at link time.
 
 A cross-compilation `triple` (and per-OS override tables such as
 `[target.linux]`) are **reserved** for a future revision.
+
+### Naming capabilities instead of compilers
+
+A manifest states what a project needs; the compiler that provides it is a fact
+about a machine, and machines differ. `compiler = "gcc"` means "the `gcc` on
+this box", which on one system is version 9 and on another version 14.
+
+So `compiler` no longer names a binary. It expresses a **preference of vendor**,
+and it is optional. What a project actually depends on goes in `requires`:
+features that must compile, each proven by compiling a program that uses it.
+
+```toml
+[target]
+std      = "c2x"
+requires = ["attr_nodiscard"]
+```
+
+That manifest builds on any machine that has *some* compiler able to do it, and
+names none of them.
+
+Resolution is performed by **pickup**, the toolchain manager (`spec.md` section
+4). Molto invokes it, and records the answer in the workspace database so the
+question is asked once rather than on every build (RFC-0004).
+
+Accepting a `-std=` flag is not the same as implementing the standard behind
+it: a compiler may take `-std=c2x` and reject `[[nodiscard]]`. `std` selects the
+mode to compile in; `requires` states what has to work. A project that depends
+on both should say both.
+
+**Without pickup.** `C_COMPILER` and `CPP_COMPILER` name the drivers directly
+and take precedence over resolution. They exist for a machine without pickup, a
+compiler it does not detect, or to pin a build while investigating. Molto says
+so on stderr when they are used, because such a compiler was chosen by hand and
+never checked against `requires`.
 
 ## `[env]`
 

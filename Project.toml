@@ -1,8 +1,23 @@
 # Molto's own manifest (dogfooding, see rfcs/0003-project-manifest.md).
+#
+# Note what this file does NOT say: no compiler binary, no version. The code
+# needs C23 attributes — a property of the code. Which local binary provides
+# them is a property of the machine, and pickup answers that. The Makefile has
+# to hardcode `gcc-12` precisely because it cannot ask.
+#
+# The build still runs on that Makefile: molto cannot build itself yet, for
+# reasons that no longer include the compiler.
 
 [package]
 name = "molto"
 version = "0.1.0"
+
+[target]
+std = "c2x"
+requires = ["attr_nodiscard"]
+defines = ["_DEFAULT_SOURCE"]
+include = ["include"]
+flags = ["-Wall", "-Wextra", "-Wpedantic", "-pthread"]
 
 [profile.debug]
 opt_level = 0

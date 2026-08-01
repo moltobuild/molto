@@ -15,7 +15,7 @@
 /* process_run reports a signal death as 128 + signal (shell convention). */
 #define SIGNAL_EXIT_BASE 128
 
-int run_command_run(const char *requested_profile,
+int run_command_run(const char *requested_profile, bool refresh_toolchain,
                     char *const *forwarded, int forwarded_count) {
     build_profile profile = profile_debug;
     if (requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
@@ -29,7 +29,7 @@ int run_command_run(const char *requested_profile,
         return exit_invalid_manifest;
     }
     char binary[4096];
-    int code = build_project(root, profile, binary, sizeof binary);
+    int code = build_project(root, profile, refresh_toolchain, binary, sizeof binary);
     if (code != exit_ok)
         return code;
 

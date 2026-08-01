@@ -37,6 +37,26 @@ bool wsdb_record_object(wsdb *db, const char *object, const char *command,
    could not be stored, in which case the binary is re-linked next time. */
 bool wsdb_record_binary(wsdb *db, const char *binary, const char *command);
 
+/* --- resolved toolchains ---
+   Which compiler to invoke is the answer to a question asked of an external
+   resolver. Recording it here is what spares that query on every build. The
+   entry is keyed by language, fingerprinted by the request, and tied to the
+   compiler binary itself, so replacing the compiler invalidates it. */
+
+/* True if the toolchain recorded under `key` still answers `request` and the
+   compiler it names is unchanged. */
+[[nodiscard]] bool wsdb_toolchain_fresh(wsdb *db, const char *key, const char *request);
+
+/* Record `values` (the resolved answer) as the result of `request`. The first
+   value must be the compiler's path: it is registered as an input, so the
+   existing freshness machinery notices when it is replaced. */
+bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request,
+                           const str_list *values);
+
+/* Read back the values recorded under `key` into `out` (caller-initialised).
+   Returns false if there is no such entry. */
+[[nodiscard]] bool wsdb_toolchain_values(wsdb *db, const char *key, str_list *out);
+
 /* Delete outputs (and their DB entries) whose path is under `prefix` but not in
    `live` — i.e. orphans left by a removed source. */
 void wsdb_prune(wsdb *db, const str_list *live, const char *prefix);

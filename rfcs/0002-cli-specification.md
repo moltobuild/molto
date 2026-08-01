@@ -71,6 +71,8 @@ Compiles the project.
 - Performs incremental compilation: only translation units whose source
   hash, dependency graph, or compiler flags changed are rebuilt (tracked via
   WSDB, see `spec.md` section 11).
+- `--refresh-toolchain` resolves the compiler again instead of reusing the
+  answer recorded in the workspace database. Also accepted by `run` and `test`.
 
 ### `molto run [args]`
 
