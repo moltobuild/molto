@@ -19,6 +19,13 @@ defines = ["_DEFAULT_SOURCE"]
 include = ["include"]
 flags = ["-Wall", "-Wextra", "-Wpedantic", "-pthread"]
 
+[test]
+# The suite registers its cases and moltest owns main(), so everything links
+# into one executable. moltest lives outside src/, hence the extra sources.
+mode = "single"
+sources = ["modules/moltest/src"]
+include = ["modules/moltest/include"]
+
 [profile.debug]
 opt_level = 0
 debug_info = true

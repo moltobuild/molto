@@ -85,6 +85,12 @@ Discovers and runs tests from the conventional `tests/` directory. No test
 file list is required; discovery follows the filesystem convention from
 RFC-0001.
 
+By default each test file becomes its own executable and supplies its own
+`main()`. A project whose framework registers its cases and owns `main()` sets
+`[test].mode = "single"` (RFC-0003), and the whole suite links into one
+executable instead. Either way `molto test` runs what was built and reports
+pass or fail per executable.
+
 ### `molto clean`
 
 ```

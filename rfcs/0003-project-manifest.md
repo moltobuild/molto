@@ -111,7 +111,13 @@ orchestrates the toolchain, it does not replace it.
 | `flags`    | array[string] | no       | Raw, compiler-specific flags passed verbatim, e.g. `["-fno-omit-frame-pointer"]` (escape hatch).     |
 
 `defines` and `include` are portable (Molto emits the right form per compiler);
-`flags` is a raw escape hatch. These keys in `[target]` are the **base** applied
+`flags` is a raw escape hatch.
+
+A relative `include` is resolved against the **project root**, not against the
+directory Molto was invoked from. The manifest describes the project, so
+`include = ["vendor"]` means the project's `vendor/` whether the build is run
+from the root or from a subdirectory. Absolute paths are left alone, and
+`flags` is untouched: it is passed verbatim by contract. These keys in `[target]` are the **base** applied
 to every profile; a `[profile.*]` may declare the same keys, which are **added
 on top** for that profile (see below).
 
@@ -158,6 +164,36 @@ and take precedence over resolution. They exist for a machine without pickup, a
 compiler it does not detect, or to pin a build while investigating. Molto says
 so on stderr when they are used, because such a compiler was chosen by hand and
 never checked against `requires`.
+
+## `[test]`
+
+How `molto test` builds and lays out the test executables.
+
+| Key       | Type          | Required | Description                                                                                     |
+|-----------|---------------|----------|-------------------------------------------------------------------------------------------------|
+| `mode`    | string        | no       | `per_file` (default) or `single`. See below.                                                    |
+| `sources` | array[string] | no       | Extra sources compiled into the tests only. Directories are walked; plain files taken as given. |
+| `defines` | array[string] | no       | Added to `[target]`/`[profile.*]` when compiling tests.                                          |
+| `include` | array[string] | no       | Likewise, e.g. a framework's headers.                                                           |
+| `flags`   | array[string] | no       | Likewise, verbatim.                                                                             |
+
+**`per_file`** builds one executable per file under `tests/`, each linked with
+the project's objects (minus the app's `main.c`). Every test file supplies its
+own `main()`. This is the default and the original contract.
+
+**`single`** links every test object, the extra `sources`, and the project's
+objects into one executable at `build/<profile>/tests/<package>_tests`. This is
+what a framework that registers its cases needs: the test files declare cases
+and have no `main()`, and the framework supplies one.
+
+`sources` is also how a framework living outside `src/` gets compiled at all:
+
+```toml
+[test]
+mode    = "single"
+sources = ["modules/moltest/src"]
+include = ["modules/moltest/include"]
+```
 
 ## `[env]`
 

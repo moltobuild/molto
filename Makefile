@@ -40,7 +40,13 @@ $(BIN): $(LIB_OBJ) $(MAIN_OBJ)
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+# Header dependencies, so editing a header rebuilds what includes it. Without
+# this, changing a struct recompiles only the file it lives in and leaves the
+# rest reading the old layout — which is exactly the incremental correctness
+# molto itself provides, and its bootstrap lacked.
+-include $(LIB_OBJ:.o=.d) $(MAIN_OBJ:.o=.d)
 
 run: build
 	./$(BIN) $(ARGS)

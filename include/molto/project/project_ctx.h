@@ -64,6 +64,28 @@ typedef struct {
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;
 
+/* How `molto test` lays out the test executables. */
+typedef enum {
+    /* One executable per test file, each bringing its own main(). The default,
+       and the contract RFC-0002 has always described. */
+    test_mode_per_file,
+    /* Every test file linked into a single executable. What frameworks that
+       register their cases and supply their own main() need. */
+    test_mode_single,
+} test_mode;
+
+/* The `[test]` table: how tests are built, and what they need beyond the
+   project's own sources. */
+typedef struct {
+    test_mode mode;
+    /* Extra sources compiled into the tests only: directories are walked, plain
+       files taken as they are. This is how a test framework living outside
+       src/ gets compiled in. */
+    char sources[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t source_count;
+    project_options options; /* defines/include/flags applied only to tests */
+} project_test;
+
 /* The `[env]` table: variables exported to every process Molto spawns for this
    project — compiler, linker and `molto run` (RFC-0003). */
 typedef struct {
@@ -78,6 +100,7 @@ typedef struct {
     char version[64];
     artifact_kind artifact;
     project_target target;
+    project_test test;
     project_env env;
     project_profiles profile;
     project_profile_options profile_options; /* per-profile extra options */

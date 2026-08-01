@@ -257,3 +257,40 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+MOLTEST(build_anchors_relative_includes_at_the_project_root) {
+    char root[] = "/tmp/molto_incl_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/vendor", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/deep/nested", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "[package]\nname = \"incl\"\n"
+        "[target]\nstd = \"c11\"\ninclude = [\"vendor\"]\n"));
+    snprintf(path, sizeof path, "%s/vendor/config.h", root);
+    EXPECT_TRUE(fs_write_file(path, "#define ANSWER 0\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "#include <config.h>\nint main(void){return ANSWER;}\n"));
+
+    /* Built from a subdirectory: `include = ["vendor"]` describes the project,
+       so it must not depend on where molto happened to be invoked. */
+    char previous[4096];
+    ASSERT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    char deep[512];
+    snprintf(deep, sizeof deep, "%s/deep/nested", root);
+    ASSERT_TRUE(chdir(deep) == 0);
+
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+
+    EXPECT_TRUE(chdir(previous) == 0);
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}

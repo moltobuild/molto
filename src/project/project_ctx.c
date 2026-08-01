@@ -33,6 +33,18 @@ static void seed_defaults(project_ctx *ctx) {
     ctx->profile.custom = (manifest_profile){ .opt_level = 2, .debug_info = true };
 }
 
+static bool map_test_mode(const char *name, test_mode *out) {
+    if (strcmp(name, "per_file") == 0) {
+        *out = test_mode_per_file;
+        return true;
+    }
+    if (strcmp(name, "single") == 0) {
+        *out = test_mode_single;
+        return true;
+    }
+    return false;
+}
+
 static bool map_artifact(const char *name, artifact_kind *out) {
     if (strcmp(name, "source") == 0) {
         *out = artifact_source;
@@ -207,6 +219,17 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         }
     }
     str_list_free(&libs);
+
+    /* [test].mode is an enum expressed as a string, like package.artifact. */
+    char test_mode_name[16];
+    if (ok && toml_get_string(doc, "test", "mode", test_mode_name, sizeof test_mode_name)
+        && !map_test_mode(test_mode_name, &out->test.mode))
+        ok = set_error(err, err_size, "unknown test mode '%s' (per_file or single)",
+                       test_mode_name);
+
+    ok = ok && read_option_array(doc, "test", "sources", out->test.sources,
+                                 &out->test.source_count, err, err_size)
+            && read_options(doc, "test", &out->test.options, err, err_size);
 
     /* target.requires: the features the project needs from a compiler. */
     ok = ok && read_option_array(doc, "target", "requires", out->target.requires,

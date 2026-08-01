@@ -3,8 +3,17 @@
 A modern packaging ecosystem for C and C++. See [`spec.md`](spec.md) and the
 [RFCs](rfcs/) for the design.
 
-This repository contains the `molto` CLI. It is written in C and, for now,
-bootstrapped with a plain `Makefile` (molto cannot build itself yet).
+This repository contains the `molto` CLI. It is written in C and **builds
+itself**:
+
+```sh
+molto build      # produces build/debug/molto
+molto test       # builds and runs the suite as one executable
+```
+
+The `Makefile` remains the bootstrap — something has to compile the first
+molto — but it is no longer the only way. Its manifest names no compiler: it
+states the features the code needs and pickup resolves them.
 
 ## Requirements
 
