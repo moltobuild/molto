@@ -1,7 +1,11 @@
 # Molto
 
-A modern packaging ecosystem for C and C++. See [`spec.md`](spec.md) and the
-[RFCs](rfcs/) for the design.
+A modern packaging ecosystem for C and C++.
+
+- [`docs/Project.md`](docs/Project.md) — how to configure `Project.toml` to
+  build a C/C++ project: include paths, link libraries, test layout, profiles,
+  and what to do when a build that works with `make` does not work here
+- [`spec.md`](spec.md) and the [RFCs](rfcs/) — the design
 
 This repository contains the `molto` CLI. It is written in C and **builds
 itself**:
@@ -53,4 +57,6 @@ make test
 include/molto/   Public headers (used as <molto/...>)
 src/             CLI entry point, command handlers, and services
 tests/           Minimal test framework and suites
+docs/            User guides (start with docs/Project.md)
+rfcs/            Design documents
 ```
