@@ -59,3 +59,24 @@ MOLTEST(manifest_declares_a_language_standard) {
 
     free(toml);
 }
+
+MOLTEST(manifest_declares_the_project_include_directory) {
+    char *toml = manifest_render_default("my_app");
+    ASSERT_NOT_NULL(toml);
+
+    /* `include` is the one [target] key that ships active. A header under
+       include/ is the normal layout for a C project, and a commented-out key
+       teaches nothing: the build fails on the first #include and the reason is
+       a line the user never read. `molto new` creates the directory it points
+       at, so the manifest never names something that is not there. */
+    EXPECT_NOT_NULL(strstr(toml, "include = [\"include\"]"));
+    EXPECT_NULL(strstr(toml, "# include = "));
+
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(toml, &ctx, err, sizeof err));
+    ASSERT_EQ(1, ctx.target.options.include_count);
+    EXPECT_STREQ("include", ctx.target.options.include[0]);
+
+    free(toml);
+}

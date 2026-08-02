@@ -48,6 +48,26 @@ MOLTEST(scaffold) {
     (void)system(cmd);
 }
 
+MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
+    char root[] = "/tmp/molto_include_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char project[600];
+    snprintf(project, sizeof project, "%s/demo", root);
+    ASSERT_TRUE(scaffold_project(project, "demo") == exit_ok);
+
+    /* The generated manifest declares include = ["include"], so the directory
+       has to exist: a manifest that points at nothing is worse than one that
+       says nothing. */
+    char path[700];
+    snprintf(path, sizeof path, "%s/include", project);
+    EXPECT_TRUE(fs_is_dir(path));
+
+    char cmd[700];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
 MOLTEST(scaffold_ignores_the_directories_molto_owns) {
     char root[] = "/tmp/molto_ignore_XXXXXX";
     ASSERT_TRUE(mkdtemp(root) != NULL);

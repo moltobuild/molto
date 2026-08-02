@@ -86,7 +86,10 @@ int scaffold_project(const char *root, const char *name) {
         fprintf(stderr, "molto: could not create directory '%s'\n", root);
         return exit_build_failure;
     }
-    if (!make_subdir(root, "src") || !make_subdir(root, "tests")) {
+    /* include/ is created because the generated manifest declares it: the two
+       have to agree, or the first header lands somewhere -I never looks. */
+    if (!make_subdir(root, "src") || !make_subdir(root, "tests")
+        || !make_subdir(root, "include")) {
         fprintf(stderr, "molto: could not create project layout\n");
         return exit_build_failure;
     }
