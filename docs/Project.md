@@ -316,6 +316,7 @@ each piece under the key that owns it.
 
 ## Related
 
+- [`docs/Style.md`](Style.md) — `molto fmt` and `molto lint`, and the two files that configure them
 - [RFC-0003: Project Manifest](../rfcs/0003-project-manifest.md) — the schema specification
 - [RFC-0002: CLI Specification](../rfcs/0002-cli-specification.md) — the commands
 - [RFC-0004: Workspace](../rfcs/0004-workspace-specification.md) — `build/` and `.bin/`

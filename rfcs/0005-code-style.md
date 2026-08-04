@@ -226,8 +226,45 @@ build artifacts, as specified in RFC-0002.
   them.
 - `--format json` — emit machine-readable diagnostics for CI.
 
-*Current state:* `molto lint` is registered in the command table but dispatches
-to the unimplemented-command handler.
+## Current State
+
+Both commands are implemented. What is in place, and what is not:
+
+**Implemented.** `molto fmt` with `--check` and `--diff`; `molto lint` with the
+compiler's syntax-only pass, the `clang-tidy` backend and `--format json`; the
+canonical model of both configuration files, translated to the backends' own
+configuration under `.bin/` and failing closed on anything it cannot express;
+per-file work dispatched across the task pool.
+
+**Backend acquisition is pickup's, not Molto's.** The section above leaves the
+download and installation mechanism unspecified, as a contract with a general
+toolchain manager. That manager is `pickup`: `pickup tools` reports the
+formatter and the linter this machine has and where they are, and pickup unpacks
+`clang-format` and `clang-tidy` alongside the compiler. Molto asks, records the
+answer in the WSDB, and runs the path it was given — it does not search,
+install or rewrite it. A pinned `backend` is therefore *verified* against what
+pickup reports rather than fetched; an unmet pin is an error naming both
+versions.
+
+**Not implemented yet**, and deliberately so:
+
+- **The per-file cache** described under Caching. A cache is only correct if it
+  replays the diagnostics, not merely the fact that a file was once clean:
+  caching a boolean would have `molto lint` print warnings on the first run and
+  nothing on the second, which in CI is a false pass. The WSDB has nowhere to
+  store a tool's output, and `molto fmt` will want the same store, so it is
+  worth building once rather than half now.
+- **`molto fmt --import`**, `molto lint --fix`, the `kernel` and `gnu` presets,
+  and tier 2 and 3 backends. A configuration naming any of them is refused by
+  name rather than quietly approximated.
+- **Linting `tests/`**. Only `src/` is analysed; `molto fmt` covers `src/` and
+  `include/`.
+
+The `molto` preset asks the compiler for `-Wall -Wextra -Wpedantic` and the
+linter for `clang-diagnostic-*` and `bugprone-*`. The path-sensitive analyzer is
+not in the default: its security checks demand the C11 Annex K functions glibc
+does not ship, so including it would bury real findings under hundreds of "use
+`snprintf_s`". A project that wants it asks for it with the `security` rule.
 
 ## Diagnostics Model
 
