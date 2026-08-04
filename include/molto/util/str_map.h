@@ -36,8 +36,7 @@ bool str_map_remove(str_map *map, const char *key);
 [[nodiscard]] size_t str_map_size(const str_map *map);
 
 /* Visit every entry in storage order. `ctx` is passed through. */
-void str_map_foreach(const str_map *map,
-                     void (*fn)(const char *key, void *value, void *ctx),
+void str_map_foreach(const str_map *map, void (*fn)(const char *key, void *value, void *ctx),
                      void *ctx);
 
 /* Free the map and, via the free_value callback, its values. Safe on NULL. */

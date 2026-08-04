@@ -11,8 +11,8 @@
 
 /* The compilers Molto will invoke for this project. */
 typedef struct {
-    char cc[TOOLCHAIN_PATH_MAX];   /* C driver */
-    char cxx[TOOLCHAIN_PATH_MAX];  /* C++ driver; "" when none was found */
+    char cc[TOOLCHAIN_PATH_MAX];  /* C driver */
+    char cxx[TOOLCHAIN_PATH_MAX]; /* C++ driver; "" when none was found */
     char vendor[32];
     char version[32];
 } resolved_toolchain;
@@ -38,7 +38,7 @@ typedef struct {
  *
  * Returns a molto_exit_code; on failure the reason is already on stderr.
  */
-[[nodiscard]] int toolchain_resolve(const project_target *target, bool needs_cpp,
-                                    wsdb *db, bool refresh, resolved_toolchain *out);
+[[nodiscard]] int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db,
+                                    bool refresh, resolved_toolchain *out);
 
 #endif /* MOLTO_TOOLCHAIN_SERVICE_H */

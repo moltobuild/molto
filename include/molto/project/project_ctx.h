@@ -14,12 +14,12 @@ typedef enum {
     artifact_shared,
 } artifact_kind;
 
-#define PROJECT_MAX_LINK      32
+#define PROJECT_MAX_LINK 32
 #define PROJECT_LINK_NAME_MAX 64
-#define PROJECT_MAX_OPTS      16
-#define PROJECT_OPT_LEN       96
-#define PROJECT_MAX_ENV       32
-#define PROJECT_ENV_NAME_MAX  64
+#define PROJECT_MAX_OPTS 16
+#define PROJECT_OPT_LEN 96
+#define PROJECT_MAX_ENV 32
+#define PROJECT_ENV_NAME_MAX 64
 #define PROJECT_ENV_VALUE_MAX 256
 
 /* Build settings for each known profile. Access as ctx.profile.release, etc. */
@@ -51,15 +51,17 @@ typedef struct {
 
 /* The `[target]` table: toolchain and compilation settings (RFC-0003). */
 typedef struct {
-    char compiler[16];  /* preferred vendor: "gcc"/"clang"/"msvc"; "" = any */
-    char std[16];       /* C standard, e.g. "c23"; "" = compiler default */
-    char cpp_std[16];   /* C++ standard, e.g. "c++20"; "" = compiler default */
+    char compiler[16]; /* preferred vendor: "gcc"/"clang"/"msvc"; "" = any */
+    char std[16];      /* C standard, e.g. "c23"; "" = compiler default */
+    char cpp_std[16];  /* C++ standard, e.g. "c++20"; "" = compiler default */
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX]; /* system libraries */
     size_t link_count;
     /* Compiler features the project needs, proven rather than assumed (see
        pickup). Naming capabilities instead of a binary is what keeps a
        manifest portable between machines. */
-    char requires[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    char
+        requires[
+            PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t requires_count;
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;
@@ -109,12 +111,10 @@ typedef struct {
 /* Parse a Project.toml `toml` string into `*out`. Built-in profile defaults are
    seeded first, then overridden by declared values. On failure returns false
    and writes a line-tagged reason into `err`. */
-[[nodiscard]] bool project_parse(const char *toml, project_ctx *out,
-                                 char *err, size_t err_size);
+[[nodiscard]] bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size);
 
 /* Read the file at `path` and delegate to project_parse. */
-[[nodiscard]] bool project_load(const char *path, project_ctx *out,
-                                char *err, size_t err_size);
+[[nodiscard]] bool project_load(const char *path, project_ctx *out, char *err, size_t err_size);
 
 /* Print the populated context for debugging. */
 void project_ctx_dump(const project_ctx *ctx, FILE *stream);

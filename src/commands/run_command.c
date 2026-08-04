@@ -15,22 +15,22 @@
 /* process_run reports a signal death as 128 + signal (shell convention). */
 #define SIGNAL_EXIT_BASE 128
 
-int run_command_run(const char *requested_profile, bool refresh_toolchain,
-                    char *const *forwarded, int forwarded_count) {
+int run_command_run(const char *requested_profile, bool refresh_toolchain, char *const *forwarded,
+                    int forwarded_count) {
     build_profile profile = profile_debug;
-    if (requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
+    if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
         return exit_usage_error;
     }
 
     char root[4096];
-    if (!workspace_find_root(root, sizeof root)) {
+    if(!workspace_find_root(root, sizeof root)) {
         fprintf(stderr, "molto: not inside a molto workspace (no Project.toml found)\n");
         return exit_invalid_manifest;
     }
     char binary[4096];
     int code = build_project(root, profile, refresh_toolchain, binary, sizeof binary);
-    if (code != exit_ok)
+    if(code != exit_ok)
         return code;
 
     /* The program runs with the same [env] the build used, so a variable the
@@ -38,8 +38,8 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain,
     char manifest[4096];
     project_ctx ctx;
     char err[256] = "";
-    if (!fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root)
-        || !project_load(manifest, &ctx, err, sizeof err)) {
+    if(!fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root) ||
+       !project_load(manifest, &ctx, err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
         return exit_invalid_manifest;
     }
@@ -47,10 +47,10 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain,
     size_t var_count = project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV);
 
     const char **argv = malloc((size_t)(forwarded_count + 2) * sizeof(char *));
-    if (argv == NULL)
+    if(argv == NULL)
         return exit_build_failure;
     argv[0] = binary;
-    for (int i = 0; i < forwarded_count; i++)
+    for(int i = 0; i < forwarded_count; i++)
         argv[i + 1] = forwarded[i];
     argv[forwarded_count + 1] = NULL;
 
@@ -58,17 +58,17 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain,
     int status = process_run_env(argv, vars, var_count);
     free(argv);
 
-    if (status < 0) {
+    if(status < 0) {
         /* The program could not be started at all (should not happen after a
            successful build, but report it honestly if it does). */
         fprintf(stderr, "molto: failed to start '%s'\n", binary);
         return exit_build_failure;
     }
-    if (status > SIGNAL_EXIT_BASE) {
+    if(status > SIGNAL_EXIT_BASE) {
         /* The program started but was killed by a signal (e.g. a crash). */
         int signal_number = status - SIGNAL_EXIT_BASE;
-        fprintf(stderr, "molto: '%s' terminated by signal %d (%s)\n",
-                binary, signal_number, strsignal(signal_number));
+        fprintf(stderr, "molto: '%s' terminated by signal %d (%s)\n", binary, signal_number,
+                strsignal(signal_number));
     }
     return status;
 }

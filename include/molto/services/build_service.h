@@ -16,16 +16,14 @@
    (`out_binary_size` bytes). `refresh_toolchain` re-resolves the compiler
    instead of using the one recorded in the workspace database.
    Returns a molto_exit_code. */
-[[nodiscard]] int build_project(const char *root, build_profile profile,
-                                bool refresh_toolchain,
+[[nodiscard]] int build_project(const char *root, build_profile profile, bool refresh_toolchain,
                                 char *out_binary, size_t out_binary_size);
 
 /* Translate a manifest's [env] table into the plain pairs process_service
    expects, writing at most `capacity` of them. Returns how many were written.
    Lives here because the build service is what bridges the manifest model and
    the process service; neither of those needs to know about the other. */
-size_t project_env_to_vars(const project_env *env, process_env_var *vars,
-                           size_t capacity);
+size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t capacity);
 
 /* Build the project's test executables: compiles `root/src` and then compiles
    and links each source under `root/tests` into its own executable at
@@ -33,7 +31,7 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars,
    (excluding the app's src/main.c). Appends every built test binary path to
    `test_binaries_out` (caller-initialised, caller-freed). A missing or empty
    tests/ directory is not an error. Returns a molto_exit_code. */
-[[nodiscard]] int build_tests(const char *root, build_profile profile,
-                              bool refresh_toolchain, str_list *test_binaries_out);
+[[nodiscard]] int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
+                              str_list *test_binaries_out);
 
 #endif /* MOLTO_BUILD_SERVICE_H */

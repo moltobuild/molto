@@ -12,7 +12,7 @@ static bool set_error(char *err, size_t err_size, const char *format, ...)
     __attribute__((format(printf, 3, 4)));
 
 static bool set_error(char *err, size_t err_size, const char *format, ...) {
-    if (err != NULL && err_size > 0) {
+    if(err != NULL && err_size > 0) {
         va_list args;
         va_start(args, format);
         vsnprintf(err, err_size, format, args);
@@ -27,18 +27,18 @@ static void seed_defaults(project_ctx *ctx) {
     memset(ctx, 0, sizeof *ctx);
     snprintf(ctx->version, sizeof ctx->version, "%s", "0.0.0");
     ctx->artifact = artifact_static;
-    ctx->profile.debug = (manifest_profile){ .opt_level = 0, .debug_info = true };
-    ctx->profile.release = (manifest_profile){ .opt_level = 3, .debug_info = false };
-    ctx->profile.bench = (manifest_profile){ .opt_level = 3, .debug_info = false };
-    ctx->profile.custom = (manifest_profile){ .opt_level = 2, .debug_info = true };
+    ctx->profile.debug = (manifest_profile){.opt_level = 0, .debug_info = true};
+    ctx->profile.release = (manifest_profile){.opt_level = 3, .debug_info = false};
+    ctx->profile.bench = (manifest_profile){.opt_level = 3, .debug_info = false};
+    ctx->profile.custom = (manifest_profile){.opt_level = 2, .debug_info = true};
 }
 
 static bool map_test_mode(const char *name, test_mode *out) {
-    if (strcmp(name, "per_file") == 0) {
+    if(strcmp(name, "per_file") == 0) {
         *out = test_mode_per_file;
         return true;
     }
-    if (strcmp(name, "single") == 0) {
+    if(strcmp(name, "single") == 0) {
         *out = test_mode_single;
         return true;
     }
@@ -46,15 +46,15 @@ static bool map_test_mode(const char *name, test_mode *out) {
 }
 
 static bool map_artifact(const char *name, artifact_kind *out) {
-    if (strcmp(name, "source") == 0) {
+    if(strcmp(name, "source") == 0) {
         *out = artifact_source;
         return true;
     }
-    if (strcmp(name, "static") == 0) {
+    if(strcmp(name, "static") == 0) {
         *out = artifact_static;
         return true;
     }
-    if (strcmp(name, "shared") == 0) {
+    if(strcmp(name, "shared") == 0) {
         *out = artifact_shared;
         return true;
     }
@@ -63,10 +63,8 @@ static bool map_artifact(const char *name, artifact_kind *out) {
 
 /* Accepted values for [target].compiler (empty means autodetect). */
 static bool valid_compiler(const char *name) {
-    return name[0] == '\0'
-        || strcmp(name, "gcc") == 0 || strcmp(name, "g++") == 0
-        || strcmp(name, "clang") == 0 || strcmp(name, "llvm") == 0
-        || strcmp(name, "msvc") == 0;
+    return name[0] == '\0' || strcmp(name, "gcc") == 0 || strcmp(name, "g++") == 0 ||
+           strcmp(name, "clang") == 0 || strcmp(name, "llvm") == 0 || strcmp(name, "msvc") == 0;
 }
 
 /* Copy a string array from `doc[section][key]` into a fixed-size destination.
@@ -80,16 +78,15 @@ static bool valid_compiler(const char *name) {
     str_list values;
     str_list_init(&values);
     bool ok = true;
-    if (toml_get_array(doc, section, key, &values)) {
+    if(toml_get_array(doc, section, key, &values)) {
         size_t total = str_list_count(&values);
-        for (size_t i = 0; ok && i < total; i++) {
+        for(size_t i = 0; ok && i < total; i++) {
             const char *value = str_list_get(&values, i);
-            if (*count >= PROJECT_MAX_OPTS)
-                ok = set_error(err, err_size, "[%s].%s has more than %d entries",
-                               section, key, PROJECT_MAX_OPTS);
-            else if (!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
-                ok = set_error(err, err_size,
-                               "[%s].%s entry '%s' is longer than %d characters",
+            if(*count >= PROJECT_MAX_OPTS)
+                ok = set_error(err, err_size, "[%s].%s has more than %d entries", section, key,
+                               PROJECT_MAX_OPTS);
+            else if(!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
+                ok = set_error(err, err_size, "[%s].%s entry '%s' is longer than %d characters",
                                section, key, value, PROJECT_OPT_LEN - 1);
             else
                 (*count)++;
@@ -101,33 +98,32 @@ static bool valid_compiler(const char *name) {
 
 /* Read the [env] table. Its keys are the variable names, so they are discovered
    rather than declared in a schema. Values must be strings. */
-[[nodiscard]] static bool read_env(const toml_document *doc, project_env *out,
-                                   char *err, size_t err_size) {
+[[nodiscard]] static bool read_env(const toml_document *doc, project_env *out, char *err,
+                                   size_t err_size) {
     str_list names;
     str_list_init(&names);
-    if (!toml_section_keys(doc, "env", &names)) {
+    if(!toml_section_keys(doc, "env", &names)) {
         str_list_free(&names);
         return set_error(err, err_size, "could not read the [env] table");
     }
 
     bool ok = true;
     size_t total = str_list_count(&names);
-    for (size_t i = 0; ok && i < total; i++) {
+    for(size_t i = 0; ok && i < total; i++) {
         const char *name = str_list_get(&names, i);
-        if (out->count >= PROJECT_MAX_ENV) {
+        if(out->count >= PROJECT_MAX_ENV) {
             ok = set_error(err, err_size, "[env] has more than %d entries", PROJECT_MAX_ENV);
             break;
         }
         char value[PROJECT_ENV_VALUE_MAX];
-        if (!toml_get_string(doc, "env", name, value, sizeof value))
+        if(!toml_get_string(doc, "env", name, value, sizeof value))
             ok = set_error(err, err_size, "[env].%s must be a string", name);
-        else if (!fs_format_path(out->names[out->count], PROJECT_ENV_NAME_MAX, "%s", name))
-            ok = set_error(err, err_size, "[env] name '%s' is longer than %d characters",
-                           name, PROJECT_ENV_NAME_MAX - 1);
-        else if (!fs_format_path(out->values[out->count], PROJECT_ENV_VALUE_MAX,
-                                 "%s", value))
-            ok = set_error(err, err_size, "[env].%s is longer than %d characters",
-                           name, PROJECT_ENV_VALUE_MAX - 1);
+        else if(!fs_format_path(out->names[out->count], PROJECT_ENV_NAME_MAX, "%s", name))
+            ok = set_error(err, err_size, "[env] name '%s' is longer than %d characters", name,
+                           PROJECT_ENV_NAME_MAX - 1);
+        else if(!fs_format_path(out->values[out->count], PROJECT_ENV_VALUE_MAX, "%s", value))
+            ok = set_error(err, err_size, "[env].%s is longer than %d characters", name,
+                           PROJECT_ENV_VALUE_MAX - 1);
         else
             out->count++;
     }
@@ -138,19 +134,18 @@ static bool valid_compiler(const char *name) {
 /* Read defines/include/flags of a section into `out`. */
 [[nodiscard]] static bool read_options(const toml_document *doc, const char *section,
                                        project_options *out, char *err, size_t err_size) {
-    return read_option_array(doc, section, "defines", out->defines,
-                             &out->define_count, err, err_size)
-        && read_option_array(doc, section, "include", out->include,
-                             &out->include_count, err, err_size)
-        && read_option_array(doc, section, "flags", out->flags,
-                             &out->flag_count, err, err_size);
+    return read_option_array(doc, section, "defines", out->defines, &out->define_count, err,
+                             err_size) &&
+           read_option_array(doc, section, "include", out->include, &out->include_count, err,
+                             err_size) &&
+           read_option_array(doc, section, "flags", out->flags, &out->flag_count, err, err_size);
 }
 
 bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
     seed_defaults(out);
 
     toml_document *doc = toml_parse(toml, err, err_size);
-    if (doc == NULL)
+    if(doc == NULL)
         return false;
 
     const toml_field schema[] = {
@@ -169,15 +164,15 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         TOML_BOOL(project_ctx, "profile.custom", "debug_info", profile.custom.debug_info),
     };
     size_t field_count = sizeof schema / sizeof schema[0];
-    if (!toml_bind(doc, schema, field_count, out, err, err_size)) {
+    if(!toml_bind(doc, schema, field_count, out, err, err_size)) {
         toml_free(doc);
         return false;
     }
 
     /* artifact is an enum expressed as a string: handle it separately. */
     char artifact[16];
-    if (toml_get_string(doc, "package", "artifact", artifact, sizeof artifact)) {
-        if (!map_artifact(artifact, &out->artifact)) {
+    if(toml_get_string(doc, "package", "artifact", artifact, sizeof artifact)) {
+        if(!map_artifact(artifact, &out->artifact)) {
             toml_free(doc);
             return set_error(err, err_size, "unknown artifact kind '%s'", artifact);
         }
@@ -188,11 +183,12 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         toml_free(doc);
         return set_error(err, err_size,
                          "artifact '%s' is not supported yet "
-                         "(this version always builds an executable)", artifact);
+                         "(this version always builds an executable)",
+                         artifact);
     }
 
     /* target.compiler must be a known toolchain (if given). */
-    if (!valid_compiler(out->target.compiler)) {
+    if(!valid_compiler(out->target.compiler)) {
         toml_free(doc);
         return set_error(err, err_size, "unknown compiler '%s'", out->target.compiler);
     }
@@ -202,18 +198,18 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     str_list libs;
     str_list_init(&libs);
     bool ok = true;
-    if (toml_get_array(doc, "target", "link", &libs)) {
+    if(toml_get_array(doc, "target", "link", &libs)) {
         size_t count = str_list_count(&libs);
-        for (size_t i = 0; ok && i < count; i++) {
+        for(size_t i = 0; ok && i < count; i++) {
             const char *lib = str_list_get(&libs, i);
-            if (out->target.link_count >= PROJECT_MAX_LINK)
+            if(out->target.link_count >= PROJECT_MAX_LINK)
                 ok = set_error(err, err_size, "[target].link has more than %d entries",
                                PROJECT_MAX_LINK);
-            else if (!fs_format_path(out->target.link[out->target.link_count],
-                                     PROJECT_LINK_NAME_MAX, "%s", lib))
+            else if(!fs_format_path(out->target.link[out->target.link_count], PROJECT_LINK_NAME_MAX,
+                                    "%s", lib))
                 ok = set_error(err, err_size,
-                               "[target].link entry '%s' is longer than %d characters",
-                               lib, PROJECT_LINK_NAME_MAX - 1);
+                               "[target].link entry '%s' is longer than %d characters", lib,
+                               PROJECT_LINK_NAME_MAX - 1);
             else
                 out->target.link_count++;
         }
@@ -222,14 +218,15 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
 
     /* [test].mode is an enum expressed as a string, like package.artifact. */
     char test_mode_name[16];
-    if (ok && toml_get_string(doc, "test", "mode", test_mode_name, sizeof test_mode_name)
-        && !map_test_mode(test_mode_name, &out->test.mode))
-        ok = set_error(err, err_size, "unknown test mode '%s' (per_file or single)",
-                       test_mode_name);
+    if(ok && toml_get_string(doc, "test", "mode", test_mode_name, sizeof test_mode_name) &&
+       !map_test_mode(test_mode_name, &out->test.mode))
+        ok =
+            set_error(err, err_size, "unknown test mode '%s' (per_file or single)", test_mode_name);
 
-    ok = ok && read_option_array(doc, "test", "sources", out->test.sources,
-                                 &out->test.source_count, err, err_size)
-            && read_options(doc, "test", &out->test.options, err, err_size);
+    ok = ok &&
+         read_option_array(doc, "test", "sources", out->test.sources, &out->test.source_count, err,
+                           err_size) &&
+         read_options(doc, "test", &out->test.options, err, err_size);
 
     /* target.requires: the features the project needs from a compiler. */
     ok = ok && read_option_array(doc, "target", "requires", out->target.requires,
@@ -237,30 +234,26 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
 
     /* Base compilation options ([target]), the [env] table, and per-profile
        additions. */
-    ok = ok && read_env(doc, &out->env, err, err_size)
-            && read_options(doc, "target", &out->target.options, err, err_size)
-            && read_options(doc, "profile.debug", &out->profile_options.debug,
-                            err, err_size)
-            && read_options(doc, "profile.release", &out->profile_options.release,
-                            err, err_size)
-            && read_options(doc, "profile.bench", &out->profile_options.bench,
-                            err, err_size)
-            && read_options(doc, "profile.custom", &out->profile_options.custom,
-                            err, err_size);
+    ok = ok && read_env(doc, &out->env, err, err_size) &&
+         read_options(doc, "target", &out->target.options, err, err_size) &&
+         read_options(doc, "profile.debug", &out->profile_options.debug, err, err_size) &&
+         read_options(doc, "profile.release", &out->profile_options.release, err, err_size) &&
+         read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
+         read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size);
 
     toml_free(doc);
-    if (!ok)
+    if(!ok)
         return false;
 
-    if (!manifest_is_valid_name(out->project_name))
+    if(!manifest_is_valid_name(out->project_name))
         return set_error(err, err_size, "package name is missing or not snake_case");
     return true;
 }
 
 bool project_load(const char *path, project_ctx *out, char *err, size_t err_size) {
     char *toml = fs_read_file(path);
-    if (toml == NULL) {
-        if (err != NULL && err_size > 0)
+    if(toml == NULL) {
+        if(err != NULL && err_size > 0)
             snprintf(err, err_size, "could not read '%s'", path);
         return false;
     }
@@ -270,7 +263,7 @@ bool project_load(const char *path, project_ctx *out, char *err, size_t err_size
 }
 
 void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
-    static const char *artifact_names[] = { "source", "static", "shared" };
+    static const char *artifact_names[] = {"source", "static", "shared"};
     fprintf(stream, "project_name = %s\n", ctx->project_name);
     fprintf(stream, "version      = %s\n", ctx->version);
     fprintf(stream, "artifact     = %s\n", artifact_names[ctx->artifact]);
@@ -281,7 +274,7 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
     fprintf(stream, "target.cpp_std  = %s\n",
             ctx->target.cpp_std[0] != '\0' ? ctx->target.cpp_std : "(default)");
     fprintf(stream, "target.link     = [");
-    for (size_t i = 0; i < ctx->target.link_count; i++)
+    for(size_t i = 0; i < ctx->target.link_count; i++)
         fprintf(stream, "%s%s", i > 0 ? ", " : "", ctx->target.link[i]);
     fprintf(stream, "]\n");
     fprintf(stream, "profile.debug   = { opt_level = %d, debug_info = %s }\n",

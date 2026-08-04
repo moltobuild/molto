@@ -16,16 +16,16 @@
  */
 
 typedef enum {
-    cli_opt_flag,   /* a boolean switch, present or not */
-    cli_opt_value,  /* takes an argument */
+    cli_opt_flag,  /* a boolean switch, present or not */
+    cli_opt_value, /* takes an argument */
 } cli_opt_kind;
 
 /* One option a command accepts. */
 typedef struct {
-    const char *long_name;     /* e.g. "--profile" (required) */
-    char        short_name;    /* e.g. 'p', or 0 for none */
+    const char *long_name; /* e.g. "--profile" (required) */
+    char short_name;       /* e.g. 'p', or 0 for none */
     cli_opt_kind kind;
-    const char *value_name;    /* shown in help for value options, e.g. "<name>" */
+    const char *value_name; /* shown in help for value options, e.g. "<name>" */
     const char *help;
     const char *default_value; /* value options: reported when the flag is absent */
 } cli_option;
@@ -38,9 +38,9 @@ typedef int (*cli_handler)(const cli_args *args);
 
 /* One command in the application. */
 typedef struct {
-    const char *name;      /* e.g. "build" */
-    const char *summary;   /* one-line description for help */
-    const char *arg_name;  /* positional shown in help, e.g. "<name>", or NULL */
+    const char *name;     /* e.g. "build" */
+    const char *summary;  /* one-line description for help */
+    const char *arg_name; /* positional shown in help, e.g. "<name>", or NULL */
     const cli_option *options;
     size_t option_count;
     cli_handler handler;
@@ -48,9 +48,9 @@ typedef struct {
 
 /* The application: program identity plus its command table. */
 typedef struct {
-    const char *program;   /* e.g. "molto" */
+    const char *program; /* e.g. "molto" */
     const char *version;
-    const char *tagline;   /* one line shown in the global help */
+    const char *tagline; /* one line shown in the global help */
     const cli_command *commands;
     size_t command_count;
 } cli_app;

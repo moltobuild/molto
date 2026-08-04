@@ -10,7 +10,7 @@
 
 /* Flush the current token (if any) into the list and reset it. */
 static bool flush_token(str_list *out, char *token, size_t *length) {
-    if (*length == 0)
+    if(*length == 0)
         return true;
     token[*length] = '\0';
     *length = 0;
@@ -19,7 +19,7 @@ static bool flush_token(str_list *out, char *token, size_t *length) {
 
 /* Append one character to the current token, guarding against overflow. */
 static bool append_char(char *token, size_t *length, char c) {
-    if (*length + 1 >= DEPFILE_TOKEN_MAX)
+    if(*length + 1 >= DEPFILE_TOKEN_MAX)
         return false;
     token[(*length)++] = c;
     return true;
@@ -27,36 +27,36 @@ static bool append_char(char *token, size_t *length, char c) {
 
 bool depfile_parse(const char *text, str_list *out) {
     const char *colon = strchr(text, ':');
-    if (colon == NULL)
+    if(colon == NULL)
         return false;
 
     char token[DEPFILE_TOKEN_MAX];
     size_t length = 0;
-    for (const char *p = colon + 1; *p != '\0'; p++) {
+    for(const char *p = colon + 1; *p != '\0'; p++) {
         char c = *p;
-        if (c == '\\') {
+        if(c == '\\') {
             char next = p[1];
-            if (next == '\n' || next == '\r') {
+            if(next == '\n' || next == '\r') {
                 /* Line continuation: acts as a separator. */
-                if (!flush_token(out, token, &length))
+                if(!flush_token(out, token, &length))
                     return false;
                 p++; /* consume the newline character */
-            } else if (next == ' ') {
+            } else if(next == ' ') {
                 /* Escaped space: a literal space inside a path. */
-                if (!append_char(token, &length, ' '))
+                if(!append_char(token, &length, ' '))
                     return false;
                 p++;
-            } else if (next != '\0') {
+            } else if(next != '\0') {
                 /* Other escape (e.g. "\#", "\$"): keep the next char literally. */
-                if (!append_char(token, &length, next))
+                if(!append_char(token, &length, next))
                     return false;
                 p++;
             }
-        } else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-            if (!flush_token(out, token, &length))
+        } else if(c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if(!flush_token(out, token, &length))
                 return false;
         } else {
-            if (!append_char(token, &length, c))
+            if(!append_char(token, &length, c))
                 return false;
         }
     }
@@ -65,7 +65,7 @@ bool depfile_parse(const char *text, str_list *out) {
 
 bool depfile_read(const char *path, str_list *out) {
     char *text = fs_read_file(path);
-    if (text == NULL)
+    if(text == NULL)
         return false;
     bool ok = depfile_parse(text, out);
     free(text);

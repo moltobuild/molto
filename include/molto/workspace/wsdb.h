@@ -26,8 +26,7 @@ typedef struct wsdb wsdb;
 /* Record that `object` was produced by `command` from `prereqs`, refreshing the
    freshness signature of the source and every prerequisite. Returns false if the
    record could not be stored, in which case the object is rebuilt next time. */
-bool wsdb_record_object(wsdb *db, const char *object, const char *command,
-                        const str_list *prereqs);
+bool wsdb_record_object(wsdb *db, const char *object, const char *command, const str_list *prereqs);
 
 /* True if `binary` is up to date for `command` (staleness vs its objects is the
    caller's concern). */
@@ -50,8 +49,7 @@ bool wsdb_record_binary(wsdb *db, const char *binary, const char *command);
 /* Record `values` (the resolved answer) as the result of `request`. The first
    value must be the compiler's path: it is registered as an input, so the
    existing freshness machinery notices when it is replaced. */
-bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request,
-                           const str_list *values);
+bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request, const str_list *values);
 
 /* Read back the values recorded under `key` into `out` (caller-initialised).
    Returns false if there is no such entry. */

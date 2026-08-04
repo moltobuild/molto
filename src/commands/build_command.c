@@ -9,12 +9,12 @@
 
 int build_command_run(const char *requested_profile, bool refresh_toolchain) {
     build_profile profile = profile_debug;
-    if (requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
+    if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
         return exit_usage_error;
     }
     char root[4096];
-    if (!workspace_find_root(root, sizeof root)) {
+    if(!workspace_find_root(root, sizeof root)) {
         fprintf(stderr, "molto: not inside a molto workspace (no Project.toml found)\n");
         return exit_invalid_manifest;
     }
@@ -25,7 +25,7 @@ int build_command_run(const char *requested_profile, bool refresh_toolchain) {
     const char *label = profile_name(profile);
     fprintf(stderr, "Compiling (%s)\n", label);
     int code = build_project(root, profile, refresh_toolchain, NULL, 0);
-    if (code == exit_ok)
+    if(code == exit_ok)
         fprintf(stderr, "Finished %s -> build/%s\n", label, label);
     return code;
 }

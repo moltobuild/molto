@@ -4,16 +4,14 @@
 #include <stdlib.h>
 
 bool manifest_is_valid_name(const char *name) {
-    if (name == NULL || name[0] == '\0')
+    if(name == NULL || name[0] == '\0')
         return false;
-    if (!(name[0] >= 'a' && name[0] <= 'z'))
+    if(!(name[0] >= 'a' && name[0] <= 'z'))
         return false;
-    for (size_t i = 0; name[i] != '\0'; i++) {
+    for(size_t i = 0; name[i] != '\0'; i++) {
         char c = name[i];
-        bool allowed = (c >= 'a' && c <= 'z')
-                    || (c >= '0' && c <= '9')
-                    || c == '_';
-        if (!allowed)
+        bool allowed = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        if(!allowed)
             return false;
     }
     return true;
@@ -51,14 +49,14 @@ static const char manifest_template[] =
     "debug_info = false\n";
 
 char *manifest_render_default(const char *name) {
-    if (!manifest_is_valid_name(name))
+    if(!manifest_is_valid_name(name))
         return NULL;
     int needed = snprintf(NULL, 0, manifest_template, name);
-    if (needed < 0)
+    if(needed < 0)
         return NULL;
     size_t size = (size_t)needed + 1;
     char *buffer = malloc(size);
-    if (buffer == NULL)
+    if(buffer == NULL)
         return NULL;
     snprintf(buffer, size, manifest_template, name);
     return buffer;
