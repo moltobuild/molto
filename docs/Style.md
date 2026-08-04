@@ -60,6 +60,14 @@ shown as a patch.
 Headers are formatted too. Style applies to a `.h` as much as to a `.c`, and a
 header nobody includes still has to be readable.
 
+Which is why the formatter is told what language it is reading. A `.h` carries
+no language in its extension, and clang-format left to itself assumes the newest
+C++: a C struct with a field named `requires` is then read as a C++20
+requires-clause and the declaration is torn across three lines. Molto passes the
+`[target].cpp_std` from the manifest, so a C project is formatted as C. A C++
+project that never declares `cpp_std` is formatted as C too — the manifest is
+the only thing that says otherwise, and this is one more reason to declare it.
+
 ## `molto lint`
 
 ```console

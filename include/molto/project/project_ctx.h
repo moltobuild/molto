@@ -59,9 +59,7 @@ typedef struct {
     /* Compiler features the project needs, proven rather than assumed (see
        pickup). Naming capabilities instead of a binary is what keeps a
        manifest portable between machines. */
-    char
-        requires[
-            PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    char requires[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t requires_count;
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;

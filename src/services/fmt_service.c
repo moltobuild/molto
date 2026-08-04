@@ -2,6 +2,7 @@
 
 #include <molto/build/diff.h>
 #include <molto/exit_code.h>
+#include <molto/project/project_ctx.h>
 #include <molto/project/style_config.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
@@ -18,6 +19,9 @@
 /* Where a project keeps the code a style tool has an opinion about. */
 #define DIR_SRC "src"
 #define DIR_INCLUDE "include"
+
+/* The manifest, read here only for the language its headers are written in. */
+#define MANIFEST_FILENAME "Project.toml"
 
 /* clang-format arguments. */
 #define ARG_STYLE_FILE "--style=file:%s" /* a config outside the project tree */
@@ -213,6 +217,23 @@ static void free_tasks(fmt_task *tasks, size_t count, str_list *argvs) {
     free(argvs);
 }
 
+/* The `[target].cpp_std` of the manifest, or "" when the project is C or the
+   manifest cannot be read. Formatting is not a build and must not start failing
+   over a manifest that a build would reject anyway: a project that cannot be
+   parsed is treated as C, which is the assumption that was already in force. */
+static void read_cpp_std(const char *root, char *out, size_t out_size) {
+    out[0] = '\0';
+
+    char path[PATH_BUFFER_SIZE];
+    if(!fs_format_path(path, sizeof path, "%s/" MANIFEST_FILENAME, root))
+        return;
+
+    project_ctx ctx;
+    char err[CONFIG_ERROR_SIZE] = "";
+    if(project_load(path, &ctx, err, sizeof err))
+        snprintf(out, out_size, "%s", ctx.target.cpp_std);
+}
+
 int fmt_project(const char *root, const fmt_request *request, fmt_result *result) {
     char err[CONFIG_ERROR_SIZE] = "";
     style_config config;
@@ -220,6 +241,9 @@ int fmt_project(const char *root, const fmt_request *request, fmt_result *result
         fprintf(stderr, "molto: %s\n", err);
         return exit_invalid_manifest;
     }
+
+    char cpp_std[16];
+    read_cpp_std(root, cpp_std, sizeof cpp_std);
 
     /* The database is opened only to reuse the recorded answer about the tool,
        so `molto fmt` does not pay pickup's cost on every run. */
@@ -235,8 +259,8 @@ int fmt_project(const char *root, const fmt_request *request, fmt_result *result
     }
 
     char config_path[STYLE_CONFIG_PATH_MAX];
-    if(!style_translate_format(root, &config, &backend, config_path, sizeof config_path, err,
-                               sizeof err)) {
+    if(!style_translate_format(root, &config, &backend, cpp_std, config_path, sizeof config_path,
+                               err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err);
         wsdb_close(db);
         return exit_invalid_manifest;
