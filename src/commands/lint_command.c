@@ -70,6 +70,12 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
         else
             diagnostic_write_text(stdout, &found, root);
 
+        /* The summary below goes to stderr while the diagnostics went to stdout.
+           A terminal interleaves them correctly because stdout is line buffered
+           there; a pipe does not, and the summary lands in the middle of a
+           diagnostic. Flush before writing to the other stream. */
+        fflush(stdout);
+
         size_t errors = diagnostic_count_severity(&found, diagnostic_severity_error);
         size_t warnings = diagnostic_count_severity(&found, diagnostic_severity_warning);
         if(!as_json)

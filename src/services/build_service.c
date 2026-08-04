@@ -748,9 +748,10 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     char binary[PATH_BUFFER_SIZE];
     if(!fs_format_path(binary, sizeof binary, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/%s%s",
                        context->root, context->profile_dir, context->ctx->project_name,
-                       TEST_SUITE_SUFFIX))
-        return fs_report_long_path(context->ctx->project_name) ? exit_build_failure
-                                                               : exit_build_failure;
+                       TEST_SUITE_SUFFIX)) {
+        (void)fs_report_long_path(context->ctx->project_name);
+        return exit_build_failure;
+    }
 
     str_list link_objects;
     str_list_init(&link_objects);
