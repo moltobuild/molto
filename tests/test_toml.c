@@ -195,3 +195,84 @@ MOLTEST(toml_accepts_an_empty_document) {
     EXPECT_FALSE(toml_has_section(doc, "package"));
     toml_free(doc);
 }
+
+/* The answer `pickup tools --format toml` gives, verbatim. Molto reads it to
+   learn which formatter and linter this machine has, and where. */
+static const char pickup_tools_answer[] =
+    "[[tool]]\n"
+    "kind = \"formatter\"\n"
+    "name = \"clang-format\"\n"
+    "path = \"/home/u/.pickup/toolchains/clang-22.1.8/bin/clang-format\"\n"
+    "version = \"clang-format version 22.1.8\"\n"
+    "source = \"pickup\"\n"
+    "\n"
+    "[[tool]]\n"
+    "kind = \"linter\"\n"
+    "name = \"clang-tidy\"\n"
+    "path = \"/home/u/.pickup/toolchains/clang-22.1.8/bin/clang-tidy\"\n"
+    "version = \"LLVM version 22.1.8\"\n"
+    "source = \"pickup\"\n";
+
+MOLTEST(toml_reads_the_answer_of_pickup_tools) {
+    char err[256] = "";
+    toml_document *doc = toml_parse(pickup_tools_answer, err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    ASSERT_EQ(2, (int)toml_table_array_count(doc, "tool"));
+
+    /* Each [[tool]] is its own section, so the ordinary accessors read it. The
+       second must not have replaced the first. */
+    char section[TOML_SECTION_MAX];
+    char value[256];
+
+    ASSERT_TRUE(toml_table_array_section("tool", 0, section, sizeof section));
+    EXPECT_TRUE(toml_get_string(doc, section, "kind", value, sizeof value));
+    EXPECT_STREQ("formatter", value);
+    EXPECT_TRUE(toml_get_string(doc, section, "name", value, sizeof value));
+    EXPECT_STREQ("clang-format", value);
+
+    ASSERT_TRUE(toml_table_array_section("tool", 1, section, sizeof section));
+    EXPECT_TRUE(toml_get_string(doc, section, "kind", value, sizeof value));
+    EXPECT_STREQ("linter", value);
+    EXPECT_TRUE(toml_get_string(doc, section, "path", value, sizeof value));
+    EXPECT_STREQ("/home/u/.pickup/toolchains/clang-22.1.8/bin/clang-tidy", value);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_counts_no_tables_for_an_array_that_is_not_there) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("[package]\nname = \"x\"\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(0, (int)toml_table_array_count(doc, "tool"));
+    EXPECT_EQ(0, (int)toml_table_array_count(doc, "package"));
+    toml_free(doc);
+}
+
+MOLTEST(toml_keeps_interleaved_arrays_of_tables_apart) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("[[a]]\nx = 1\n[[b]]\nx = 2\n[[a]]\nx = 3\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(2, (int)toml_table_array_count(doc, "a"));
+    EXPECT_EQ(1, (int)toml_table_array_count(doc, "b"));
+
+    /* Each name counts on its own: the second [[a]] is a[1], not a[2]. */
+    char section[TOML_SECTION_MAX];
+    long number = 0;
+    ASSERT_TRUE(toml_table_array_section("a", 1, section, sizeof section));
+    EXPECT_TRUE(toml_get_int(doc, section, "x", &number));
+    EXPECT_EQ(3, (int)number);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_reports_a_malformed_array_of_tables) {
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("[[tool]\nkind = \"linter\"\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
+
+    err[0] = '\0';
+    EXPECT_NULL(toml_parse("[[]]\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "empty"));
+}

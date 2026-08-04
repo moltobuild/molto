@@ -27,21 +27,24 @@
 #include <string.h>
 
 /* Capacity limits for the fields of a single entry. A section/key/value that
- * exceeds its limit is a parse error (never silently truncated). */
-#define TOML_SECTION_MAX 128
-#define TOML_KEY_MAX     64
-#define TOML_VALUE_MAX   256
-#define TOML_LINE_MAX    1024
+ * exceeds its limit is a parse error (never silently truncated).
+ * TOML_SECTION_MAX lives in the header: reading an array of tables means
+ * holding a section name. */
+#define TOML_KEY_MAX 64
+/* Distinct [[name]] arrays one document may declare. */
+#define TOML_MAX_TABLE_ARRAYS 8
+#define TOML_VALUE_MAX 256
+#define TOML_LINE_MAX 1024
 
 /* Scratch buffer size for the digits of one integer value. */
-#define TOML_DIGITS_MAX  64
+#define TOML_DIGITS_MAX 64
 
 /* strtol base for integer values (plain decimal). */
 #define TOML_INTEGER_BASE 10
 
 /* Growth policy for the document's entry array. */
 #define TOML_DOC_INITIAL_CAPACITY 16
-#define TOML_DOC_GROWTH_FACTOR    2
+#define TOML_DOC_GROWTH_FACTOR 2
 
 typedef struct {
     char section[TOML_SECTION_MAX];
@@ -51,7 +54,7 @@ typedef struct {
         char str[TOML_VALUE_MAX];
         long integer;
         bool boolean;
-        str_list array;   /* owned when type == toml_field_array */
+        str_list array; /* owned when type == toml_field_array */
     } value;
 } toml_entry;
 
@@ -61,99 +64,103 @@ struct toml_document {
     size_t capacity;
 };
 
-static void set_err(char *err, size_t size, int line,
-                    const char *reason, const char *text) {
-    if (err == NULL || size == 0)
+static void set_err(char *err, size_t size, int line, const char *reason, const char *text) {
+    if(err == NULL || size == 0)
         return;
-    if (line > 0 && text != NULL)
+    if(line > 0 && text != NULL)
         snprintf(err, size, "Project.toml:%d: %s: '%s'", line, reason, text);
-    else if (line > 0)
+    else if(line > 0)
         snprintf(err, size, "Project.toml:%d: %s", line, reason);
-    else if (text != NULL)
+    else if(text != NULL)
         snprintf(err, size, "%s: '%s'", reason, text);
     else
         snprintf(err, size, "%s", reason);
 }
 
 static char *trim(char *text) {
-    while (*text == ' ' || *text == '\t')
+    while(*text == ' ' || *text == '\t')
         text++;
     char *end = text + strlen(text);
-    while (end > text && (end[-1] == ' ' || end[-1] == '\t'
-                       || end[-1] == '\r' || end[-1] == '\n'))
+    while(end > text && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n'))
         end--;
     *end = '\0';
     return text;
 }
 
 static bool is_bare_char(char c, bool allow_dot) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_' || c == '-'
-        || (allow_dot && c == '.');
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+           c == '-' || (allow_dot && c == '.');
 }
 
 /* Cut the line at the first '#' that is not inside a string. */
 static void strip_inline_comment(char *line) {
     bool in_basic = false;
     bool in_literal = false;
-    for (char *p = line; *p != '\0'; p++) {
+    for(char *p = line; *p != '\0'; p++) {
         char c = *p;
-        if (in_basic) {
-            if (c == '\\' && p[1] != '\0')
+        if(in_basic) {
+            if(c == '\\' && p[1] != '\0')
                 p++;
-            else if (c == '"')
+            else if(c == '"')
                 in_basic = false;
-        } else if (in_literal) {
-            if (c == '\'')
+        } else if(in_literal) {
+            if(c == '\'')
                 in_literal = false;
-        } else if (c == '"') {
+        } else if(c == '"') {
             in_basic = true;
-        } else if (c == '\'') {
+        } else if(c == '\'') {
             in_literal = true;
-        } else if (c == '#') {
+        } else if(c == '#') {
             *p = '\0';
             return;
         }
     }
 }
 
-static bool parse_basic_string(const char *text, char *out, size_t out_size,
-                               const char **end) {
+static bool parse_basic_string(const char *text, char *out, size_t out_size, const char **end) {
     size_t o = 0;
     const char *p = text + 1;
-    while (*p != '\0' && *p != '"') {
+    while(*p != '\0' && *p != '"') {
         char c = *p++;
-        if (c == '\\') {
+        if(c == '\\') {
             char escaped = *p++;
-            switch (escaped) {
-                case '"':  c = '"';  break;
-                case '\\': c = '\\'; break;
-                case 'n':  c = '\n'; break;
-                case 't':  c = '\t'; break;
-                default:   return false; /* dangling or unsupported escape */
+            switch(escaped) {
+            case '"':
+                c = '"';
+                break;
+            case '\\':
+                c = '\\';
+                break;
+            case 'n':
+                c = '\n';
+                break;
+            case 't':
+                c = '\t';
+                break;
+            default:
+                return false; /* dangling or unsupported escape */
             }
         }
-        if (o + 1 >= out_size)
+        if(o + 1 >= out_size)
             return false; /* value too long */
         out[o++] = c;
     }
-    if (*p != '"')
+    if(*p != '"')
         return false; /* unterminated */
     out[o] = '\0';
     *end = p + 1;
     return true;
 }
 
-static bool parse_literal_string(const char *text, char *out, size_t out_size,
-                                 const char **end) {
+static bool parse_literal_string(const char *text, char *out, size_t out_size, const char **end) {
     size_t o = 0;
     const char *p = text + 1;
-    while (*p != '\0' && *p != '\'') {
-        if (o + 1 >= out_size)
+    while(*p != '\0' && *p != '\'') {
+        if(o + 1 >= out_size)
             return false;
         out[o++] = *p++;
     }
-    if (*p != '\'')
+    if(*p != '\'')
         return false;
     out[o] = '\0';
     *end = p + 1;
@@ -165,33 +172,32 @@ static bool parse_literal_string(const char *text, char *out, size_t out_size,
 static bool parse_integer(const char *text, long *out) {
     char digits[TOML_DIGITS_MAX];
     size_t count = 0;
-    for (const char *p = text; *p != '\0'; p++) {
-        if (*p == '_')
+    for(const char *p = text; *p != '\0'; p++) {
+        if(*p == '_')
             continue; /* separators are cosmetic; drop them */
-        if (count + 1 >= sizeof digits)
+        if(count + 1 >= sizeof digits)
             return false;
         digits[count++] = *p;
     }
     digits[count] = '\0';
-    if (count == 0)
+    if(count == 0)
         return false;
     errno = 0;
     char *endptr;
     long value = strtol(digits, &endptr, TOML_INTEGER_BASE);
-    if (errno == ERANGE || *endptr != '\0')
+    if(errno == ERANGE || *endptr != '\0')
         return false; /* out of range, or not a pure integer */
     *out = value;
     return true;
 }
 
 /* Append a parsed entry to the document, growing the array as needed. */
-static bool doc_push(toml_document *doc, const toml_entry *entry,
-                     char *err, size_t err_size) {
-    if (doc->count == doc->capacity) {
-        size_t next = doc->capacity == 0 ? TOML_DOC_INITIAL_CAPACITY
-                                         : doc->capacity * TOML_DOC_GROWTH_FACTOR;
+static bool doc_push(toml_document *doc, const toml_entry *entry, char *err, size_t err_size) {
+    if(doc->count == doc->capacity) {
+        size_t next =
+            doc->capacity == 0 ? TOML_DOC_INITIAL_CAPACITY : doc->capacity * TOML_DOC_GROWTH_FACTOR;
         toml_entry *items = realloc(doc->items, next * sizeof(toml_entry));
-        if (items == NULL) {
+        if(items == NULL) {
             set_err(err, err_size, 0, "out of memory", NULL);
             return false;
         }
@@ -202,25 +208,98 @@ static bool doc_push(toml_document *doc, const toml_entry *entry,
     return true;
 }
 
-static bool parse_header(char *text, char *section, size_t size,
-                         char *err, size_t err_size, int line) {
+/* One [[name]] seen so far, and how many times. Several arrays of tables may
+   interleave in one document, so each name counts on its own. */
+typedef struct {
+    char name[TOML_SECTION_MAX];
+    size_t seen;
+} table_array_counter;
+
+/* Next free index for [[name]], bumping its counter. Returns false when the
+   document declares more distinct array names than TOML_MAX_TABLE_ARRAYS —
+   refused rather than folded onto another name's counter. */
+static bool next_table_array_index(table_array_counter *counters, size_t *counter_count,
+                                   const char *name, size_t *out_index, char *err, size_t err_size,
+                                   int line) {
+    for(size_t i = 0; i < *counter_count; i++) {
+        if(strcmp(counters[i].name, name) == 0) {
+            *out_index = counters[i].seen++;
+            return true;
+        }
+    }
+    if(*counter_count >= TOML_MAX_TABLE_ARRAYS) {
+        set_err(err, err_size, line, "too many arrays of tables", name);
+        return false;
+    }
+    snprintf(counters[*counter_count].name, TOML_SECTION_MAX, "%s", name);
+    counters[*counter_count].seen = 1;
+    (*counter_count)++;
+    *out_index = 0;
+    return true;
+}
+
+bool toml_table_array_section(const char *name, size_t index, char *out, size_t out_size) {
+    if(name == NULL || out == NULL)
+        return false;
+    int written = snprintf(out, out_size, "%s[%zu]", name, index);
+    return written > 0 && (size_t)written < out_size;
+}
+
+/* Parse a `[[name]]` header. Each occurrence becomes its own section — name[0],
+   name[1], ... — so the flat (section, key) model holds unchanged and every
+   existing accessor reads one of these tables with no special case. Without
+   this the second [[tool]] would land in the same section as the first and
+   silently replace it. */
+static bool parse_table_array_header(char *text, table_array_counter *counters,
+                                     size_t *counter_count, char *section, size_t size, char *err,
+                                     size_t err_size, int line) {
     size_t len = strlen(text);
-    if (text[len - 1] != ']') {
+    if(len < 4 || text[len - 1] != ']' || text[len - 2] != ']') {
+        set_err(err, err_size, line, "missing ']]' in array-of-tables header", text);
+        return false;
+    }
+    text[len - 2] = '\0';
+    char *inside = trim(text + 2);
+    if(inside[0] == '\0') {
+        set_err(err, err_size, line, "empty array-of-tables header", NULL);
+        return false;
+    }
+    for(char *p = inside; *p != '\0'; p++) {
+        if(!is_bare_char(*p, true)) {
+            set_err(err, err_size, line, "invalid character in section name", inside);
+            return false;
+        }
+    }
+
+    size_t index = 0;
+    if(!next_table_array_index(counters, counter_count, inside, &index, err, err_size, line))
+        return false;
+    if(!toml_table_array_section(inside, index, section, size)) {
+        set_err(err, err_size, line, "section name too long", inside);
+        return false;
+    }
+    return true;
+}
+
+static bool parse_header(char *text, char *section, size_t size, char *err, size_t err_size,
+                         int line) {
+    size_t len = strlen(text);
+    if(text[len - 1] != ']') {
         set_err(err, err_size, line, "missing ']' in section header", text);
         return false;
     }
     text[len - 1] = '\0';
     char *inside = trim(text + 1);
-    if (inside[0] == '\0') {
+    if(inside[0] == '\0') {
         set_err(err, err_size, line, "empty section header", NULL);
         return false;
     }
-    if (strlen(inside) >= size) {
+    if(strlen(inside) >= size) {
         set_err(err, err_size, line, "section name too long", inside);
         return false;
     }
-    for (char *p = inside; *p != '\0'; p++) {
-        if (!is_bare_char(*p, true)) {
+    for(char *p = inside; *p != '\0'; p++) {
+        if(!is_bare_char(*p, true)) {
             set_err(err, err_size, line, "invalid character in section name", inside);
             return false;
         }
@@ -234,52 +313,51 @@ static bool parse_header(char *text, char *section, size_t size,
    non-string element or a missing closing ']' is an error. */
 static bool parse_string_array(const char *text, str_list *out) {
     const char *p = text + 1; /* skip '[' */
-    while (*p != '\0') {
-        while (*p == ' ' || *p == '\t' || *p == ',')
+    while(*p != '\0') {
+        while(*p == ' ' || *p == '\t' || *p == ',')
             p++;
-        if (*p == ']')
+        if(*p == ']')
             return true;
-        if (*p != '"' && *p != '\'')
+        if(*p != '"' && *p != '\'')
             return false;
         char element[TOML_VALUE_MAX];
         const char *end = p;
-        bool ok = *p == '"'
-            ? parse_basic_string(p, element, sizeof element, &end)
-            : parse_literal_string(p, element, sizeof element, &end);
-        if (!ok)
+        bool ok = *p == '"' ? parse_basic_string(p, element, sizeof element, &end)
+                            : parse_literal_string(p, element, sizeof element, &end);
+        if(!ok)
             return false;
-        if (!str_list_push(out, element))
+        if(!str_list_push(out, element))
             return false;
         p = end;
     }
     return false; /* no closing ']' */
 }
 
-static bool parse_key_value(toml_document *doc, const char *section, char *text,
-                            char *err, size_t err_size, int line) {
+static bool parse_key_value(toml_document *doc, const char *section, char *text, char *err,
+                            size_t err_size, int line) {
     char *equals = strchr(text, '=');
-    if (equals == NULL) {
+    if(equals == NULL) {
         set_err(err, err_size, line, "expected '='", text);
         return false;
     }
     *equals = '\0';
     char *key = trim(text);
     char *value = trim(equals + 1);
-    if (key[0] == '\0') {
+    if(key[0] == '\0') {
         set_err(err, err_size, line, "empty key", NULL);
         return false;
     }
-    if (strlen(key) >= TOML_KEY_MAX) {
+    if(strlen(key) >= TOML_KEY_MAX) {
         set_err(err, err_size, line, "key too long", key);
         return false;
     }
-    for (char *p = key; *p != '\0'; p++) {
-        if (!is_bare_char(*p, false)) {
+    for(char *p = key; *p != '\0'; p++) {
+        if(!is_bare_char(*p, false)) {
             set_err(err, err_size, line, "invalid character in key", key);
             return false;
         }
     }
-    if (value[0] == '\0') {
+    if(value[0] == '\0') {
         set_err(err, err_size, line, "missing value", key);
         return false;
     }
@@ -289,45 +367,45 @@ static bool parse_key_value(toml_document *doc, const char *section, char *text,
     snprintf(entry.section, sizeof entry.section, "%s", section);
     snprintf(entry.key, sizeof entry.key, "%s", key);
 
-    if (value[0] == '"' || value[0] == '\'') {
+    if(value[0] == '"' || value[0] == '\'') {
         const char *end = value;
         bool ok = value[0] == '"'
-            ? parse_basic_string(value, entry.value.str, sizeof entry.value.str, &end)
-            : parse_literal_string(value, entry.value.str, sizeof entry.value.str, &end);
-        if (!ok) {
+                      ? parse_basic_string(value, entry.value.str, sizeof entry.value.str, &end)
+                      : parse_literal_string(value, entry.value.str, sizeof entry.value.str, &end);
+        if(!ok) {
             set_err(err, err_size, line, "invalid string value", key);
             return false;
         }
-        if (*trim((char *)end) != '\0') {
+        if(*trim((char *)end) != '\0') {
             set_err(err, err_size, line, "trailing characters after value", key);
             return false;
         }
         entry.type = toml_field_string;
-    } else if (value[0] == '[') {
+    } else if(value[0] == '[') {
         str_list array;
         str_list_init(&array);
-        if (!parse_string_array(value, &array)) {
+        if(!parse_string_array(value, &array)) {
             str_list_free(&array);
             set_err(err, err_size, line, "invalid array value", key);
             return false;
         }
         entry.type = toml_field_array;
         entry.value.array = array; /* ownership moves into the document */
-        if (!doc_push(doc, &entry, err, err_size)) {
+        if(!doc_push(doc, &entry, err, err_size)) {
             str_list_free(&array);
             return false;
         }
         return true;
-    } else if (value[0] == '{') {
+    } else if(value[0] == '{') {
         /* Inline table: recognized but unsupported. Skip it so a [deps] section
            with inline tables does not break parsing. */
         return true;
-    } else if (strcmp(value, "true") == 0 || strcmp(value, "false") == 0) {
+    } else if(strcmp(value, "true") == 0 || strcmp(value, "false") == 0) {
         entry.type = toml_field_bool;
         entry.value.boolean = strcmp(value, "true") == 0;
     } else {
         long integer;
-        if (!parse_integer(value, &integer)) {
+        if(!parse_integer(value, &integer)) {
             set_err(err, err_size, line, "invalid value", value);
             return false;
         }
@@ -338,26 +416,28 @@ static bool parse_key_value(toml_document *doc, const char *section, char *text,
 }
 
 toml_document *toml_parse(const char *text, char *err, size_t err_size) {
-    if (text == NULL) {
+    if(text == NULL) {
         set_err(err, err_size, 0, "null input", NULL);
         return NULL;
     }
     toml_document *doc = calloc(1, sizeof *doc);
-    if (doc == NULL) {
+    if(doc == NULL) {
         set_err(err, err_size, 0, "out of memory", NULL);
         return NULL;
     }
 
     /* Walk the input one line at a time, tracking the current section. */
     char section[TOML_SECTION_MAX] = "";
+    table_array_counter counters[TOML_MAX_TABLE_ARRAYS];
+    size_t counter_count = 0;
     const char *cursor = text;
     int line_no = 0;
-    while (*cursor != '\0') {
+    while(*cursor != '\0') {
         line_no++;
         char line[TOML_LINE_MAX];
         size_t n = 0;
-        while (*cursor != '\0' && *cursor != '\n') {
-            if (n + 1 >= sizeof line) {
+        while(*cursor != '\0' && *cursor != '\n') {
+            if(n + 1 >= sizeof line) {
                 set_err(err, err_size, line_no, "line too long", NULL);
                 toml_free(doc);
                 return NULL;
@@ -365,21 +445,25 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
             line[n++] = *cursor++;
         }
         line[n] = '\0';
-        if (*cursor == '\n')
+        if(*cursor == '\n')
             cursor++;
 
         strip_inline_comment(line);
         char *trimmed = trim(line);
-        if (trimmed[0] == '\0')
+        if(trimmed[0] == '\0')
             continue;
-        if (trimmed[0] == '[') {
-            if (!parse_header(trimmed, section, sizeof section, err, err_size, line_no)) {
+        if(trimmed[0] == '[') {
+            bool ok = trimmed[1] == '['
+                          ? parse_table_array_header(trimmed, counters, &counter_count, section,
+                                                     sizeof section, err, err_size, line_no)
+                          : parse_header(trimmed, section, sizeof section, err, err_size, line_no);
+            if(!ok) {
                 toml_free(doc);
                 return NULL;
             }
             continue;
         }
-        if (!parse_key_value(doc, section, trimmed, err, err_size, line_no)) {
+        if(!parse_key_value(doc, section, trimmed, err, err_size, line_no)) {
             toml_free(doc);
             return NULL;
         }
@@ -388,106 +472,117 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
 }
 
 void toml_free(toml_document *doc) {
-    if (doc == NULL)
+    if(doc == NULL)
         return;
-    for (size_t i = 0; i < doc->count; i++) {
-        if (doc->items[i].type == toml_field_array)
+    for(size_t i = 0; i < doc->count; i++) {
+        if(doc->items[i].type == toml_field_array)
             str_list_free(&doc->items[i].value.array);
     }
     free(doc->items);
     free(doc);
 }
 
-static const toml_entry *find_entry(const toml_document *doc,
-                                    const char *section, const char *key) {
-    for (size_t i = 0; i < doc->count; i++) {
-        if (strcmp(doc->items[i].section, section) == 0
-            && strcmp(doc->items[i].key, key) == 0)
+static const toml_entry *find_entry(const toml_document *doc, const char *section,
+                                    const char *key) {
+    for(size_t i = 0; i < doc->count; i++) {
+        if(strcmp(doc->items[i].section, section) == 0 && strcmp(doc->items[i].key, key) == 0)
             return &doc->items[i];
     }
     return NULL;
 }
 
-bool toml_get_string(const toml_document *doc, const char *section,
-                     const char *key, char *out, size_t out_size) {
+bool toml_get_string(const toml_document *doc, const char *section, const char *key, char *out,
+                     size_t out_size) {
     const toml_entry *entry = find_entry(doc, section, key);
-    if (entry == NULL || entry->type != toml_field_string)
+    if(entry == NULL || entry->type != toml_field_string)
         return false;
     snprintf(out, out_size, "%s", entry->value.str);
     return true;
 }
 
-bool toml_get_int(const toml_document *doc, const char *section,
-                  const char *key, long *out) {
+bool toml_get_int(const toml_document *doc, const char *section, const char *key, long *out) {
     const toml_entry *entry = find_entry(doc, section, key);
-    if (entry == NULL || entry->type != toml_field_int)
+    if(entry == NULL || entry->type != toml_field_int)
         return false;
     *out = entry->value.integer;
     return true;
 }
 
-bool toml_get_bool(const toml_document *doc, const char *section,
-                   const char *key, bool *out) {
+bool toml_get_bool(const toml_document *doc, const char *section, const char *key, bool *out) {
     const toml_entry *entry = find_entry(doc, section, key);
-    if (entry == NULL || entry->type != toml_field_bool)
+    if(entry == NULL || entry->type != toml_field_bool)
         return false;
     *out = entry->value.boolean;
     return true;
 }
 
 bool toml_has_section(const toml_document *doc, const char *section) {
-    for (size_t i = 0; i < doc->count; i++) {
-        if (strcmp(doc->items[i].section, section) == 0)
+    for(size_t i = 0; i < doc->count; i++) {
+        if(strcmp(doc->items[i].section, section) == 0)
             return true;
     }
     return false;
 }
 
+size_t toml_table_array_count(const toml_document *doc, const char *name) {
+    if(doc == NULL || name == NULL)
+        return 0;
+    /* The parser numbers them from zero without gaps, so the first name[i] that
+       is not there is the end. */
+    size_t count = 0;
+    for(;;) {
+        char section[TOML_SECTION_MAX];
+        if(!toml_table_array_section(name, count, section, sizeof section) ||
+           !toml_has_section(doc, section))
+            return count;
+        count++;
+    }
+}
+
 bool toml_section_keys(const toml_document *doc, const char *section, str_list *out) {
-    for (size_t i = 0; i < doc->count; i++) {
-        if (strcmp(doc->items[i].section, section) != 0)
+    for(size_t i = 0; i < doc->count; i++) {
+        if(strcmp(doc->items[i].section, section) != 0)
             continue;
-        if (!str_list_push(out, doc->items[i].key))
+        if(!str_list_push(out, doc->items[i].key))
             return false;
     }
     return true;
 }
 
-bool toml_get_array(const toml_document *doc, const char *section,
-                    const char *key, str_list *out) {
+bool toml_get_array(const toml_document *doc, const char *section, const char *key, str_list *out) {
     const toml_entry *entry = find_entry(doc, section, key);
-    if (entry == NULL || entry->type != toml_field_array)
+    if(entry == NULL || entry->type != toml_field_array)
         return false;
-    for (size_t i = 0; i < str_list_count(&entry->value.array); i++) {
-        if (!str_list_push(out, str_list_get(&entry->value.array, i)))
+    for(size_t i = 0; i < str_list_count(&entry->value.array); i++) {
+        if(!str_list_push(out, str_list_get(&entry->value.array, i)))
             return false;
     }
     return true;
 }
 
 void toml_dump(const toml_document *doc, FILE *stream) {
-    if (doc == NULL) {
+    if(doc == NULL) {
         fprintf(stream, "(null document)\n");
         return;
     }
-    for (size_t i = 0; i < doc->count; i++) {
+    for(size_t i = 0; i < doc->count; i++) {
         const toml_entry *e = &doc->items[i];
         const char *section = e->section[0] != '\0' ? e->section : "(root)";
-        switch (e->type) {
-            case toml_field_string:
-                fprintf(stream, "[%s] %s = string \"%s\"\n", section, e->key, e->value.str);
-                break;
-            case toml_field_int:
-                fprintf(stream, "[%s] %s = int %ld\n", section, e->key, e->value.integer);
-                break;
-            case toml_field_bool:
-                fprintf(stream, "[%s] %s = bool %s\n", section, e->key,
-                        e->value.boolean ? "true" : "false");
-                break;
-            case toml_field_array:
-                fprintf(stream, "[%s] %s = array[%zu]\n", section, e->key,
-                        str_list_count(&e->value.array));
-                break;
+        switch(e->type) {
+        case toml_field_string:
+            fprintf(stream, "[%s] %s = string \"%s\"\n", section, e->key, e->value.str);
+            break;
+        case toml_field_int:
+            fprintf(stream, "[%s] %s = int %ld\n", section, e->key, e->value.integer);
+            break;
+        case toml_field_bool:
+            fprintf(stream, "[%s] %s = bool %s\n", section, e->key,
+                    e->value.boolean ? "true" : "false");
+            break;
+        case toml_field_array:
+            fprintf(stream, "[%s] %s = array[%zu]\n", section, e->key,
+                    str_list_count(&e->value.array));
+            break;
         }
     }
 }
@@ -496,41 +591,41 @@ void toml_dump(const toml_document *doc, FILE *stream) {
  * up a struct's fields by name at runtime, each schema entry carries the field's
  * byte `offset` (from offsetof) so we can write to `(char *)out + offset`.
  * Absent keys are left untouched, so callers seed defaults before binding. */
-bool toml_bind(const toml_document *doc, const toml_field *schema,
-               size_t field_count, void *out, char *err, size_t err_size) {
+bool toml_bind(const toml_document *doc, const toml_field *schema, size_t field_count, void *out,
+               char *err, size_t err_size) {
     char *base = out;
-    for (size_t i = 0; i < field_count; i++) {
+    for(size_t i = 0; i < field_count; i++) {
         const toml_field *field = &schema[i];
         const toml_entry *entry = find_entry(doc, field->section, field->key);
-        if (entry == NULL)
+        if(entry == NULL)
             continue; /* absent: keep the seeded default */
-        if (entry->type != field->type) {
+        if(entry->type != field->type) {
             set_err(err, err_size, 0, "type mismatch for key", field->key);
             return false;
         }
         void *destination = base + field->offset;
-        switch (field->type) {
-            case toml_field_string:
-                if (field->size == 0) {
-                    set_err(err, err_size, 0, "zero-size string field", field->key);
-                    return false;
-                }
-                snprintf((char *)destination, field->size, "%s", entry->value.str);
-                break;
-            case toml_field_int: {
-                int narrowed = (int)entry->value.integer;
-                memcpy(destination, &narrowed, sizeof narrowed);
-                break;
-            }
-            case toml_field_bool:
-                memcpy(destination, &entry->value.boolean, sizeof(bool));
-                break;
-            case toml_field_array:
-                /* Arrays are not bindable to scalar fields; read them with
-                   toml_get_array instead. (Unreachable: schema fields are never
-                   arrays, but kept for exhaustiveness.) */
-                set_err(err, err_size, 0, "cannot bind array field", field->key);
+        switch(field->type) {
+        case toml_field_string:
+            if(field->size == 0) {
+                set_err(err, err_size, 0, "zero-size string field", field->key);
                 return false;
+            }
+            snprintf((char *)destination, field->size, "%s", entry->value.str);
+            break;
+        case toml_field_int: {
+            int narrowed = (int)entry->value.integer;
+            memcpy(destination, &narrowed, sizeof narrowed);
+            break;
+        }
+        case toml_field_bool:
+            memcpy(destination, &entry->value.boolean, sizeof(bool));
+            break;
+        case toml_field_array:
+            /* Arrays are not bindable to scalar fields; read them with
+               toml_get_array instead. (Unreachable: schema fields are never
+               arrays, but kept for exhaustiveness.) */
+            set_err(err, err_size, 0, "cannot bind array field", field->key);
+            return false;
         }
     }
     return true;
