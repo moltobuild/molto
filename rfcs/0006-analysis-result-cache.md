@@ -164,10 +164,20 @@ retry it. And a file whose dependency list could not be read is analysed again
 next time, silently: the result is unaffected, only the time, and a line per
 file would be noise proportional to the project.
 
-**Not implemented for `molto fmt`.** The entry is general and `fmt` will use it
-unchanged, but its question is different — whether the file changed, which it
-answers today by comparing content it already has in memory — so there is less
-to save and it is not the pass that costs.
+**Implemented for `molto fmt`**, with one difference the entry did not need to
+change for. A formatted file depends on nothing but itself: `clang-format` reads
+the file it is given and none of its includes, so the prerequisite list is the
+file alone and no dependency list is written.
+
+Its key does **not** name the mode. What is recorded is that a file is already
+in its final form under this style, and `--check`, `--diff` and a write are
+three ways of asking the same question — so formatting a project leaves the
+cache warm for the check that follows it in CI. An entry is written when that
+is true: after a write, which has just made it so, or after a check or diff that
+found nothing to change.
+
+The saving is real and much smaller than lint's, because `clang-format` is not
+`clang-tidy`: 0.062s to 0.003s over this repository, against 1.37s to 0.003s.
 
 ## Non-Goals
 

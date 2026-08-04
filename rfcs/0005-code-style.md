@@ -234,7 +234,11 @@ Both commands are implemented. What is in place, and what is not:
 compiler's syntax-only pass, the `clang-tidy` backend and `--format json`; the
 canonical model of both configuration files, translated to the backends' own
 configuration under `.bin/` and failing closed on anything it cannot express;
-per-file work dispatched across the task pool.
+per-file work dispatched across the task pool; and the per-file cache described
+under Caching, for both commands, on the store specified in
+[RFC-0006](0006-analysis-result-cache.md) — which replays the diagnostics rather
+than the fact that a file was once clean, so a cached run is indistinguishable
+from an uncached one.
 
 **Backend acquisition is pickup's, not Molto's.** The section above leaves the
 download and installation mechanism unspecified, as a contract with a general
@@ -248,13 +252,6 @@ versions.
 
 **Not implemented yet**, and deliberately so:
 
-- **The per-file cache** described under Caching, **for `molto fmt`**. It is
-  implemented for `molto lint`: the store it needed is specified in
-  [RFC-0006](0006-analysis-result-cache.md) and replays the diagnostics rather
-  than the fact that a file was once clean, which is what makes a cached run
-  indistinguishable from an uncached one. `molto fmt` will use the same entry
-  unchanged, and gains less from it: its question is whether the file changed,
-  and it already has both versions in memory to answer that.
 - **`molto fmt --import`**, `molto lint --fix`, the `kernel` and `gnu` presets,
   and tier 2 and 3 backends. A configuration naming any of them is refused by
   name rather than quietly approximated.

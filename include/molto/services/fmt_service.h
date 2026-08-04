@@ -17,6 +17,9 @@ typedef enum {
 typedef struct {
     fmt_mode mode;
     bool refresh_tools;
+    /* Format every file again instead of skipping the ones already recorded as
+       formatted (RFC-0006). */
+    bool refresh_analysis;
     /* Where fmt_mode_diff writes its diffs. A stream rather than a buffer
        because a diff is unbounded; the service still decides nothing about
        presentation, only what to put in it. NULL in the other modes. */

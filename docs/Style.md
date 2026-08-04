@@ -91,20 +91,28 @@ profile analyses code the build never sees.
 one was, `2` for an invalid configuration, `4` for bad usage. A warning is
 reported and still succeeds — only `error` fails the command.
 
-### It does not analyse the same file twice
+### Neither command looks at the same file twice
 
-A file that has not changed is not analysed again: what the tools said about it
-is recorded in `.bin/` and replayed. What you see is identical either way —
-same diagnostics, same order, same exit code — because replaying a warning as
-silence would be a green build that hid it.
+A file that has not changed is not analysed or formatted again: what the tools
+said about it is recorded in `.bin/` and replayed. What you see is identical
+either way — same diagnostics, same order, same exit code — because replaying a
+warning as silence would be a green build that hid it.
 
-A file is analysed again when its content changes, when any header it includes
-changes, when the command would differ (a different profile, defines, flags),
-when `linter.json` changes, or when the linter's version does. Editing one file
-in a large project therefore costs one file's analysis, not the project's.
+`molto lint` re-analyses a file when its content changes, when any header it
+includes changes, when the command would differ (a different profile, defines,
+flags), when `linter.json` changes, or when the linter's version does. Editing
+one file in a large project costs one file's analysis, not the project's.
+
+`molto fmt` records that a file is in its final form, and that record is not
+about the mode: formatting a project leaves `molto fmt --check` with nothing to
+run, which is the order CI usually does it in. It is invalidated by the file
+changing, by `format.json` changing, or by a new version of the formatter.
+Headers are not involved — a formatter reads the file it is given and none of
+its includes.
 
 ```console
 $ molto lint --refresh-analysis    # analyse everything again, ignoring what was recorded
+$ molto fmt --refresh-analysis     # likewise
 ```
 
 That is for a tool that is not deterministic, or one whose behaviour depends on

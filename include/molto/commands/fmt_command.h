@@ -7,6 +7,6 @@
    Formats the project's sources in place unless asked to report instead.
    Returns a molto_exit_code: non-zero under --check when a file would change,
    which is what makes it usable in CI. */
-[[nodiscard]] int fmt_command_run(bool check, bool diff, bool refresh_tools);
+[[nodiscard]] int fmt_command_run(bool check, bool diff, bool refresh_tools, bool refresh_analysis);
 
 #endif /* MOLTO_FMT_COMMAND_H */

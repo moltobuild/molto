@@ -55,6 +55,8 @@ static const cli_option fmt_options[] = {
     {"--diff", 'd', cli_opt_flag, NULL, "Print the unified diff instead of writing", NULL},
     {"--refresh-tools", 0, cli_opt_flag, NULL,
      "Ask pickup again which formatter and linter this machine has", NULL},
+    {"--refresh-analysis", 0, cli_opt_flag, NULL,
+     "Format every file again instead of skipping what did not change", NULL},
 };
 
 /* --- command handlers: thin adapters over the *_command_run functions --- */
@@ -96,7 +98,8 @@ static int handle_lint(const cli_args *args) {
 
 static int handle_fmt(const cli_args *args) {
     return fmt_command_run(cli_args_flag(args, "--check"), cli_args_flag(args, "--diff"),
-                           cli_args_flag(args, "--refresh-tools"));
+                           cli_args_flag(args, "--refresh-tools"),
+                           cli_args_flag(args, "--refresh-analysis"));
 }
 
 static int handle_clean(const cli_args *args) {
