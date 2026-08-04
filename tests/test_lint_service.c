@@ -465,3 +465,42 @@ MOLTEST(lint_does_not_record_a_tool_that_failed_without_explaining_itself) {
     diagnostic_list_free(&second);
     fixture_teardown(&fixture);
 }
+
+MOLTEST(lint_does_not_record_a_result_for_content_that_is_already_gone) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    /* A compiler slow enough for the file to be edited while it runs, which is
+       what an editor saving during a lint does. */
+    char script[1024];
+    snprintf(script, sizeof script,
+             "#!/bin/sh\n"
+             "echo \"$@\" >> %s\n"
+             "src=''; dep=''; prev=''\n"
+             "for a in \"$@\"; do\n"
+             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
+             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
+             "  prev=\"$a\"\n"
+             "done\n"
+             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"out.o: $src\" > \"$dep\"\n"
+             "echo 'int changed_while_running(void);' >> \"$src\"\n"
+             "echo '%s' >&2\n",
+             fixture.log, "src/main.c:1:16: warning: unused variable 'x' [-Wunused-variable]");
+    ASSERT_TRUE(fs_write_file(fixture.compiler, script));
+    ASSERT_TRUE(chmod(fixture.compiler, 0755) == 0);
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+
+    /* Recording here would pin diagnostics about content that no longer exists
+       under the signature of the content that replaced it — and nothing would
+       ever invalidate them again. The file has to be analysed afresh. */
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}

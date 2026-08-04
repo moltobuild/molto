@@ -15,9 +15,11 @@
 #include <molto/util/task_pool.h>
 #include <molto/workspace/wsdb.h>
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* On-disk layout this command reads. */
 #define MANIFEST_FILENAME "Project.toml"
@@ -33,6 +35,9 @@
    from composing into one string. */
 #define KEY_PREFIX "lint:"
 #define FINGERPRINT_SEPARATOR "\x1f"
+
+/* For composing a file signature out of its timestamp and size. */
+#define NANOS_PER_SECOND 1000000000ull
 
 /* Compiler arguments for a pass that checks and produces nothing. */
 #define ARG_SYNTAX_ONLY "-fsyntax-only"
@@ -107,7 +112,8 @@ typedef struct {
     char key[PATH_BUFFER_SIZE];
     char depfile[PATH_BUFFER_SIZE];
     char *fingerprint; /* heap: the argvs are unbounded */
-    bool replayed;     /* answered from the store; no process ran */
+    bool replayed;      /* answered from the store; no process ran */
+    uint64_t signature; /* what the source was when its analysis began */
     diagnostic_list found;
     size_t first_task; /* index into the task array, when it ran */
     size_t task_count;
@@ -339,6 +345,18 @@ static bool replay(wsdb *db, lint_file *file) {
     return ok;
 }
 
+/* A cheap signature of what a file is right now: modification time and size.
+   Used to notice that a source was edited *while* it was being analysed —
+   recording then would store the diagnostics of the old content under the
+   signature of the new one, and the entry would never go stale again. */
+static uint64_t signature_of(const char *path) {
+    struct stat info;
+    if(stat(path, &info) != 0)
+        return 0;
+    return (uint64_t)info.st_mtim.tv_sec * NANOS_PER_SECOND +
+           (uint64_t)info.st_mtim.tv_nsec + (uint64_t)info.st_size;
+}
+
 /* Record what a file produced, watching the source and the headers the
    compiler pass reported. A failure here costs the next run its cache and
    nothing else, so it is reported to the caller and never fatal. */
@@ -517,6 +535,7 @@ static bool build_tasks(const char *root, const lint_setup *setup, build_profile
             continue;
         }
 
+        file->signature = signature_of(file->source);
         file->first_task = compiler_at;
         file->task_count = setup->has_linter ? 2 : 1;
         tasks[compiler_at] = (lint_task){
@@ -639,7 +658,12 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
                analysed again next time. It is not reported: the result is
                unaffected, only the time it took, and one line per file would
                be noise proportional to the project. */
-            if(code == exit_ok && db != NULL && recordable && file->fingerprint != NULL)
+            /* If the source changed while it was being analysed, what the
+               tools said is about content that is no longer there. Recording
+               it would pin stale diagnostics under a current signature, and
+               nothing would ever invalidate them. */
+            if(code == exit_ok && db != NULL && recordable && file->fingerprint != NULL &&
+               signature_of(file->source) == file->signature)
                 (void)record(db, file);
         }
         if(code == exit_ok && !diagnostic_list_append(out, &file->found))
