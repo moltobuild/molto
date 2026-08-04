@@ -3,6 +3,8 @@
 #include <molto/cli.h>
 #include <molto/exit_code.h>
 
+#include <stdio.h>
+
 /* Exercises molto's real command table, as opposed to test_cli.c, which
    exercises the CLI framework with a synthetic app. */
 static int run_molto(const char *command) {
@@ -17,8 +19,13 @@ MOLTEST(molto_reports_commands_that_are_not_implemented_yet) {
     /* Declared in the CLI but with no implementation behind them. They used to
        return 1, the code for "the build failed", which no script could tell
        apart from a real compilation error. */
+    /* `lint` and `fmt` are deliberately not exercised here: this runs in the
+       harness's working directory, which is Molto's own workspace, so a case
+       for either would analyse the whole codebase inside a unit test. They are
+       covered in test_lint_service.c and test_fmt_service.c, which chdir into
+       a temporary workspace first. */
     static const char *pending[] = {
-        "bench", "lint", "add", "remove", "publish", "update", "migrate",
+        "bench", "add", "remove", "publish", "update", "migrate",
     };
     for (size_t i = 0; i < sizeof pending / sizeof pending[0]; i++)
         EXPECT_EQ(exit_not_implemented, run_molto(pending[i]));

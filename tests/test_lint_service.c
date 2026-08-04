@@ -1,0 +1,317 @@
+#include <moltest.h>
+
+#include <molto/exit_code.h>
+#include <molto/services/fs_service.h>
+#include <molto/services/lint_service.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* Stand-ins for the compiler and the linter, so these exercise Molto's side of
+   the contract without depending on what this machine has. Each logs its argv
+   and echoes a canned transcript, the compiler on stderr and the linter on
+   stdout — which is exactly how the real ones differ. */
+typedef struct {
+    char root[64];
+    char tools[64];
+    char compiler[128];
+    char linter[128];
+    char log[128];
+    char pickup[128];
+    char saved_cc[4096];
+    char saved_tidy[4096];
+    char saved_pickup[4096];
+    bool had_cc;
+    bool had_tidy;
+    bool had_pickup;
+} lint_fixture;
+
+static bool write_stub(const char *path, const char *log, const char *transcript,
+                       const char *stream, int exit_code) {
+    char script[2048];
+    snprintf(script, sizeof script,
+             "#!/bin/sh\n"
+             "echo \"$@\" >> %s\n"
+             "cat >&%s <<'TRANSCRIPT'\n%s\nTRANSCRIPT\n"
+             "exit %d\n",
+             log, stream, transcript, exit_code);
+    return fs_write_file(path, script) && chmod(path, 0755) == 0;
+}
+
+static bool write_file(const char *root, const char *relative, const char *body) {
+    char path[256];
+    snprintf(path, sizeof path, "%s/%s", root, relative);
+
+    char directory[256];
+    snprintf(directory, sizeof directory, "%s", path);
+    char *slash = strrchr(directory, '/');
+    if (slash != NULL) {
+        *slash = '\0';
+        if (!fs_make_dirs(directory))
+            return false;
+    }
+    return fs_write_file(path, body);
+}
+
+static void remember_env(const char *name, char *into, size_t size, bool *had) {
+    const char *existing = getenv(name);
+    *had = existing != NULL;
+    if (existing != NULL)
+        snprintf(into, size, "%s", existing);
+}
+
+static void restore_env(const char *name, const char *saved, bool had) {
+    if (had)
+        (void)setenv(name, saved, 1);
+    else
+        (void)unsetenv(name);
+}
+
+static bool fixture_setup(lint_fixture *fixture, const char *compiler_says,
+                          int compiler_exit, const char *linter_says) {
+    snprintf(fixture->tools, sizeof fixture->tools, "%s", "/tmp/molto_lint_bin_XXXXXX");
+    snprintf(fixture->root, sizeof fixture->root, "%s", "/tmp/molto_lint_ws_XXXXXX");
+    if (mkdtemp(fixture->tools) == NULL || mkdtemp(fixture->root) == NULL)
+        return false;
+
+    snprintf(fixture->compiler, sizeof fixture->compiler, "%s/cc", fixture->tools);
+    snprintf(fixture->linter, sizeof fixture->linter, "%s/tidy", fixture->tools);
+    snprintf(fixture->log, sizeof fixture->log, "%s/calls", fixture->tools);
+
+    remember_env("C_COMPILER", fixture->saved_cc, sizeof fixture->saved_cc,
+                 &fixture->had_cc);
+    remember_env("MOLTO_CLANG_TIDY", fixture->saved_tidy, sizeof fixture->saved_tidy,
+                 &fixture->had_tidy);
+    remember_env("MOLTO_PICKUP", fixture->saved_pickup, sizeof fixture->saved_pickup,
+                 &fixture->had_pickup);
+
+    /* A compiler diagnoses on stderr; clang-tidy prints to stdout. */
+    if (!write_stub(fixture->compiler, fixture->log, compiler_says, "2", compiler_exit))
+        return false;
+    if (linter_says != NULL
+        && !write_stub(fixture->linter, fixture->log, linter_says, "1", 0))
+        return false;
+
+    /* "No linter" means pickup reporting none, not a path that does not run:
+       an override naming a missing binary is a different failure, and lint is
+       right to report that one. */
+    snprintf(fixture->pickup, sizeof fixture->pickup, "%s/pickup", fixture->tools);
+    if (!write_stub(fixture->pickup, fixture->log,
+                    "[[tool]]\nkind = \"formatter\"\nname = \"clang-format\"\n"
+                    "path = \"/bin/sh\"\n", "1", 0))
+        return false;
+
+    return setenv("C_COMPILER", fixture->compiler, 1) == 0
+        && setenv("MOLTO_PICKUP", fixture->pickup, 1) == 0
+        && (linter_says != NULL
+                ? setenv("MOLTO_CLANG_TIDY", fixture->linter, 1) == 0
+                : unsetenv("MOLTO_CLANG_TIDY") == 0)
+        && write_file(fixture->root, "Project.toml",
+                      "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                      "\n[target]\nstd = \"c17\"\ndefines = [\"FOO=1\"]\n")
+        && write_file(fixture->root, "src/main.c", "int main(void){return 0;}\n");
+}
+
+static void fixture_teardown(lint_fixture *fixture) {
+    restore_env("C_COMPILER", fixture->saved_cc, fixture->had_cc);
+    restore_env("MOLTO_CLANG_TIDY", fixture->saved_tidy, fixture->had_tidy);
+    restore_env("MOLTO_PICKUP", fixture->saved_pickup, fixture->had_pickup);
+    char cmd[256];
+    snprintf(cmd, sizeof cmd, "rm -rf %s %s", fixture->root, fixture->tools);
+    (void)system(cmd);
+}
+
+static int run_lint(const lint_fixture *fixture, diagnostic_list *out) {
+    const lint_request request = {
+        .profile = profile_debug,
+        .refresh_toolchain = false,
+        .refresh_tools = false,
+    };
+    diagnostic_list_init(out);
+    return lint_project(fixture->root, &request, out);
+}
+
+/* What a compiler says about one file. */
+#define COMPILER_TRANSCRIPT \
+    "src/main.c: In function 'main':\n" \
+    "src/main.c:1:16: warning: unused variable 'x' [-Wunused-variable]"
+
+MOLTEST(lint_collects_what_the_compiler_reports) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&found, diagnostic_severity_warning));
+    /* The line the compiler could not be parsed from is kept, not dropped. */
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&found, diagnostic_severity_unknown));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_also_runs_the_linter_that_pickup_reports) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0,
+        "src/main.c:1:5: error: an assignment within an 'if' condition is bug-prone "
+        "[bugprone-assignment-in-if-condition]"));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&found, diagnostic_severity_error));
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&found, diagnostic_severity_warning));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_falls_back_to_the_compiler_when_there_is_no_linter) {
+    lint_fixture fixture;
+    /* The compiler pass is what RFC-0005 promises with nothing installed, so a
+       machine without a linter still gets a useful answer. */
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+    EXPECT_TRUE(diagnostic_list_count(&found) > 0);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_passes_the_project_settings_and_produces_no_build_output) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NOT_NULL(strstr(log, "-fsyntax-only"));
+    /* The manifest's defines decide what even compiles, so lint has to see the
+       same ones the build does. */
+    EXPECT_NOT_NULL(strstr(log, "-DFOO=1"));
+    EXPECT_NOT_NULL(strstr(log, "-std=c17"));
+    /* And nothing that would produce an artifact. */
+    EXPECT_NULL(strstr(log, "-MMD"));
+    EXPECT_NULL(strstr(log, " -c "));
+    EXPECT_NULL(strstr(log, " -o "));
+    free(log);
+
+    /* The defining property of the command: it analyses and builds nothing. */
+    char build_dir[256];
+    snprintf(build_dir, sizeof build_dir, "%s/build", fixture.root);
+    EXPECT_FALSE(fs_path_exists(build_dir));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    /* A linter that does not see the build's flags is analysing other code. */
+    EXPECT_NOT_NULL(strstr(log, "-- -std=c17"));
+    EXPECT_NOT_NULL(strstr(log, "--config-file="));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_orders_the_diagnostics_by_source) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+    ASSERT_TRUE(write_file(fixture.root, "src/aaa.c", "int a(void){return 0;}\n"));
+    ASSERT_TRUE(write_file(fixture.root, "src/zzz.c", "int z(void){return 0;}\n"));
+
+    /* Two runs over one tree must report the same thing in the same order,
+       however the pool happened to schedule them. */
+    diagnostic_list first;
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+
+    ASSERT_EQ((int)diagnostic_list_count(&first), (int)diagnostic_list_count(&second));
+    for (size_t i = 0; i < diagnostic_list_count(&first); i++) {
+        EXPECT_STREQ(diagnostic_list_get(&first, i)->message,
+                     diagnostic_list_get(&second, i)->message);
+    }
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_skips_the_sources_linter_json_excludes) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, NULL));
+    ASSERT_TRUE(write_file(fixture.root, "src/vendor/third.c", "int t(void){return 0;}\n"));
+    ASSERT_TRUE(write_file(fixture.root, "linter.json",
+                           "{\"exclude\": [\"src/vendor/**\"]}\n"));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NULL(strstr(log, "third.c"));
+    EXPECT_NOT_NULL(strstr(log, "main.c"));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_reports_a_tool_that_failed_without_saying_why) {
+    lint_fixture fixture;
+    /* A tool that fails silently still has to fail the lint, which it does by
+       producing an error diagnostic like any other. */
+    ASSERT_TRUE(fixture_setup(&fixture, "", 4, NULL));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&found, diagnostic_severity_error));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_refuses_a_rule_it_cannot_translate) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+    ASSERT_TRUE(write_file(fixture.root, "linter.json",
+                           "{\"rules\": {\"no_such_rule\": \"error\"}}\n"));
+
+    diagnostic_list found;
+    /* Validated before a single process is spawned, so a rule that cannot be
+       translated does not cost N runs before it is reported. */
+    EXPECT_EQ(exit_invalid_manifest, run_lint(&fixture, &found));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_reports_an_invalid_configuration) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, NULL));
+    ASSERT_TRUE(write_file(fixture.root, "linter.json", "{\"rules\": \n"));
+
+    diagnostic_list found;
+    EXPECT_EQ(exit_invalid_manifest, run_lint(&fixture, &found));
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}

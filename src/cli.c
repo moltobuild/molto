@@ -4,6 +4,7 @@
 #include <molto/commands/clean_command.h>
 #include <molto/commands/fmt_command.h>
 #include <molto/commands/init_command.h>
+#include <molto/commands/lint_command.h>
 #include <molto/commands/new_command.h>
 #include <molto/commands/run_command.h>
 #include <molto/commands/test_command.h>
@@ -28,6 +29,19 @@ static const cli_option build_options[] = {
      "debug"},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
      "Resolve the compiler again instead of reusing the cached one", NULL},
+};
+
+/* `molto lint` takes what a build takes — the profile decides which defines are
+   in force, so it decides what even compiles — plus the machine-readable output
+   CI wants. */
+static const cli_option lint_options[] = {
+    {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
+     "debug"},
+    {"--refresh-toolchain", 0, cli_opt_flag, NULL,
+     "Resolve the compiler again instead of reusing the cached one", NULL},
+    {"--refresh-tools", 0, cli_opt_flag, NULL,
+     "Ask pickup again which formatter and linter this machine has", NULL},
+    {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, json)", "text"},
 };
 
 /* `molto fmt` writes by default; --check and --diff are two ways of asking
@@ -71,6 +85,12 @@ static int handle_test(const cli_args *args) {
     return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args));
 }
 
+static int handle_lint(const cli_args *args) {
+    return lint_command_run(cli_args_option(args, "--profile"), wants_refresh(args),
+                            cli_args_flag(args, "--refresh-tools"),
+                            cli_args_option(args, "--format"));
+}
+
 static int handle_fmt(const cli_args *args) {
     return fmt_command_run(cli_args_flag(args, "--check"), cli_args_flag(args, "--diff"),
                            cli_args_flag(args, "--refresh-tools"));
@@ -104,7 +124,8 @@ static const cli_command commands[] = {
     {"fmt", "Format the project's sources", NULL, fmt_options,
      sizeof fmt_options / sizeof fmt_options[0], handle_fmt},
     {"bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented},
-    {"lint", "Run diagnostics and static checks", NULL, NULL, 0, handle_unimplemented},
+    {"lint", "Run diagnostics and static checks", NULL, lint_options,
+     sizeof lint_options / sizeof lint_options[0], handle_lint},
     {"add", "Add a dependency", "<dep>", NULL, 0, handle_unimplemented},
     {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_unimplemented},
     {"publish", "Publish the package to a registry", NULL, NULL, 0, handle_unimplemented},
