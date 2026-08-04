@@ -3,6 +3,7 @@
 #include <molto/commands/fmt_command.h>
 #include <molto/commands/lint_command.h>
 #include <molto/exit_code.h>
+#include <molto/services/fmt_service.h>
 #include <molto/services/fs_service.h>
 
 #include <stdio.h>
@@ -85,4 +86,46 @@ MOLTEST(lint_accepts_the_formats_it_documents) {
 MOLTEST(fmt_rejects_check_and_diff_together) {
     /* Two answers to the same question: which one was meant is not guessable. */
     EXPECT_EQ(exit_usage_error, fmt_command_run(true, true, false));
+}
+
+/* Format `root` in write mode and report how many files it rewrote, or -1 when
+   this machine has no formatter to run. */
+static int rewritten_count(const char *root) {
+    fmt_request request;
+    memset(&request, 0, sizeof request);
+    request.mode = fmt_mode_write;
+
+    fmt_result result;
+    fmt_result_init(&result);
+    int code = fmt_project(root, &request, &result);
+    int count = code == exit_ok ? (int)str_list_count(&result.changed) : -1;
+    fmt_result_free(&result);
+    return count;
+}
+
+MOLTEST(fmt_counts_the_files_it_rewrote_and_not_the_ones_it_left) {
+    workspace ws;
+    ASSERT_TRUE(workspace_enter(&ws, true));
+
+    char source[128];
+    snprintf(source, sizeof source, "%s/src", ws.root);
+    ASSERT_TRUE(fs_make_dirs(source));
+    snprintf(source, sizeof source, "%s/src/main.c", ws.root);
+    ASSERT_TRUE(fs_write_file(source, "int main(void){\nint    x=1;\n   return x;\n}\n"));
+
+    int first = rewritten_count(ws.root);
+    if(first < 0) {
+        workspace_leave(&ws);
+        SKIP("this machine has no formatter");
+    }
+
+    /* --in-place exits zero whether or not it changed anything, so a count
+       taken from the exit status reported nothing at all. */
+    EXPECT_EQ(1, first);
+
+    /* And the second pass is the half that a fixed answer would also pass:
+       nothing changed, so nothing is counted. */
+    EXPECT_EQ(0, rewritten_count(ws.root));
+
+    workspace_leave(&ws);
 }

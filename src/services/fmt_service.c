@@ -52,8 +52,8 @@ typedef struct {
     fmt_mode mode;
     int status;
     bool truncated;
-    char *original;  /* diff mode only; owned */
-    char *formatted; /* diff mode only; owned */
+    char *original;  /* what the file was, in diff and write modes; owned */
+    char *formatted; /* what it became: captured in diff, read back in write */
     char message[MESSAGE_SIZE];
 } fmt_task;
 
@@ -136,6 +136,11 @@ static void fmt_task_run(void *argument) {
     } else {
         task->status = process_capture_all(argv, NULL, 0, task->message, sizeof task->message,
                                            &task->truncated);
+        /* --in-place rewrote the file and exits zero whether or not it had to,
+           so the file itself is the only record of what happened. Read it back
+           here, on the worker, where the reading is already parallel. */
+        if(task->mode == fmt_mode_write && task->status == 0)
+            task->formatted = fs_read_file(task->path);
     }
 
     free((void *)argv);
@@ -186,16 +191,29 @@ static int absorb(fmt_task *task, const fmt_request *request, fmt_result *result
         return exit_build_failure;
     bool said_something = diagnostic_list_count(&result->diagnostics) > before;
 
-    /* --dry-run --Werror exits non-zero precisely when the file would change,
-       which is what --check reports on. */
-    if(task->status != 0 && !record_change(result, task->path))
-        return exit_build_failure;
+    if(request->mode == fmt_mode_check) {
+        /* --dry-run --Werror exits non-zero precisely when the file would
+           change, which is what --check reports on. */
+        if(task->status != 0 && !record_change(result, task->path))
+            return exit_build_failure;
+    } else if(task->status == 0) {
+        /* Write mode: the exit status says nothing, so the file is compared
+           against what it was. Failing to read back what was just written is a
+           real failure and not something to count as unchanged. */
+        if(task->formatted == NULL) {
+            fprintf(stderr, "molto: could not read back '%s'\n", task->path);
+            return exit_build_failure;
+        }
+        if(strcmp(task->original, task->formatted) != 0 && !record_change(result, task->path))
+            return exit_build_failure;
+    }
+
     if(task->status != 0 && !said_something && !report_failure(result, task, backend_path))
         return exit_build_failure;
     return exit_ok;
 }
 
-/* Read the files diff mode needs to compare against, before anything runs. */
+/* Read what the files were, before anything runs and rewrites them. */
 static bool read_originals(fmt_task *tasks, size_t count) {
     for(size_t i = 0; i < count; i++) {
         tasks[i].original = fs_read_file(tasks[i].path);
@@ -296,7 +314,9 @@ int fmt_project(const char *root, const fmt_request *request, fmt_result *result
         tasks[i].mode = request->mode;
         ok = build_argv(&argvs[i], &backend, config_path, tasks[i].path, request->mode);
     }
-    if(ok && request->mode == fmt_mode_diff)
+    /* Both modes that report on content need what the content was: diff prints
+       the difference, write counts the files that had one. */
+    if(ok && request->mode != fmt_mode_check)
         ok = read_originals(tasks, count);
 
     if(ok) {
