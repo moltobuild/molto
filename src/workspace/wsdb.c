@@ -15,9 +15,10 @@
 
 #define WSDB_MAGIC "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
-/* Version 3 adds the resolved-toolchain kind (version 2 stored input timestamps
-   in nanoseconds); an older database is discarded and rebuilt. */
-#define WSDB_VERSION 3u
+/* Version 4 adds the analysis-result kind (RFC-0006), whose entry carries a
+   second list; version 3 added resolved toolchains. An older database is
+   discarded and rebuilt. */
+#define WSDB_VERSION 4u
 #define WSDB_ROOT_MAX 4096
 #define WSDB_PATH (WSDB_ROOT_MAX + 64)        /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
@@ -36,13 +37,21 @@ typedef enum {
        produced it, and its prereqs hold the answer: keeping it here is what
        spares an external query on every build. */
     wsdb_toolchain_kind = 3,
+    /* What a tool said about one file (RFC-0006). Its command is the analysis
+       fingerprint, its prereqs are the file and the headers it included, and
+       its values are the diagnostics to replay. */
+    wsdb_result_kind = 4,
 } wsdb_kind;
 
 /* Kinds whose entry carries a list alongside its command: prerequisites for an
-   object, the resolved answer for a toolchain. */
+   object and a result, the resolved answer for a toolchain. */
 static bool kind_has_list(int kind) {
-    return kind == wsdb_object_kind || kind == wsdb_toolchain_kind;
+    return kind == wsdb_object_kind || kind == wsdb_toolchain_kind || kind == wsdb_result_kind;
 }
+
+/* Kinds carrying a second list: what was recorded, as opposed to what it
+   depended on. Only a result has both. */
+static bool kind_has_values(int kind) { return kind == wsdb_result_kind; }
 
 typedef struct {
     wsdb_kind kind;
@@ -50,7 +59,8 @@ typedef struct {
     uint64_t size;    /* inputs: last-seen size */
     uint64_t hash;    /* inputs: FNV-1a 64 of last-seen content */
     char *command;    /* artifacts: command fingerprint (heap) */
-    str_list prereqs; /* objects: prerequisite keys */
+    str_list prereqs; /* objects and results: prerequisite keys */
+    str_list values;  /* results: the recorded output */
 } wsdb_entry;
 
 struct wsdb {
@@ -68,6 +78,7 @@ static wsdb_entry *entry_new(wsdb_kind kind) {
     if(e != NULL) {
         e->kind = kind;
         str_list_init(&e->prereqs);
+        str_list_init(&e->values);
     }
     return e;
 }
@@ -76,6 +87,7 @@ static void entry_free(void *value) {
     wsdb_entry *e = value;
     free(e->command);
     str_list_free(&e->prereqs);
+    str_list_free(&e->values);
     free(e);
 }
 
@@ -309,6 +321,71 @@ bool wsdb_toolchain_values(wsdb *db, const char *key, str_list *out) {
     return true;
 }
 
+/* --- analysis results (RFC-0006) --- */
+
+bool wsdb_result_fresh(wsdb *db, const char *key, const char *fingerprint) {
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if(e == NULL || e->kind != wsdb_result_kind)
+        return false;
+    if(e->command == NULL || strcmp(e->command, fingerprint) != 0)
+        return false;
+    /* An entry with nothing to watch would answer "fresh" forever. Recording
+       one is a bug in the caller, and reading one has to be survivable. */
+    if(str_list_count(&e->prereqs) == 0)
+        return false;
+    for(size_t i = 0; i < str_list_count(&e->prereqs); i++) {
+        if(!input_unchanged(db, str_list_get(&e->prereqs, i)))
+            return false;
+    }
+    return true;
+}
+
+bool wsdb_record_result(wsdb *db, const char *key, const char *fingerprint, const str_list *prereqs,
+                        const str_list *values) {
+    if(str_list_count(prereqs) == 0)
+        return false;
+
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if(e == NULL || e->kind != wsdb_result_kind) {
+        e = entry_new(wsdb_result_kind);
+        if(e == NULL || !str_map_put(db->entries, key, e)) {
+            entry_free(e);
+            return false;
+        }
+    }
+    entry_set_command(e, fingerprint);
+    str_list_free(&e->prereqs);
+    str_list_init(&e->prereqs);
+    str_list_free(&e->values);
+    str_list_init(&e->values);
+    db->dirty = true;
+
+    bool ok = true;
+    for(size_t i = 0; i < str_list_count(prereqs); i++) {
+        char rel[WSDB_PATH];
+        if(!relativize(db->root, str_list_get(prereqs, i), rel, sizeof rel) ||
+           !str_list_push(&e->prereqs, rel) || !record_input(db, rel))
+            ok = false;
+    }
+    for(size_t i = 0; i < str_list_count(values); i++)
+        ok = str_list_push(&e->values, str_list_get(values, i)) && ok;
+    return ok;
+}
+
+bool wsdb_result_values(wsdb *db, const char *key, str_list *out) {
+    wsdb_entry *e = str_map_get(db->entries, key);
+    if(e == NULL || e->kind != wsdb_result_kind)
+        return false;
+    /* An empty list is an answer: the file was analysed and had nothing to
+       say. It is not the same as having no entry, which is why this returns
+       true without pushing anything. */
+    for(size_t i = 0; i < str_list_count(&e->values); i++) {
+        if(!str_list_push(out, str_list_get(&e->values, i)))
+            return false;
+    }
+    return true;
+}
+
 /* --- pruning --- */
 
 struct prune_ctx {
@@ -421,6 +498,11 @@ static void save_entry(const char *key, void *value, void *vctx) {
             for(size_t i = 0; c->ok && i < str_list_count(&e->prereqs); i++)
                 c->ok = write_str(c->f, str_list_get(&e->prereqs, i));
         }
+        if(c->ok && kind_has_values(e->kind)) {
+            c->ok = write_u32(c->f, (uint32_t)str_list_count(&e->values));
+            for(size_t i = 0; c->ok && i < str_list_count(&e->values); i++)
+                c->ok = write_str(c->f, str_list_get(&e->values, i));
+        }
     }
 }
 
@@ -477,7 +559,8 @@ static char *read_str(FILE *f) {
    corruption, not a future format: the version header covers real upgrades. */
 static bool kind_is_known(int raw_kind) {
     return raw_kind == wsdb_input_kind || raw_kind == wsdb_object_kind ||
-           raw_kind == wsdb_binary_kind || raw_kind == wsdb_toolchain_kind;
+           raw_kind == wsdb_binary_kind || raw_kind == wsdb_toolchain_kind ||
+           raw_kind == wsdb_result_kind;
 }
 
 /* Load the DB into a fresh map; on any inconsistency the whole file is
@@ -533,6 +616,16 @@ static void wsdb_load(wsdb *db) {
                         if(prereq == NULL || !str_list_push(&e->prereqs, prereq))
                             ok = false;
                         free(prereq);
+                    }
+                }
+                if(ok && kind_has_values(raw_kind)) {
+                    uint32_t value_count;
+                    ok = read_u32(f, &value_count) && value_count <= WSDB_STRING_MAX;
+                    for(uint32_t v = 0; ok && v < value_count; v++) {
+                        char *value = read_str(f);
+                        if(value == NULL || !str_list_push(&e->values, value))
+                            ok = false;
+                        free(value);
                     }
                 }
             } else {

@@ -29,12 +29,23 @@ typedef struct {
     bool had_pickup;
 } lint_fixture;
 
+/* A stub that logs its argv, echoes a canned transcript, and — like a real
+   compiler — honours -MF by writing a dependency list. The cache reads that
+   list to learn which headers a file included (RFC-0006); without it there is
+   nothing to watch and nothing is ever recorded. */
 static bool write_stub(const char *path, const char *log, const char *transcript,
                        const char *stream, int exit_code) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\n"
              "echo \"$@\" >> %s\n"
+             "src=''; dep=''; prev=''\n"
+             "for a in \"$@\"; do\n"
+             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
+             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
+             "  prev=\"$a\"\n"
+             "done\n"
+             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"out.o: $src\" > \"$dep\"\n"
              "cat >&%s <<'TRANSCRIPT'\n%s\nTRANSCRIPT\n"
              "exit %d\n",
              log, stream, transcript, exit_code);
@@ -198,8 +209,10 @@ MOLTEST(lint_passes_the_project_settings_and_produces_no_build_output) {
        same ones the build does. */
     EXPECT_NOT_NULL(strstr(log, "-DFOO=1"));
     EXPECT_NOT_NULL(strstr(log, "-std=c17"));
+    /* -MMD is asked for: the dependency list is what tells the cache which
+       headers a file read (RFC-0006), and it goes to .bin/, not to build/. */
+    EXPECT_NOT_NULL(strstr(log, "-MMD"));
     /* And nothing that would produce an artifact. */
-    EXPECT_NULL(strstr(log, "-MMD"));
     EXPECT_NULL(strstr(log, " -c "));
     EXPECT_NULL(strstr(log, " -o "));
     free(log);
@@ -313,5 +326,142 @@ MOLTEST(lint_reports_an_invalid_configuration) {
     EXPECT_EQ(exit_invalid_manifest, run_lint(&fixture, &found));
 
     diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+/* --- the result cache (RFC-0006) --- */
+
+/* How many times an analysis pass ran, from the log every stub appends to.
+   Only the compiler is counted: pickup is asked again on every run when it
+   reports no linter, because there is no answer to record, and that has
+   nothing to do with whether a file was re-analysed. */
+static int invocations(const lint_fixture *fixture) {
+    char *log = fs_read_file(fixture->log);
+    if (log == NULL)
+        return 0;
+    int passes = 0;
+    for (const char *at = strstr(log, "-fsyntax-only"); at != NULL;
+         at = strstr(at + 1, "-fsyntax-only"))
+        passes++;
+    free(log);
+    return passes;
+}
+
+/* Everything a run would print, so two runs can be compared as the user would
+   see them and not merely by counting diagnostics. */
+static char *rendered(const diagnostic_list *list, const char *root) {
+    char *out = calloc(1, 8192);
+    if (out == NULL)
+        return NULL;
+    size_t used = 0;
+    for (size_t i = 0; i < diagnostic_list_count(list); i++) {
+        char line[2048] = "";
+        if (diagnostic_format(diagnostic_list_get(list, i), root, line, sizeof line))
+            used += (size_t)snprintf(out + used, 8192 - used, "%s\n", line);
+    }
+    return out;
+}
+
+static int run_lint_refreshing(const lint_fixture *fixture, diagnostic_list *out,
+                               bool refresh_analysis) {
+    const lint_request request = {
+        .profile = profile_debug,
+        .refresh_toolchain = false,
+        .refresh_tools = false,
+        .refresh_analysis = refresh_analysis,
+    };
+    diagnostic_list_init(out);
+    return lint_project(fixture->root, &request, out);
+}
+
+MOLTEST(lint_replays_a_recorded_result_instead_of_running_the_tools_again) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+    EXPECT_TRUE(after_first > 0);
+
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+
+    /* The work avoided is the process that would have run. */
+    EXPECT_EQ(after_first, invocations(&fixture));
+
+    /* RFC-0006's obligation: a cached run is indistinguishable from an uncached
+       one except in how long it took. A warning replayed as silence would be a
+       false pass in CI, which is the whole reason this is not a boolean. */
+    char *was = rendered(&first, fixture.root);
+    char *is = rendered(&second, fixture.root);
+    ASSERT_NOT_NULL(was);
+    ASSERT_NOT_NULL(is);
+    EXPECT_STREQ(was, is);
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&second, diagnostic_severity_warning));
+
+    free(was);
+    free(is);
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_analyses_a_source_again_once_it_changes) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+
+    /* Content, not timestamp: the store confirms a changed mtime with a hash,
+       so a file that was only touched is correctly left alone. */
+    ASSERT_TRUE(write_file(fixture.root, "src/main.c", "int main(void){return 1;}\n"));
+
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_analyses_everything_again_when_asked_to_refresh) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+
+    /* The escape hatch for a tool the fingerprint cannot describe. */
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint_refreshing(&fixture, &second, true));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_does_not_record_a_tool_that_failed_without_explaining_itself) {
+    lint_fixture fixture;
+    /* Exits non-zero and says nothing: Molto synthesises an error for it. */
+    ASSERT_TRUE(fixture_setup(&fixture, "", 1, NULL));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+    EXPECT_EQ(1, (int)diagnostic_count_severity(&first, diagnostic_severity_error));
+
+    /* Recording that would replay a failure the next run might not have, and
+       would never retry it. A broken tool has to be asked again. */
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
     fixture_teardown(&fixture);
 }

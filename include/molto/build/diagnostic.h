@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <molto/util/str_list.h>
+
 /*
  * What a tool said, normalized.
  *
@@ -90,5 +92,23 @@ void diagnostic_write_json(FILE *stream, const diagnostic_list *list, const char
 
 /* The name of a severity, for reports: "error", "warning", "note". Never NULL. */
 [[nodiscard]] const char *diagnostic_severity_name(diagnostic_severity severity);
+
+/* --- storage form (RFC-0006) ---
+   A list flattened into strings, to be recorded and replayed exactly. Each
+   diagnostic becomes a fixed run of fields rather than one delimited line: the
+   store keeps every string with its length, so a message containing tabs or
+   quotes needs no escaping and cannot be misread on the way back.
+
+   The severity travels as its numeric value, not as its name, because the name
+   of `unknown` is "note" — a line that did not parse would come back as one
+   that did, and print differently from how the tool wrote it. */
+
+/* Append `list` to `out` (caller-initialised). False on allocation failure. */
+[[nodiscard]] bool diagnostic_list_to_values(const diagnostic_list *list, str_list *out);
+
+/* Rebuild a list from what to_values wrote. False if `values` is not a whole
+   number of well-formed records, in which case the caller must re-analyse
+   rather than trust a partial reading. */
+[[nodiscard]] bool diagnostic_list_from_values(const str_list *values, diagnostic_list *out);
 
 #endif /* MOLTO_DIAGNOSTIC_H */

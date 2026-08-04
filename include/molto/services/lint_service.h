@@ -10,6 +10,11 @@ typedef struct {
     build_profile profile;
     bool refresh_toolchain;
     bool refresh_tools;
+    /* Re-analyse every file and rewrite its recorded result, for a tool that is
+       not deterministic or depends on something the fingerprint cannot see
+       (RFC-0006). Needing it routinely means the cache is wrong, not that the
+       flag is useful. */
+    bool refresh_analysis;
 } lint_request;
 
 /*

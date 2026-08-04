@@ -1,6 +1,7 @@
 #include <molto/services/lint_service.h>
 
 #include <molto/build/compile_flags.h>
+#include <molto/build/depfile.h>
 #include <molto/exit_code.h>
 #include <molto/project/project_ctx.h>
 #include <molto/project/style_config.h>
@@ -21,11 +22,25 @@
 /* On-disk layout this command reads. */
 #define MANIFEST_FILENAME "Project.toml"
 #define DIR_SRC "src"
+/* Where the dependency lists of the analysis passes are kept: Molto-owned
+   metadata, beside the database that refers to them. */
+#define DIR_BIN ".bin"
+#define DIR_LINT "lint"
+#define EXT_DEPFILE ".d"
+
+/* What a recorded result is stored under, and what joins the parts of a
+   fingerprint. A byte no argument can contain keeps two different commands
+   from composing into one string. */
+#define KEY_PREFIX "lint:"
+#define FINGERPRINT_SEPARATOR "\x1f"
 
 /* Compiler arguments for a pass that checks and produces nothing. */
 #define ARG_SYNTAX_ONLY "-fsyntax-only"
 #define ARG_NO_COLOR "-fdiagnostics-color=never"
 #define ARG_INCLUDE_SRC "-I%s/" DIR_SRC
+/* Written by the compiler pass so the cache knows which headers it read. */
+#define ARG_DEPFILE "-MMD"
+#define ARG_DEPFILE_TO "-MF"
 
 /* The warnings the `molto` preset asks a compiler for. It is what Molto's own
    Makefile uses and what spec.md section 17 describes. */
@@ -76,7 +91,27 @@ typedef struct {
     resolved_tool linter;
     bool has_linter;
     char linter_config[STYLE_CONFIG_PATH_MAX];
+    /* The translated configuration itself, not its path, because the path does
+       not change when linter.json does. It goes into every fingerprint. */
+    char *linter_config_text;
 } lint_setup;
+
+/* One source and everything the cache needs to decide about it (RFC-0006).
+   The unit is the file rather than the pass: the prerequisites come from the
+   depfile the compiler pass writes, so answering "is the linter pass still
+   valid" means running the compiler pass anyway. Recording them together costs
+   a syntax-only run when only linter.json changed, and buys an entry that
+   cannot disagree with itself about which headers it watched. */
+typedef struct {
+    const char *source;
+    char key[PATH_BUFFER_SIZE];
+    char depfile[PATH_BUFFER_SIZE];
+    char *fingerprint; /* heap: the argvs are unbounded */
+    bool replayed;     /* answered from the store; no process ran */
+    diagnostic_list found;
+    size_t first_task; /* index into the task array, when it ran */
+    size_t task_count;
+} lint_file;
 
 /* Load the manifest with the public API; no new entry point is needed. */
 static int load_manifest(const char *root, project_ctx *out) {
@@ -162,7 +197,7 @@ static bool push_compile_arguments(str_list *argv, const char *root, const lint_
    project's -Wno-unused would silently re-enable what it deliberately turned
    off. */
 static bool build_compiler_argv(str_list *argv, const char *root, const lint_setup *setup,
-                                build_profile profile, const char *source) {
+                                build_profile profile, const char *source, const char *depfile) {
     bool is_cpp = source_is_cpp(source);
     const char *driver = compile_flags_driver(&setup->chain, is_cpp);
     if(driver == NULL) {
@@ -172,6 +207,11 @@ static bool build_compiler_argv(str_list *argv, const char *root, const lint_set
 
     bool ok = str_list_push(argv, driver) && str_list_push(argv, ARG_SYNTAX_ONLY) &&
               str_list_push(argv, ARG_NO_COLOR) && str_list_push(argv, source);
+    /* -MMD during a syntax-only pass costs nothing and is what tells the cache
+       which headers this file read. */
+    if(ok && depfile != NULL)
+        ok = str_list_push(argv, ARG_DEPFILE) && str_list_push(argv, ARG_DEPFILE_TO) &&
+             str_list_push(argv, depfile);
     if(ok && setup->config.preset == style_preset_molto) {
         for(size_t i = 0; ok && i < PRESET_MOLTO_WARNINGS_COUNT; i++)
             ok = str_list_push(argv, preset_molto_warnings[i]);
@@ -202,6 +242,119 @@ static bool build_linter_argv(str_list *argv, const char *root, const lint_setup
     if(!fs_format_path(include_src, sizeof include_src, ARG_INCLUDE_SRC, root))
         return fs_report_long_path(root);
     return ok && str_list_push(argv, include_src);
+}
+
+/* --- the result cache (RFC-0006) --- */
+
+/* Where the compiler pass is told to write its dependency list: under the
+   directory Molto owns, mirroring the source path, so two sources of the same
+   name in different directories do not share one. */
+[[nodiscard]] static bool depfile_path_for(const char *root, const char *source, char *out,
+                                           size_t out_size) {
+    const char *relative = fs_relative_to(source, root);
+    if(!fs_format_path(out, out_size, "%s/" DIR_BIN "/" DIR_LINT "/%s" EXT_DEPFILE, root, relative))
+        return fs_report_long_path(source);
+
+    char directory[PATH_BUFFER_SIZE];
+    snprintf(directory, sizeof directory, "%s", out);
+    char *slash = strrchr(directory, '/');
+    if(slash == NULL)
+        return false;
+    *slash = '\0';
+    return fs_make_dirs(directory);
+}
+
+/* The key an entry is stored under. Relative, so a workspace stays valid when
+   the tree is moved. */
+[[nodiscard]] static bool result_key_for(const char *root, const char *source, char *out,
+                                         size_t out_size) {
+    return fs_format_path(out, out_size, "%s%s", KEY_PREFIX, fs_relative_to(source, root)) ||
+           fs_report_long_path(source);
+}
+
+/* Everything the recorded diagnostics depended on, flattened into one string.
+   The argvs carry the flags, the defines, the includes and therefore the
+   profile; the versions carry the tools; and the translated configuration
+   carries linter.json, whose path alone would not change when it does. */
+static char *join_parts(const str_list *parts) {
+    size_t total = 1;
+    for(size_t i = 0; i < str_list_count(parts); i++)
+        total += strlen(str_list_get(parts, i)) + 1;
+
+    char *out = malloc(total);
+    if(out == NULL)
+        return NULL;
+    out[0] = '\0';
+    size_t used = 0;
+    for(size_t i = 0; i < str_list_count(parts); i++) {
+        const char *part = str_list_get(parts, i);
+        int written = snprintf(out + used, total - used, "%s%s", part, FINGERPRINT_SEPARATOR);
+        if(written < 0 || (size_t)written >= total - used) {
+            free(out);
+            return NULL;
+        }
+        used += (size_t)written;
+    }
+    return out;
+}
+
+static char *fingerprint_for(const lint_setup *setup, const str_list *compiler_argv,
+                             const str_list *linter_argv) {
+    str_list parts;
+    str_list_init(&parts);
+    bool ok = str_list_push(&parts, setup->chain.version);
+    for(size_t i = 0; ok && i < str_list_count(compiler_argv); i++)
+        ok = str_list_push(&parts, str_list_get(compiler_argv, i));
+    if(ok && linter_argv != NULL) {
+        ok = str_list_push(&parts, setup->linter.version) &&
+             str_list_push(&parts,
+                           setup->linter_config_text != NULL ? setup->linter_config_text : "");
+        for(size_t i = 0; ok && i < str_list_count(linter_argv); i++)
+            ok = str_list_push(&parts, str_list_get(linter_argv, i));
+    }
+
+    char *joined = ok ? join_parts(&parts) : NULL;
+    str_list_free(&parts);
+    return joined;
+}
+
+/* Replay what was recorded, if it is still valid. */
+static bool replay(wsdb *db, lint_file *file) {
+    if(db == NULL || file->fingerprint == NULL)
+        return false;
+    if(!wsdb_result_fresh(db, file->key, file->fingerprint))
+        return false;
+
+    str_list values;
+    str_list_init(&values);
+    bool ok = wsdb_result_values(db, file->key, &values) &&
+              diagnostic_list_from_values(&values, &file->found);
+    str_list_free(&values);
+    if(!ok) {
+        /* A stored entry that cannot be read is not a reason to fail; it is a
+           reason to analyse the file again and overwrite it. */
+        diagnostic_list_free(&file->found);
+        diagnostic_list_init(&file->found);
+    }
+    return ok;
+}
+
+/* Record what a file produced, watching the source and the headers the
+   compiler pass reported. A failure here costs the next run its cache and
+   nothing else, so it is reported to the caller and never fatal. */
+static bool record(wsdb *db, const lint_file *file) {
+    str_list prereqs;
+    str_list_init(&prereqs);
+    bool ok = depfile_read(file->depfile, &prereqs) && str_list_count(&prereqs) > 0;
+
+    str_list values;
+    str_list_init(&values);
+    ok = ok && diagnostic_list_to_values(&file->found, &values) &&
+         wsdb_record_result(db, file->key, file->fingerprint, &prereqs, &values);
+
+    str_list_free(&values);
+    str_list_free(&prereqs);
+    return ok;
 }
 
 /* Run one pass and read everything it said. The parse happens here, in the
@@ -308,45 +461,94 @@ static int prepare(const char *root, const lint_request *request, lint_setup *se
         fprintf(stderr, "molto: %s\n", err);
         return exit_invalid_manifest;
     }
+    /* Read once, to fingerprint every file with it. Failing to read it is not
+       fatal: it costs the cache, since a fingerprint without it cannot notice
+       that linter.json changed, and the empty string is never mistaken for a
+       configuration that was read. */
+    if(setup->has_linter)
+        setup->linter_config_text = fs_read_file(setup->linter_config);
     return exit_ok;
 }
 
-/* Compose every pass to run: the compiler over each source, then the linter. */
+/* Compose the passes for every source, skipping the files the store can already
+   answer for. A file that is replayed contributes no task at all, which is the
+   whole point: the work avoided is the process that would have run. */
 static bool build_tasks(const char *root, const lint_setup *setup, build_profile profile,
-                        const str_list *sources, lint_task *tasks, str_list *argvs, size_t *count) {
+                        const str_list *sources, wsdb *db, lint_file *files, lint_task *tasks,
+                        str_list *argvs, size_t *count) {
     size_t at = 0;
     for(size_t i = 0; i < str_list_count(sources); i++) {
-        const char *source = str_list_get(sources, i);
+        lint_file *file = &files[i];
+        file->source = str_list_get(sources, i);
+        diagnostic_list_init(&file->found);
 
-        str_list_init(&argvs[at]);
-        if(!build_compiler_argv(&argvs[at], root, setup, profile, source))
+        if(!result_key_for(root, file->source, file->key, sizeof file->key) ||
+           !depfile_path_for(root, file->source, file->depfile, sizeof file->depfile))
             return false;
-        tasks[at] = (lint_task){
-            .source = source,
-            .tool = setup->chain.cc,
-            .argv = &argvs[at],
-            .env = &setup->ctx.env,
-        };
-        diagnostic_list_init(&tasks[at].found);
+
+        size_t compiler_at = at;
+        str_list_init(&argvs[at]);
+        if(!build_compiler_argv(&argvs[at], root, setup, profile, file->source, file->depfile))
+            return false;
         at++;
 
-        if(!setup->has_linter)
+        size_t linter_at = 0;
+        if(setup->has_linter) {
+            linter_at = at;
+            str_list_init(&argvs[at]);
+            if(!build_linter_argv(&argvs[at], root, setup, profile, file->source))
+                return false;
+            at++;
+        }
+
+        file->fingerprint = fingerprint_for(setup, &argvs[compiler_at],
+                                            setup->has_linter ? &argvs[linter_at] : NULL);
+        file->replayed = replay(db, file);
+        if(file->replayed) {
+            /* Give back the slots: the argvs were only needed to know what the
+               run would have been, which is exactly what the fingerprint is. */
+            at = compiler_at;
+            str_list_free(&argvs[compiler_at]);
+            str_list_init(&argvs[compiler_at]);
+            if(setup->has_linter) {
+                str_list_free(&argvs[linter_at]);
+                str_list_init(&argvs[linter_at]);
+            }
             continue;
+        }
 
-        str_list_init(&argvs[at]);
-        if(!build_linter_argv(&argvs[at], root, setup, profile, source))
-            return false;
-        tasks[at] = (lint_task){
-            .source = source,
-            .tool = setup->linter.path,
-            .argv = &argvs[at],
+        file->first_task = compiler_at;
+        file->task_count = setup->has_linter ? 2 : 1;
+        tasks[compiler_at] = (lint_task){
+            .source = file->source,
+            .tool = setup->chain.cc,
+            .argv = &argvs[compiler_at],
             .env = &setup->ctx.env,
         };
-        diagnostic_list_init(&tasks[at].found);
-        at++;
+        diagnostic_list_init(&tasks[compiler_at].found);
+        if(setup->has_linter) {
+            tasks[linter_at] = (lint_task){
+                .source = file->source,
+                .tool = setup->linter.path,
+                .argv = &argvs[linter_at],
+                .env = &setup->ctx.env,
+            };
+            diagnostic_list_init(&tasks[linter_at].found);
+        }
     }
     *count = at;
     return true;
+}
+
+/* Whether what a pass produced may be recorded. A tool that crashed, exited
+   without explaining itself, or whose output was cut off did not produce a
+   result: storing one would replay a failure that a second attempt might not
+   have, and would never retry it. */
+static bool task_is_recordable(const lint_task *task) {
+    if(task->truncated || task->status < 0 || task->status == 127 || task->status > 128)
+        return false;
+    return task->status == 0 ||
+           diagnostic_count_severity(&task->found, diagnostic_severity_error) > 0;
 }
 
 int lint_project(const char *root, const lint_request *request, diagnostic_list *out) {
@@ -387,16 +589,24 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     size_t capacity = source_count * (setup.has_linter ? 2 : 1);
     lint_task *tasks = calloc(capacity, sizeof *tasks);
     str_list *argvs = calloc(capacity, sizeof *argvs);
-    if(tasks == NULL || argvs == NULL) {
+    lint_file *files = calloc(source_count, sizeof *files);
+    if(tasks == NULL || argvs == NULL || files == NULL) {
         free(tasks);
         free(argvs);
+        free(files);
+        free(setup.linter_config_text);
         str_list_free(&sources);
         return exit_build_failure;
     }
 
+    /* --refresh-analysis is expressed as having no store to consult: the run
+       proceeds exactly as a cold one, and records over what was there. */
+    wsdb *db = request->refresh_analysis ? NULL : wsdb_open(root);
+
     size_t count = 0;
-    bool ok = build_tasks(root, &setup, request->profile, &sources, tasks, argvs, &count);
-    if(ok) {
+    bool ok =
+        build_tasks(root, &setup, request->profile, &sources, db, files, tasks, argvs, &count);
+    if(ok && count > 0) {
         task_pool *pool = task_pool_create(0);
         if(pool == NULL) {
             ok = false;
@@ -411,18 +621,47 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     }
 
     /* Fold in source order. The pool finishes in whatever order it likes;
-       walking the tasks as they were composed is what makes two runs over one
-       tree report the same thing in the same order. */
+       walking the files as they were composed is what makes two runs over one
+       tree report the same thing in the same order — and what makes a replayed
+       run indistinguishable from the one that produced it. */
     code = ok ? exit_ok : exit_build_failure;
-    for(size_t i = 0; code == exit_ok && i < count; i++)
-        code = absorb(&tasks[i], out);
+    for(size_t i = 0; code == exit_ok && i < source_count; i++) {
+        lint_file *file = &files[i];
+        if(!file->replayed) {
+            bool recordable = true;
+            for(size_t t = 0; code == exit_ok && t < file->task_count; t++) {
+                lint_task *task = &tasks[file->first_task + t];
+                recordable = recordable && task_is_recordable(task);
+                code = absorb(task, &file->found);
+            }
+            /* A file that cannot be recorded — no depfile because the compiler
+               does not write one, or a store that refused it — is simply
+               analysed again next time. It is not reported: the result is
+               unaffected, only the time it took, and one line per file would
+               be noise proportional to the project. */
+            if(code == exit_ok && db != NULL && recordable && file->fingerprint != NULL)
+                (void)record(db, file);
+        }
+        if(code == exit_ok && !diagnostic_list_append(out, &file->found))
+            code = exit_build_failure;
+    }
+
+    if(db != NULL && !wsdb_close(db))
+        fprintf(stderr, "molto: could not save the workspace state; "
+                        "the next lint will not be incremental\n");
 
     for(size_t i = 0; i < capacity; i++) {
         diagnostic_list_free(&tasks[i].found);
         str_list_free(&argvs[i]);
     }
+    for(size_t i = 0; i < source_count; i++) {
+        diagnostic_list_free(&files[i].found);
+        free(files[i].fingerprint);
+    }
     free(tasks);
     free(argvs);
+    free(files);
+    free(setup.linter_config_text);
     str_list_free(&sources);
     return code;
 }

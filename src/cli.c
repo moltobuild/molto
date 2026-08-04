@@ -41,6 +41,8 @@ static const cli_option lint_options[] = {
      "Resolve the compiler again instead of reusing the cached one", NULL},
     {"--refresh-tools", 0, cli_opt_flag, NULL,
      "Ask pickup again which formatter and linter this machine has", NULL},
+    {"--refresh-analysis", 0, cli_opt_flag, NULL,
+     "Analyse every file again instead of replaying what did not change", NULL},
     {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, json)", "text"},
 };
 
@@ -88,6 +90,7 @@ static int handle_test(const cli_args *args) {
 static int handle_lint(const cli_args *args) {
     return lint_command_run(cli_args_option(args, "--profile"), wants_refresh(args),
                             cli_args_flag(args, "--refresh-tools"),
+                            cli_args_flag(args, "--refresh-analysis"),
                             cli_args_option(args, "--format"));
 }
 

@@ -375,3 +375,84 @@ void diagnostic_write_json(FILE *stream, const diagnostic_list *list, const char
     }
     fputs("]\n", stream);
 }
+
+/* --- storage form (RFC-0006) --- */
+
+/* Fields per record, in the order to_values writes them. */
+#define FIELD_COUNT 7
+
+/* The widest a long prints as, plus sign and terminator. */
+#define NUMBER_TEXT_MAX 24
+
+static bool push_number(str_list *out, long value) {
+    char text[NUMBER_TEXT_MAX];
+    snprintf(text, sizeof text, "%ld", value);
+    return str_list_push(out, text);
+}
+
+/* Read a field written by push_number. Rejects trailing junk and negatives:
+   both mean the record was not written by this code. */
+static bool read_stored_number(const char *text, long *out) {
+    char *end = NULL;
+    long value = strtol(text, &end, 10);
+    if(end == text || *end != '\0' || value < 0)
+        return false;
+    *out = value;
+    return true;
+}
+
+bool diagnostic_list_to_values(const diagnostic_list *list, str_list *out) {
+    for(size_t i = 0; i < diagnostic_list_count(list); i++) {
+        const diagnostic *item = diagnostic_list_get(list, i);
+        if(!str_list_push(out, item->file) || !push_number(out, item->line) ||
+           !push_number(out, item->column) || !push_number(out, (long)item->severity) ||
+           !str_list_push(out, item->rule) || !str_list_push(out, item->rule_native) ||
+           !str_list_push(out, item->message))
+            return false;
+    }
+    return true;
+}
+
+/* True for a severity value that names one of the enumerators. Anything else
+   was not written by this code, and guessing would replay the wrong severity —
+   which decides whether the command fails. */
+static bool severity_is_known(long value) {
+    return value == diagnostic_severity_note || value == diagnostic_severity_warning ||
+           value == diagnostic_severity_error || value == diagnostic_severity_unknown;
+}
+
+bool diagnostic_list_from_values(const str_list *values, diagnostic_list *out) {
+    size_t count = str_list_count(values);
+    if(count % FIELD_COUNT != 0)
+        return false;
+
+    for(size_t at = 0; at < count; at += FIELD_COUNT) {
+        diagnostic item;
+        memset(&item, 0, sizeof item);
+
+        long line = 0;
+        long column = 0;
+        long severity = 0;
+        if(!read_stored_number(str_list_get(values, at + 1), &line) ||
+           !read_stored_number(str_list_get(values, at + 2), &column) ||
+           !read_stored_number(str_list_get(values, at + 3), &severity) ||
+           !severity_is_known(severity))
+            return false;
+
+        item.line = line;
+        item.column = column;
+        item.severity = (diagnostic_severity)severity;
+        const char *file = str_list_get(values, at);
+        const char *rule = str_list_get(values, at + 4);
+        const char *native = str_list_get(values, at + 5);
+        const char *message = str_list_get(values, at + 6);
+        copy_bounded(item.file, sizeof item.file, file, strlen(file));
+        copy_bounded(item.rule, sizeof item.rule, rule, strlen(rule));
+        copy_bounded(item.rule_native, sizeof item.rule_native, native, strlen(native));
+        copy_bounded(item.message, sizeof item.message, message, strlen(message));
+
+        if(!diagnostic_list_push(out, &item))
+            return false;
+    }
+    return true;
+}

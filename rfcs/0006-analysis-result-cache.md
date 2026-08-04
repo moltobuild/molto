@@ -62,11 +62,16 @@ produces is silent and the thing it silences is the tool's entire output.
 RFC-0004 gives the WSDB three entry kinds — input, object, binary — and this
 adds a fourth: **result**.
 
-A result entry records one tool's complete output for one file:
+A result entry records what the analysis of one file produced:
 
-- **Key**: the pass and the file. A file has more than one result, because the
-  compiler's syntax pass and the linter's pass are different tools with
-  different configurations that fail and are invalidated independently.
+- **Key**: the file. This RFC first said the pass and the file, on the reasoning
+  that the compiler's syntax pass and the linter's pass are different tools that
+  should be invalidated independently. Implementing it showed why they cannot
+  be: the prerequisites come from the dependency list the *compiler* pass
+  writes, so deciding whether the linter's entry is still valid means running
+  the compiler pass anyway. Keeping one entry per file costs a syntax-only run
+  when only `linter.json` changed — the cheap half of a lint — and buys an entry
+  that cannot disagree with itself about which headers it watched.
 - **Fingerprint**: what the answer depended on. Identical to the one the build
   already computes for an object — the exact command line, the file's freshness
   signature, and the headers absorbed from the depfile — extended by the two
@@ -143,6 +148,26 @@ it be tested rather than assumed:
 The last one is the only test about performance, and it is expressed as a fact
 about the store rather than as a measured time, because a timing test that runs
 on a busy machine fails for reasons that have nothing to do with the cache.
+
+## Implementation Status
+
+**Implemented for `molto lint`.** The store is the `result` entry kind in the
+WSDB, which the compiler pass feeds by writing its dependency list to
+`.bin/lint/`. A run that changes nothing replays every file and spawns no
+process at all: on this repository, 1.37s cold against 0.003s warm, with stdout
+and stderr identical byte for byte.
+
+Two things are recorded conservatively. A pass that crashed, was killed, exited
+without saying anything, or had its output truncated is **not** recorded, since
+storing it would replay a failure that a second attempt might not have and never
+retry it. And a file whose dependency list could not be read is analysed again
+next time, silently: the result is unaffected, only the time, and a line per
+file would be noise proportional to the project.
+
+**Not implemented for `molto fmt`.** The entry is general and `fmt` will use it
+unchanged, but its question is different — whether the file changed, which it
+answers today by comparing content it already has in memory — so there is less
+to save and it is not the pass that costs.
 
 ## Non-Goals
 

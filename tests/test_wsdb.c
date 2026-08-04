@@ -268,3 +268,122 @@ MOLTEST(wsdb_reports_a_state_it_could_not_save) {
     EXPECT_TRUE(chmod(bindir, 0700) == 0);
     fixture_teardown(&fixture);
 }
+
+/* --- analysis results (RFC-0006) --- */
+
+MOLTEST(wsdb_replays_a_result_until_a_prerequisite_changes) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+
+    str_list diagnostics;
+    str_list_init(&diagnostics);
+    ASSERT_TRUE(str_list_push(&diagnostics, "src/main.c"));
+    ASSERT_TRUE(str_list_push(&diagnostics, "unused variable 'x'"));
+
+    EXPECT_TRUE(wsdb_record_result(db, "lint:src/main.c", "fp-v1", &fixture.prereqs,
+                                   &diagnostics));
+    EXPECT_TRUE(wsdb_result_fresh(db, "lint:src/main.c", "fp-v1"));
+    /* The fingerprint carries the command, the tool version and the translated
+       configuration, so a change in any of them is a different analysis. */
+    EXPECT_FALSE(wsdb_result_fresh(db, "lint:src/main.c", "fp-v2"));
+
+    str_list read_back;
+    str_list_init(&read_back);
+    ASSERT_TRUE(wsdb_result_values(db, "lint:src/main.c", &read_back));
+    ASSERT_EQ(2, str_list_count(&read_back));
+    EXPECT_STREQ("unused variable 'x'", str_list_get(&read_back, 1));
+
+    /* Editing a header re-analyses what included it, which is the whole reason
+       the prerequisites are watched rather than just the file itself. */
+    sleep(1);
+    write_at(fixture.root, "src/util.h", "int answer(void);\nint other(void);\n");
+    EXPECT_FALSE(wsdb_result_fresh(db, "lint:src/main.c", "fp-v1"));
+
+    str_list_free(&read_back);
+    str_list_free(&diagnostics);
+    wsdb_close(db);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(wsdb_tells_a_clean_file_apart_from_one_never_analysed) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+
+    str_list empty;
+    str_list_init(&empty);
+    EXPECT_TRUE(wsdb_record_result(db, "lint:src/main.c", "fp-v1", &fixture.prereqs, &empty));
+
+    /* A file that was analysed and had nothing to say is a recorded answer.
+       Conflating it with an absent entry is how a cache ends up re-analysing
+       every clean file — or worse, replaying silence for a file with
+       warnings. */
+    str_list read_back;
+    str_list_init(&read_back);
+    EXPECT_TRUE(wsdb_result_values(db, "lint:src/main.c", &read_back));
+    EXPECT_EQ(0, str_list_count(&read_back));
+    EXPECT_TRUE(wsdb_result_fresh(db, "lint:src/main.c", "fp-v1"));
+
+    EXPECT_FALSE(wsdb_result_values(db, "lint:src/never.c", &read_back));
+    EXPECT_FALSE(wsdb_result_fresh(db, "lint:src/never.c", "fp-v1"));
+
+    str_list_free(&read_back);
+    str_list_free(&empty);
+    wsdb_close(db);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(wsdb_survives_a_result_round_trip_through_the_file) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    str_list diagnostics;
+    str_list_init(&diagnostics);
+    ASSERT_TRUE(str_list_push(&diagnostics, "a message with  spaces and a\ttab"));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+    EXPECT_TRUE(wsdb_record_result(db, "lint:src/main.c", "fp-v1", &fixture.prereqs,
+                                   &diagnostics));
+    EXPECT_TRUE(wsdb_close(db));
+
+    /* Values are length-prefixed on disk, so a diagnostic needs no escaping and
+       survives whatever a compiler chose to print. */
+    wsdb *reopened = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(reopened);
+    str_list read_back;
+    str_list_init(&read_back);
+    ASSERT_TRUE(wsdb_result_values(reopened, "lint:src/main.c", &read_back));
+    ASSERT_EQ(1, str_list_count(&read_back));
+    EXPECT_STREQ("a message with  spaces and a\ttab", str_list_get(&read_back, 0));
+    EXPECT_TRUE(wsdb_result_fresh(reopened, "lint:src/main.c", "fp-v1"));
+
+    str_list_free(&read_back);
+    str_list_free(&diagnostics);
+    wsdb_close(reopened);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(wsdb_refuses_a_result_that_watches_nothing) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+
+    str_list nothing;
+    str_list_init(&nothing);
+    /* An entry with no prerequisites could never go stale, so it would answer
+       "fresh" for the rest of the workspace's life. */
+    EXPECT_FALSE(wsdb_record_result(db, "lint:src/main.c", "fp-v1", &nothing, &nothing));
+    EXPECT_FALSE(wsdb_result_fresh(db, "lint:src/main.c", "fp-v1"));
+
+    str_list_free(&nothing);
+    wsdb_close(db);
+    fixture_teardown(&fixture);
+}

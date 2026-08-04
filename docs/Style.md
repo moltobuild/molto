@@ -91,6 +91,26 @@ profile analyses code the build never sees.
 one was, `2` for an invalid configuration, `4` for bad usage. A warning is
 reported and still succeeds — only `error` fails the command.
 
+### It does not analyse the same file twice
+
+A file that has not changed is not analysed again: what the tools said about it
+is recorded in `.bin/` and replayed. What you see is identical either way —
+same diagnostics, same order, same exit code — because replaying a warning as
+silence would be a green build that hid it.
+
+A file is analysed again when its content changes, when any header it includes
+changes, when the command would differ (a different profile, defines, flags),
+when `linter.json` changes, or when the linter's version does. Editing one file
+in a large project therefore costs one file's analysis, not the project's.
+
+```console
+$ molto lint --refresh-analysis    # analyse everything again, ignoring what was recorded
+```
+
+That is for a tool that is not deterministic, or one whose behaviour depends on
+something Molto cannot see. Needing it routinely means the cache is wrong, and
+the answer to that is a bug report rather than the flag.
+
 ## `format.json`
 
 Optional. Absent means the defaults below.
@@ -204,6 +224,8 @@ describes a schema that is still growing.
 | Lint reports nothing from the linter | No linter installed | Check `pickup tools`; the compiler pass still ran |
 | Lint reports what the build does not | Wrong profile | `molto lint --profile release` |
 | `--check` and `--diff` together | Two answers to one question | Pick one |
+| Lint reports something you already fixed | A cached result that should have been invalidated | `molto lint --refresh-analysis`, and report it: the cache is meant to make that impossible |
+| Lint is not faster on the second run | Nothing could be recorded — most often a compiler that does not write `-MF` dependency lists | Check that `.bin/lint/` contains `.d` files |
 
 ## Related
 

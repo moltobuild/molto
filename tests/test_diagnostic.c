@@ -266,3 +266,103 @@ MOLTEST(diagnostic_json_leaves_out_what_a_machine_cannot_act_on) {
 
     diagnostic_list_free(&list);
 }
+
+/* --- storage form (RFC-0006) --- */
+
+MOLTEST(diagnostics_survive_a_round_trip_through_the_store) {
+    diagnostic_list original;
+    diagnostic_list_init(&original);
+    /* A parsed warning with a rule, a note, and a line the parser could not
+       read — the three shapes that reach the store. */
+    ASSERT_TRUE(diagnostic_parse("src/a.c:12:5: warning: unused variable 'x' [bugprone-unused]\n"
+                                 "src/a.c:12:5: note: declared here\n"
+                                 "      | int    x = 1;\t/* a tab and  spaces */\n",
+                                 &original));
+    ASSERT_EQ(3, diagnostic_list_count(&original));
+
+    str_list values;
+    str_list_init(&values);
+    ASSERT_TRUE(diagnostic_list_to_values(&original, &values));
+
+    diagnostic_list replayed;
+    diagnostic_list_init(&replayed);
+    ASSERT_TRUE(diagnostic_list_from_values(&values, &replayed));
+
+    /* RFC-0006: a cached run must be indistinguishable from an uncached one.
+       Compare what the user would see, field by field. */
+    ASSERT_EQ(diagnostic_list_count(&original), diagnostic_list_count(&replayed));
+    for (size_t i = 0; i < diagnostic_list_count(&original); i++) {
+        const diagnostic *was = diagnostic_list_get(&original, i);
+        const diagnostic *is = diagnostic_list_get(&replayed, i);
+        EXPECT_STREQ(was->file, is->file);
+        EXPECT_EQ(was->line, is->line);
+        EXPECT_EQ(was->column, is->column);
+        EXPECT_EQ((int)was->severity, (int)is->severity);
+        EXPECT_STREQ(was->message, is->message);
+        EXPECT_STREQ(was->rule, is->rule);
+        EXPECT_STREQ(was->rule_native, is->rule_native);
+    }
+
+    /* Severity decides the exit code, and `unknown` must not come back as the
+       `note` its name would suggest. */
+    EXPECT_EQ((int)diagnostic_severity_unknown,
+              (int)diagnostic_list_get(&replayed, 2)->severity);
+
+    str_list_free(&values);
+    diagnostic_list_free(&replayed);
+    diagnostic_list_free(&original);
+}
+
+MOLTEST(an_empty_list_round_trips_as_an_empty_list) {
+    diagnostic_list original;
+    diagnostic_list_init(&original);
+    str_list values;
+    str_list_init(&values);
+    ASSERT_TRUE(diagnostic_list_to_values(&original, &values));
+    EXPECT_EQ(0, str_list_count(&values));
+
+    diagnostic_list replayed;
+    diagnostic_list_init(&replayed);
+    /* A clean file records nothing and replays nothing, and that is a success:
+       returning false here would re-analyse every clean file forever. */
+    EXPECT_TRUE(diagnostic_list_from_values(&values, &replayed));
+    EXPECT_EQ(0, diagnostic_list_count(&replayed));
+
+    str_list_free(&values);
+    diagnostic_list_free(&replayed);
+    diagnostic_list_free(&original);
+}
+
+MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
+    diagnostic_list out;
+    diagnostic_list_init(&out);
+
+    /* Not a whole number of records. */
+    str_list truncated;
+    str_list_init(&truncated);
+    ASSERT_TRUE(str_list_push(&truncated, "src/a.c"));
+    ASSERT_TRUE(str_list_push(&truncated, "12"));
+    EXPECT_FALSE(diagnostic_list_from_values(&truncated, &out));
+
+    /* A severity outside the enum would replay as some other severity, and
+       severity is what decides whether the command fails. */
+    str_list bad_severity;
+    str_list_init(&bad_severity);
+    const char *fields[] = {"src/a.c", "12", "5", "99", "rule", "rule", "message"};
+    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++)
+        ASSERT_TRUE(str_list_push(&bad_severity, fields[i]));
+    EXPECT_FALSE(diagnostic_list_from_values(&bad_severity, &out));
+
+    /* A number that is not one. */
+    str_list bad_line;
+    str_list_init(&bad_line);
+    const char *junk[] = {"src/a.c", "12x", "5", "1", "rule", "rule", "message"};
+    for (size_t i = 0; i < sizeof junk / sizeof junk[0]; i++)
+        ASSERT_TRUE(str_list_push(&bad_line, junk[i]));
+    EXPECT_FALSE(diagnostic_list_from_values(&bad_line, &out));
+
+    str_list_free(&truncated);
+    str_list_free(&bad_severity);
+    str_list_free(&bad_line);
+    diagnostic_list_free(&out);
+}

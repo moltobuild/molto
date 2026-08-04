@@ -248,14 +248,13 @@ versions.
 
 **Not implemented yet**, and deliberately so:
 
-- **The per-file cache** described under Caching. A cache is only correct if it
-  replays the diagnostics, not merely the fact that a file was once clean:
-  caching a boolean would have `molto lint` print warnings on the first run and
-  nothing on the second, which in CI is a false pass. The WSDB has nowhere to
-  store a tool's output, and `molto fmt` will want the same store, so it is
-  worth building once rather than half now. That store is specified in
-  [RFC-0006](0006-analysis-result-cache.md); until it exists, every file is
-  analysed on every run.
+- **The per-file cache** described under Caching, **for `molto fmt`**. It is
+  implemented for `molto lint`: the store it needed is specified in
+  [RFC-0006](0006-analysis-result-cache.md) and replays the diagnostics rather
+  than the fact that a file was once clean, which is what makes a cached run
+  indistinguishable from an uncached one. `molto fmt` will use the same entry
+  unchanged, and gains less from it: its question is whether the file changed,
+  and it already has both versions in memory to answer that.
 - **`molto fmt --import`**, `molto lint --fix`, the `kernel` and `gnu` presets,
   and tier 2 and 3 backends. A configuration naming any of them is refused by
   name rather than quietly approximated.

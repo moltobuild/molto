@@ -55,6 +55,28 @@ bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request, const
    Returns false if there is no such entry. */
 [[nodiscard]] bool wsdb_toolchain_values(wsdb *db, const char *key, str_list *out);
 
+/* --- analysis results (RFC-0006) ---
+   What a tool said about one file, so an unchanged file is not analysed again.
+   Unlike an object there is no artifact on disk to check: the entry is the
+   whole of what was produced, and it must replay the diagnostics rather than
+   the fact that there were none. */
+
+/* True if the result recorded under `key` still answers `fingerprint` and none
+   of the files it was derived from changed. */
+[[nodiscard]] bool wsdb_result_fresh(wsdb *db, const char *key, const char *fingerprint);
+
+/* Record `values` as what `fingerprint` produced, watching `prereqs` — the file
+   analysed and the headers it included. `values` may be empty: a file with no
+   diagnostics is a recorded answer, not a missing one. `prereqs` may not, since
+   an entry watching nothing would never go stale. */
+bool wsdb_record_result(wsdb *db, const char *key, const char *fingerprint, const str_list *prereqs,
+                        const str_list *values);
+
+/* Read back what was recorded under `key` into `out` (caller-initialised).
+   False only if there is no such entry; true with nothing appended is the file
+   that was analysed and had nothing to say. */
+[[nodiscard]] bool wsdb_result_values(wsdb *db, const char *key, str_list *out);
+
 /* Delete outputs (and their DB entries) whose path is under `prefix` but not in
    `live` — i.e. orphans left by a removed source. */
 void wsdb_prune(wsdb *db, const str_list *live, const char *prefix);
