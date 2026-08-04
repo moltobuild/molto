@@ -253,7 +253,9 @@ versions.
   caching a boolean would have `molto lint` print warnings on the first run and
   nothing on the second, which in CI is a false pass. The WSDB has nowhere to
   store a tool's output, and `molto fmt` will want the same store, so it is
-  worth building once rather than half now.
+  worth building once rather than half now. That store is specified in
+  [RFC-0006](0006-analysis-result-cache.md); until it exists, every file is
+  analysed on every run.
 - **`molto fmt --import`**, `molto lint --fix`, the `kernel` and `gnu` presets,
   and tier 2 and 3 backends. A configuration naming any of them is refused by
   name rather than quietly approximated.
@@ -322,6 +324,7 @@ existing task pool.
 - [RFC-0002: CLI Specification](0002-cli-specification.md)
 - [RFC-0003: Project Manifest](0003-project-manifest.md)
 - [RFC-0004: Workspace Specification](0004-workspace-specification.md)
+- [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — the store the caching above needs
 
 See also `spec.md` sections 10 (Global Cache), 11 (Workspace Database) and 17
 (Coding Conventions).

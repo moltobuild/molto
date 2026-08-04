@@ -208,6 +208,7 @@ Not implemented yet, and each waiting on a feature rather than on this RFC:
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0002: CLI Specification](0002-cli-specification.md)
 - [RFC-0003: Project Manifest](0003-project-manifest.md)
+- [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — adds a fourth entry kind to the store described here
 
 See also `spec.md` sections 4 (Workspace), 10 (Global Cache) and 11 (Workspace
 Database).
