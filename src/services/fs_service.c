@@ -135,6 +135,14 @@ bool fs_mtime_ns(const char *path, int64_t *out) {
     return true;
 }
 
+uint64_t fs_signature(const char *path) {
+    struct stat info;
+    int64_t mtime_ns;
+    if(stat(path, &info) != 0 || !fs_mtime_ns(path, &mtime_ns))
+        return 0;
+    return (uint64_t)mtime_ns + (uint64_t)info.st_size;
+}
+
 bool fs_source_newer(const char *source, const char *target) {
     int64_t target_ns;
     if(!fs_mtime_ns(target, &target_ns))

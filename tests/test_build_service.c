@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -292,5 +293,68 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
+    char root[] = "/tmp/molto_build_race_XXXXXX";
+    ASSERT_NOT_NULL(mkdtemp(root));
+    char tools[] = "/tmp/molto_build_cc_XXXXXX";
+    ASSERT_NOT_NULL(mkdtemp(tools));
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    ASSERT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    ASSERT_TRUE(fs_write_file(path, "[package]\nname = \"racy\"\nversion = \"0.1.0\"\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    ASSERT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    /* A compiler that edits its own input, which is what an editor saving
+       during a build looks like from here. It produces the object and the
+       dependency list first, so the build itself succeeds. */
+    char compiler[512];
+    snprintf(compiler, sizeof compiler, "%s/cc", tools);
+    char script[1536];
+    snprintf(script, sizeof script,
+             "#!/bin/sh\n"
+             "out=''; dep=''; src=''; prev=''; log=%s/calls\n"
+             "for a in \"$@\"; do\n"
+             "  [ \"$prev\" = '-o' ] && out=\"$a\"\n"
+             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
+             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
+             "  prev=\"$a\"\n"
+             "done\n"
+             "[ -n \"$out\" ] && : > \"$out\"\n"
+             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"o: $src\" > \"$dep\"\n"
+             "[ -n \"$src\" ] && echo '/* edited mid-build */' >> \"$src\"\n"
+             "echo x >> $log\n",
+             tools);
+    ASSERT_TRUE(fs_write_file(compiler, script));
+    ASSERT_TRUE(chmod(compiler, 0755) == 0);
+    ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+
+    char log[512];
+    snprintf(log, sizeof log, "%s/calls", tools);
+    char *first = fs_read_file(log);
+    ASSERT_NOT_NULL(first);
+    size_t after_first = strlen(first);
+    free(first);
+
+    /* The object holds a compilation of content that is no longer on disk.
+       Recording it would leave nothing to rebuild it, and the next link would
+       quietly take the stale object — which is how a test suite ends up
+       running against code that was already changed. */
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    char *second = fs_read_file(log);
+    ASSERT_NOT_NULL(second);
+    EXPECT_TRUE(strlen(second) > after_first);
+    free(second);
+
+    (void)unsetenv("C_COMPILER");
+    char cmd[512];
+    snprintf(cmd, sizeof cmd, "rm -rf %s %s", root, tools);
     (void)system(cmd);
 }

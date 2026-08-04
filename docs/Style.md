@@ -176,10 +176,33 @@ The rule names are Molto's, not the backend's:
 | `security` | The path-sensitive security analyzer (slow; see below) |
 | `naming_snake_case` | Identifier naming |
 | `readability_magic_numbers`, `identifier_length` | Individual readability checks |
+| `swappable_parameters`, `spurious_wakeup` | Two `bugprone` checks, named so they can be refused on their own |
 | `unused`, `shadow`, `uninitialized`, `implicit_conversion`, `sign_compare` | Compiler diagnostics, by name |
 
 A rule Molto cannot express for the selected backend is **an error naming the
 rule and the backend**, never something quietly dropped.
+
+Most rules name a family, because that is the unit a project usually has an
+opinion about. A few name one check, for when a family is worth keeping and one
+member of it is not:
+
+```json
+{
+    "rules": {
+        "bugprone": "warn",
+        "swappable_parameters": "off",
+        "spurious_wakeup": "off"
+    }
+}
+```
+
+Those two are the ones a C project most often wants gone. `swappable_parameters`
+flags any two adjacent parameters of the same type, which is how most C
+functions are written — including the signatures `qsort` and a callback table
+impose, which cannot be changed at all. `spurious_wakeup` wants the wait inside
+a `while`, and cannot see a retry loop that lives one function above it. Turning
+either off leaves the rest of `bugprone` in place, which is the point: that
+family does find real bugs.
 
 ## Shared keys
 

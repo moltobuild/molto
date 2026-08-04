@@ -15,6 +15,7 @@
 #include <molto/workspace/wsdb.h>
 
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -157,7 +158,7 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t
    the project's [env] variables to the child. */
 static int run_str_argv(const str_list *argv, const project_env *env) {
     size_t count = str_list_count(argv);
-    const char **cargv = malloc((count + 1) * sizeof(char *));
+    const char **cargv = (const char **)malloc((count + 1) * sizeof(char *));
     if(cargv == NULL)
         return -1;
     for(size_t i = 0; i < count; i++)
@@ -167,7 +168,7 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
     process_env_var vars[PROJECT_MAX_ENV];
     size_t var_count = project_env_to_vars(env, vars, PROJECT_MAX_ENV);
     int status = process_run_env(cargv, vars, var_count);
-    free(cargv);
+    free((void *)cargv);
     return status;
 }
 
@@ -326,7 +327,8 @@ typedef struct {
     const project_env *env;
     const resolved_toolchain *chain;
     atomic_bool *failed;
-    bool succeeded; /* written only by the worker owning this task */
+    bool succeeded;     /* written only by the worker owning this task */
+    uint64_t signature; /* what the source was when this compilation began */
 } compile_task;
 
 static void compile_task_run(void *arg) {
@@ -418,6 +420,7 @@ static int compile_sources(const char *root, build_profile profile,
             .env = env,
             .chain = chain,
             .failed = &failed,
+            .signature = fs_signature(str_list_get(sources, i)),
         };
         if(!task_pool_submit(pool, compile_task_run, &tasks[queued]))
             result = exit_build_failure;
@@ -435,6 +438,14 @@ static int compile_sources(const char *root, build_profile profile,
     for(size_t i = 0; i < queued; i++) {
         const compile_task *task = &tasks[i];
         if(!task->succeeded) {
+            discard_depfile(task->object);
+            continue;
+        }
+        /* A source edited while it was being compiled would otherwise be
+           recorded under the signature of content the object does not contain,
+           and nothing would rebuild it afterwards: the stale object simply gets
+           linked. Leaving it unrecorded costs one recompilation. */
+        if(fs_signature(task->source) != task->signature) {
             discard_depfile(task->object);
             continue;
         }

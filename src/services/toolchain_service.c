@@ -112,14 +112,14 @@ static bool build_pickup_argv(const char *program, const project_target *target,
 /* Run a command held in a str_list and capture its stdout. */
 static int run_capturing(const str_list *argv, char *out, size_t out_size) {
     size_t count = str_list_count(argv);
-    const char **cargv = malloc((count + 1) * sizeof(char *));
+    const char **cargv = (const char **)malloc((count + 1) * sizeof(char *));
     if(cargv == NULL)
         return -1;
     for(size_t i = 0; i < count; i++)
         cargv[i] = str_list_get(argv, i);
     cargv[count] = NULL;
     int status = process_capture(cargv, out, out_size);
-    free(cargv);
+    free((void *)cargv);
     return status;
 }
 

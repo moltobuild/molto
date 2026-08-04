@@ -172,7 +172,7 @@ int process_capture_all(const char *const argv[], const process_env_var *env, si
 
 const char **process_argv_from_list(const str_list *list) {
     size_t count = str_list_count(list);
-    const char **argv = malloc((count + 1) * sizeof *argv);
+    const char **argv = (const char **)malloc((count + 1) * sizeof *argv);
     if(argv == NULL)
         return NULL;
     for(size_t i = 0; i < count; i++)

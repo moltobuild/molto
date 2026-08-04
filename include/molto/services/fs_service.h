@@ -26,6 +26,17 @@
    cycle, so a tree walk asks this instead of fs_is_dir. */
 [[nodiscard]] bool fs_is_dir_no_follow(const char *path);
 
+/* A cheap signature of a file's current state: modification time and size,
+   combined. Zero when the file cannot be read.
+
+   It exists so a caller can notice that an input changed *while* it was being
+   used to produce something. Recording a result then would store the output of
+   the old content under the signature of the new one, and nothing would ever
+   invalidate it: by every later measure the entry is current. Comparing this
+   before and after is what turns that into one extra run instead of a wrong
+   answer that persists. */
+[[nodiscard]] uint64_t fs_signature(const char *path);
+
 /* Compose a path into `out`. Returns false if the result did not fit, so a
    truncated path is reported instead of being used: two long source paths that
    truncate to the same object path would otherwise overwrite each other. */

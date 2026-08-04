@@ -46,7 +46,7 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, char 
     process_env_var vars[PROJECT_MAX_ENV];
     size_t var_count = project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV);
 
-    const char **argv = malloc((size_t)(forwarded_count + 2) * sizeof(char *));
+    const char **argv = (const char **)malloc((size_t)(forwarded_count + 2) * sizeof(char *));
     if(argv == NULL)
         return exit_build_failure;
     argv[0] = binary;
@@ -56,7 +56,7 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, char 
 
     fprintf(stderr, "Running %s\n", binary);
     int status = process_run_env(argv, vars, var_count);
-    free(argv);
+    free((void *)argv);
 
     if(status < 0) {
         /* The program could not be started at all (should not happen after a

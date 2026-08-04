@@ -200,6 +200,15 @@ static const struct {
     {"naming_snake_case", "readability-identifier-naming"},
     {"readability_magic_numbers", "readability-magic-numbers"},
     {"identifier_length", "readability-identifier-length"},
+    /* Named individually because a family is too coarse to turn either of them
+       off. Both describe C badly: the first flags any two adjacent parameters
+       of one type, which is how most C functions are written and includes the
+       signatures qsort and a callback table impose; the second cannot see a
+       retry loop that sits one function above the wait. A project should be
+       able to refuse them without giving up the ninety-odd checks around
+       them. */
+    {"swappable_parameters", "bugprone-easily-swappable-parameters"},
+    {"spurious_wakeup", "bugprone-spuriously-wake-up-functions"},
     {"unused", "clang-diagnostic-unused*"},
     {"shadow", "clang-diagnostic-shadow"},
     {"uninitialized", "clang-diagnostic-uninitialized"},

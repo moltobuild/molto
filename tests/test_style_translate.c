@@ -334,3 +334,27 @@ MOLTEST(translate_writes_the_config_under_bin_and_not_in_the_tree) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+MOLTEST(translate_can_refuse_one_check_without_giving_up_its_family) {
+    lint_config config;
+    lint_config_defaults(&config);
+    config.preset = style_preset_molto; /* asks for bugprone-* */
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "swappable_parameters");
+    config.rules[0].severity = lint_severity_off;
+    snprintf(config.rules[1].name, LINT_RULE_NAME_MAX, "%s", "spurious_wakeup");
+    config.rules[1].severity = lint_severity_off;
+    config.rule_count = 2;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+                                          err, sizeof err));
+
+    /* A family is too coarse a unit to turn one noisy check off: without these
+       names the only way to silence them is dropping bugprone entirely, and
+       with it the checks that do find bugs. */
+    EXPECT_NOT_NULL(strstr(text, "-bugprone-easily-swappable-parameters"));
+    EXPECT_NOT_NULL(strstr(text, "-bugprone-spuriously-wake-up-functions"));
+    EXPECT_NOT_NULL(strstr(text, "bugprone-*"));
+}
