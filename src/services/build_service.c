@@ -1,5 +1,6 @@
 #include <molto/services/build_service.h>
 
+#include <molto/build/compile_flags.h>
 #include <molto/build/depfile.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
@@ -19,26 +20,23 @@
 #include <string.h>
 
 /* Compiler command-line arguments. */
-#define ARG_COMPILE       "-c"   /* compile only, do not link */
-#define ARG_OUTPUT        "-o"   /* next argument is the output path */
-#define ARG_DEBUG         "-g"   /* emit debug symbols */
-#define ARG_DEPFILE_GEN   "-MMD" /* also write a header-dependency file */
-#define ARG_DEPFILE_OUT   "-MF"  /* next argument is the dependency file path */
-#define OPT_FLAG_FORMAT   "-O%d" /* optimisation level, e.g. -O2 */
-#define STD_FLAG_FORMAT   "-std=%s" /* language standard, e.g. -std=c23 */
+#define ARG_COMPILE "-c"           /* compile only, do not link */
+#define ARG_OUTPUT "-o"            /* next argument is the output path */
+#define ARG_DEBUG "-g"             /* emit debug symbols */
+#define ARG_DEPFILE_GEN "-MMD"     /* also write a header-dependency file */
+#define ARG_DEPFILE_OUT "-MF"      /* next argument is the dependency file path */
+#define OPT_FLAG_FORMAT "-O%d"     /* optimisation level, e.g. -O2 */
 #define INCLUDE_FLAG_FORMAT "-I%s" /* add an include search directory */
-#define DEFINE_FLAG_PREFIX  "-D"  /* prepended to a preprocessor define */
-#define INCLUDE_FLAG_PREFIX "-I"  /* prepended to an include directory */
-#define LINK_FLAG_PREFIX    "-l"  /* prepended to a system library name */
+#define LINK_FLAG_PREFIX "-l"      /* prepended to a system library name */
 
 /* On-disk layout of a Molto project. */
 #define MANIFEST_FILENAME "Project.toml"
-#define DIR_BUILD         "build" /* output root, e.g. build/<profile>/ */
-#define DIR_OBJ           "obj"   /* compiled objects under the build root */
-#define DIR_SRC           "src"   /* where sources are discovered */
-#define DIR_TESTS         "tests" /* where test sources are discovered */
-#define OBJECT_SUFFIX     ".o"    /* appended to a source path for its object */
-#define DEPFILE_SUFFIX    ".d"    /* appended to an object path for its depfile */
+#define DIR_BUILD "build"          /* output root, e.g. build/<profile>/ */
+#define DIR_OBJ "obj"              /* compiled objects under the build root */
+#define DIR_SRC "src"              /* where sources are discovered */
+#define DIR_TESTS "tests"          /* where test sources are discovered */
+#define OBJECT_SUFFIX ".o"         /* appended to a source path for its object */
+#define DEPFILE_SUFFIX ".d"        /* appended to an object path for its depfile */
 #define TEST_SUITE_SUFFIX "_tests" /* appended to the package name in single mode */
 
 /* Size of the stack buffers used to compose filesystem paths. */
@@ -49,54 +47,43 @@
 
 /* Size of the small buffer holding the "-O<n>" flag. */
 #define OPT_FLAG_SIZE 16
-/* Size of the buffer holding the "-std=<name>" flag. */
-#define STD_FLAG_SIZE 24
-
-/* Report a path that did not fit its buffer. Truncating one would silently
-   alias another artifact, so every composition failure surfaces here. */
-static bool report_long_path(const char *what) {
-    fprintf(stderr, "molto: path too long to compose (%s)\n", what);
-    return false;
-}
 
 /* Compose the output executable path for a package. */
 [[nodiscard]] static bool compose_binary_path(const char *root, build_profile profile,
                                               const char *name, char *out, size_t out_size) {
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s",
-                          root, profile_name(profile), name)
-        || report_long_path(name);
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_name(profile),
+                          name) ||
+           fs_report_long_path(name);
 }
 
 /* Select the settings for `profile` from a parsed project context. */
 static manifest_profile profile_settings(const project_ctx *ctx, build_profile profile) {
-    switch (profile) {
-        case profile_release: return ctx->profile.release;
-        case profile_bench:   return ctx->profile.bench;
-        case profile_custom:  return ctx->profile.custom;
-        case profile_debug:
-        default:              return ctx->profile.debug;
+    switch(profile) {
+    case profile_release:
+        return ctx->profile.release;
+    case profile_bench:
+        return ctx->profile.bench;
+    case profile_custom:
+        return ctx->profile.custom;
+    case profile_debug:
+    default:
+        return ctx->profile.debug;
     }
 }
 
 /* Select the per-profile extra options for `profile`. */
-static const project_options *profile_options_for(const project_ctx *ctx,
-                                                  build_profile profile) {
-    switch (profile) {
-        case profile_release: return &ctx->profile_options.release;
-        case profile_bench:   return &ctx->profile_options.bench;
-        case profile_custom:  return &ctx->profile_options.custom;
-        case profile_debug:
-        default:              return &ctx->profile_options.debug;
+static const project_options *profile_options_for(const project_ctx *ctx, build_profile profile) {
+    switch(profile) {
+    case profile_release:
+        return &ctx->profile_options.release;
+    case profile_bench:
+        return &ctx->profile_options.bench;
+    case profile_custom:
+        return &ctx->profile_options.custom;
+    case profile_debug:
+    default:
+        return &ctx->profile_options.debug;
     }
-}
-
-/* The driver to invoke for a translation unit. NULL when C++ is needed and the
-   resolved toolchain has no C++ driver: reporting that beats invoking the C one
-   and letting the linker fail with something unrelated. */
-static const char *driver_for(const resolved_toolchain *chain, bool is_cpp) {
-    if (!is_cpp)
-        return chain->cc;
-    return chain->cxx[0] != '\0' ? chain->cxx : NULL;
 }
 
 /* Map a source path to its object path, mirroring the source tree under
@@ -105,72 +92,31 @@ static const char *driver_for(const resolved_toolchain *chain, bool is_cpp) {
                                           const char *source, char *out, size_t out_size) {
     size_t root_len = strlen(root);
     const char *relative = source;
-    if (strncmp(source, root, root_len) == 0 && source[root_len] == '/')
+    if(strncmp(source, root, root_len) == 0 && source[root_len] == '/')
         relative = source + root_len + 1;
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX,
-                          root, profile_dir, relative)
-        || report_long_path(source);
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX, root,
+                          profile_dir, relative) ||
+           fs_report_long_path(source);
 }
 
 /* The dependency file gcc writes next to an object: "<object>.d". Used both to
    tell the compiler where to write it and to read it back when deciding whether
    to rebuild, so the two paths always match. */
 [[nodiscard]] static bool depfile_path_for(const char *object, char *out, size_t out_size) {
-    return fs_format_path(out, out_size, "%s" DEPFILE_SUFFIX, object)
-        || report_long_path(object);
+    return fs_format_path(out, out_size, "%s" DEPFILE_SUFFIX, object) ||
+           fs_report_long_path(object);
 }
 
 /* Create the parent directory chain for `path`. */
 static bool make_parent_dirs(const char *path) {
     char directory[PATH_BUFFER_SIZE];
-    if (!fs_format_path(directory, sizeof directory, "%s", path))
-        return report_long_path(path);
+    if(!fs_format_path(directory, sizeof directory, "%s", path))
+        return fs_report_long_path(path);
     char *slash = strrchr(directory, '/');
-    if (slash == NULL)
+    if(slash == NULL)
         return true;
     *slash = '\0';
     return fs_make_dirs(directory);
-}
-
-/* Push "<prefix><value>" (e.g. "-DFOO=1") onto argv. */
-static bool push_prefixed(str_list *argv, const char *prefix, const char *value) {
-    char buffer[PROJECT_OPT_LEN + 4];
-    if (!fs_format_path(buffer, sizeof buffer, "%s%s", prefix, value))
-        return report_long_path(value);
-    return str_list_push(argv, buffer);
-}
-
-/* Push an include directory as "-I<dir>".
-
-   A relative one is anchored at the project root, not at the working
-   directory. The manifest describes the project, so `include = ["vendor"]`
-   means the project's vendor/ — and the compiler runs wherever the user
-   happened to invoke molto from, which is not necessarily the root. */
-static bool push_include(str_list *argv, const char *root, const char *directory) {
-    /* Composed here rather than through push_prefixed, whose buffer is sized
-       for an option value and not for a path. */
-    char flag[PATH_BUFFER_SIZE];
-    bool composed = directory[0] == '/'
-        ? fs_format_path(flag, sizeof flag, INCLUDE_FLAG_PREFIX "%s", directory)
-        : fs_format_path(flag, sizeof flag, INCLUDE_FLAG_PREFIX "%s/%s", root, directory);
-    if (!composed)
-        return report_long_path(directory);
-    return str_list_push(argv, flag);
-}
-
-/* Append a scope's defines (-D), include dirs (-I) and raw flags to argv.
-   Only include dirs are anchored: defines are not paths, and flags are a raw
-   escape hatch that RFC-0003 promises to pass verbatim. */
-static bool push_options(str_list *argv, const char *root,
-                         const project_options *options) {
-    bool ok = true;
-    for (size_t i = 0; ok && i < options->define_count; i++)
-        ok = push_prefixed(argv, DEFINE_FLAG_PREFIX, options->defines[i]);
-    for (size_t i = 0; ok && i < options->include_count; i++)
-        ok = push_include(argv, root, options->include[i]);
-    for (size_t i = 0; ok && i < options->flag_count; i++)
-        ok = str_list_push(argv, options->flags[i]);
-    return ok;
 }
 
 /* Join argv items into one space-separated heap string (caller frees). The
@@ -178,16 +124,16 @@ static bool push_options(str_list *argv, const char *root,
    wrong and the fingerprint would be wrong too: report it as a failure. */
 static char *join_args(const str_list *argv) {
     size_t total = 1;
-    for (size_t i = 0; i < str_list_count(argv); i++)
+    for(size_t i = 0; i < str_list_count(argv); i++)
         total += strlen(str_list_get(argv, i)) + 1;
     char *out = malloc(total);
-    if (out == NULL)
+    if(out == NULL)
         return NULL;
     size_t pos = 0;
-    for (size_t i = 0; i < str_list_count(argv); i++) {
-        int written = snprintf(out + pos, total - pos, "%s%s",
-                               i > 0 ? " " : "", str_list_get(argv, i));
-        if (written < 0 || (size_t)written >= total - pos) {
+    for(size_t i = 0; i < str_list_count(argv); i++) {
+        int written =
+            snprintf(out + pos, total - pos, "%s%s", i > 0 ? " " : "", str_list_get(argv, i));
+        if(written < 0 || (size_t)written >= total - pos) {
             free(out);
             return NULL;
         }
@@ -196,12 +142,11 @@ static char *join_args(const str_list *argv) {
     return out;
 }
 
-size_t project_env_to_vars(const project_env *env, process_env_var *vars,
-                           size_t capacity) {
-    if (env == NULL)
+size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t capacity) {
+    if(env == NULL)
         return 0;
     size_t count = env->count < capacity ? env->count : capacity;
-    for (size_t i = 0; i < count; i++) {
+    for(size_t i = 0; i < count; i++) {
         vars[i].name = env->names[i];
         vars[i].value = env->values[i];
     }
@@ -213,9 +158,9 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars,
 static int run_str_argv(const str_list *argv, const project_env *env) {
     size_t count = str_list_count(argv);
     const char **cargv = malloc((count + 1) * sizeof(char *));
-    if (cargv == NULL)
+    if(cargv == NULL)
         return -1;
-    for (size_t i = 0; i < count; i++)
+    for(size_t i = 0; i < count; i++)
         cargv[i] = str_list_get(argv, i);
     cargv[count] = NULL;
 
@@ -231,14 +176,12 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
    includes/flags, -MMD -MF depfile, and the src include flag. */
 static bool build_compile_argv(str_list *argv, const char *root, const char *source,
                                const char *object, const manifest_profile *settings,
-                               const project_target *target,
-                               const project_options *profile_opts,
-                               const project_options *extra_opts,
-                               const char *include_flag,
+                               const project_target *target, const project_options *profile_opts,
+                               const project_options *extra_opts, const char *include_flag,
                                const char *depfile, const resolved_toolchain *chain) {
     bool is_cpp = source_is_cpp(source);
-    const char *driver = driver_for(chain, is_cpp);
-    if (driver == NULL) {
+    const char *driver = compile_flags_driver(chain, is_cpp);
+    if(driver == NULL) {
         fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", source);
         return false;
     }
@@ -246,53 +189,41 @@ static bool build_compile_argv(str_list *argv, const char *root, const char *sou
     char opt_flag[OPT_FLAG_SIZE];
     snprintf(opt_flag, sizeof opt_flag, OPT_FLAG_FORMAT, settings->opt_level);
 
-    bool ok = str_list_push(argv, driver)
-           && str_list_push(argv, ARG_COMPILE)
-           && str_list_push(argv, source)
-           && str_list_push(argv, ARG_OUTPUT)
-           && str_list_push(argv, object)
-           && str_list_push(argv, opt_flag);
-    if (ok && settings->debug_info)
+    bool ok = str_list_push(argv, driver) && str_list_push(argv, ARG_COMPILE) &&
+              str_list_push(argv, source) && str_list_push(argv, ARG_OUTPUT) &&
+              str_list_push(argv, object) && str_list_push(argv, opt_flag);
+    if(ok && settings->debug_info)
         ok = str_list_push(argv, ARG_DEBUG);
-    const char *std_value = is_cpp ? target->cpp_std : target->std;
-    if (ok && std_value[0] != '\0') {
-        char std_flag[STD_FLAG_SIZE];
-        snprintf(std_flag, sizeof std_flag, STD_FLAG_FORMAT, std_value);
-        ok = str_list_push(argv, std_flag);
-    }
-    if (ok)
-        ok = push_options(argv, root, &target->options);
-    if (ok)
-        ok = push_options(argv, root, profile_opts);
+    if(ok)
+        ok = compile_flags_push_std(argv, target, is_cpp);
+    if(ok)
+        ok = compile_flags_push_options(argv, root, &target->options);
+    if(ok)
+        ok = compile_flags_push_options(argv, root, profile_opts);
     /* Extra scope, used by tests: applied last so it can add to the rest. */
-    if (ok && extra_opts != NULL)
-        ok = push_options(argv, root, extra_opts);
-    if (ok)
-        ok = str_list_push(argv, ARG_DEPFILE_GEN)
-          && str_list_push(argv, ARG_DEPFILE_OUT)
-          && str_list_push(argv, depfile)
-          && str_list_push(argv, include_flag);
+    if(ok && extra_opts != NULL)
+        ok = compile_flags_push_options(argv, root, extra_opts);
+    if(ok)
+        ok = str_list_push(argv, ARG_DEPFILE_GEN) && str_list_push(argv, ARG_DEPFILE_OUT) &&
+             str_list_push(argv, depfile) && str_list_push(argv, include_flag);
     return ok;
 }
 
 /* Build the current compile command for a source as a heap string, for the
    fingerprint comparison (caller frees). NULL on allocation failure. */
-static char *compile_command_string(const char *root, const char *source,
-                                     const char *object,
-                                     const manifest_profile *settings,
-                                     const project_target *target,
-                                     const project_options *profile_opts,
-                                     const project_options *extra_opts,
-                                     const char *include_flag,
-                                     const resolved_toolchain *chain) {
+static char *compile_command_string(const char *root, const char *source, const char *object,
+                                    const manifest_profile *settings, const project_target *target,
+                                    const project_options *profile_opts,
+                                    const project_options *extra_opts, const char *include_flag,
+                                    const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if (!depfile_path_for(object, depfile, sizeof depfile))
+    if(!depfile_path_for(object, depfile, sizeof depfile))
         return NULL;
     str_list argv;
     str_list_init(&argv);
     char *command = NULL;
-    if (build_compile_argv(&argv, root, source, object, settings, target,
-                           profile_opts, extra_opts, include_flag, depfile, chain))
+    if(build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
+                          include_flag, depfile, chain))
         command = join_args(&argv);
     str_list_free(&argv);
     return command;
@@ -303,16 +234,16 @@ static char *compile_command_string(const char *root, const char *source,
    the WSDB afterwards, on the main thread. */
 static bool compile_one(const char *root, const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
-                        const project_options *profile_opts,
-                        const project_options *extra_opts, const char *include_flag,
-                        const project_env *env, const resolved_toolchain *chain) {
+                        const project_options *profile_opts, const project_options *extra_opts,
+                        const char *include_flag, const project_env *env,
+                        const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if (!depfile_path_for(object, depfile, sizeof depfile))
+    if(!depfile_path_for(object, depfile, sizeof depfile))
         return false;
     str_list argv;
     str_list_init(&argv);
-    if (!build_compile_argv(&argv, root, source, object, settings, target,
-                            profile_opts, extra_opts, include_flag, depfile, chain)) {
+    if(!build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
+                           include_flag, depfile, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -325,15 +256,15 @@ static bool compile_one(const char *root, const char *source, const char *object
    gcc's depfile (falling back to just the source), store {command, prereqs},
    then delete the now-absorbed depfile. Runs on the main thread. Returns false
    if the object could not be recorded, which only costs a rebuild next time. */
-[[nodiscard]] static bool wsdb_absorb_object(wsdb *db, const char *source,
-                                             const char *object, const char *command) {
+[[nodiscard]] static bool wsdb_absorb_object(wsdb *db, const char *source, const char *object,
+                                             const char *command) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if (!depfile_path_for(object, depfile, sizeof depfile))
+    if(!depfile_path_for(object, depfile, sizeof depfile))
         return false;
     str_list prereqs;
     str_list_init(&prereqs);
-    if (!depfile_read(depfile, &prereqs) || str_list_count(&prereqs) == 0) {
-        if (!str_list_push(&prereqs, source)) {
+    if(!depfile_read(depfile, &prereqs) || str_list_count(&prereqs) == 0) {
+        if(!str_list_push(&prereqs, source)) {
             str_list_free(&prereqs);
             return false;
         }
@@ -348,7 +279,7 @@ static bool compile_one(const char *root, const char *source, const char *object
    absorb it, and a stale one would outlive the source it describes. */
 static void discard_depfile(const char *object) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if (depfile_path_for(object, depfile, sizeof depfile))
+    if(depfile_path_for(object, depfile, sizeof depfile))
         remove(depfile);
 }
 
@@ -356,17 +287,16 @@ static void discard_depfile(const char *object) {
    detailed parse error to stderr on failure. */
 static int load_project(const char *root, project_ctx *out) {
     char manifest_path[PATH_BUFFER_SIZE];
-    if (!fs_format_path(manifest_path, sizeof manifest_path,
-                        "%s/" MANIFEST_FILENAME, root)) {
-        (void)report_long_path(root);
+    if(!fs_format_path(manifest_path, sizeof manifest_path, "%s/" MANIFEST_FILENAME, root)) {
+        (void)fs_report_long_path(root);
         return exit_invalid_manifest;
     }
-    if (!fs_path_exists(manifest_path)) {
+    if(!fs_path_exists(manifest_path)) {
         fprintf(stderr, "molto: no " MANIFEST_FILENAME " in '%s'\n", root);
         return exit_invalid_manifest;
     }
     char err[MANIFEST_ERROR_SIZE] = "";
-    if (!project_load(manifest_path, out, err, sizeof err)) {
+    if(!project_load(manifest_path, out, err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
         return exit_invalid_manifest;
     }
@@ -377,7 +307,7 @@ static int load_project(const char *root, project_ctx *out) {
    persisted. The build itself still stands; the next one just will not be
    incremental, and silence there would look like a mysterious full rebuild. */
 static void warn_if_not_saved(wsdb *db) {
-    if (!wsdb_close(db))
+    if(!wsdb_close(db))
         fprintf(stderr, "molto: warning: could not save the workspace database; "
                         "the next build will not be incremental\n");
 }
@@ -404,7 +334,7 @@ static void compile_task_run(void *arg) {
     task->succeeded = compile_one(task->root, task->source, task->object, task->settings,
                                   task->target, task->profile_opts, task->extra_opts,
                                   task->include_flag, task->env, task->chain);
-    if (!task->succeeded) {
+    if(!task->succeeded) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
     }
@@ -417,45 +347,44 @@ static void compile_task_run(void *arg) {
 static int compile_sources(const char *root, build_profile profile,
                            const manifest_profile *settings, const char *include_flag,
                            const project_target *target, const project_options *profile_opts,
-                           const project_options *extra_opts,
-                           const project_env *env, const resolved_toolchain *chain,
-                           wsdb *db, const str_list *sources,
+                           const project_options *extra_opts, const project_env *env,
+                           const resolved_toolchain *chain, wsdb *db, const str_list *sources,
                            str_list *objects, bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
     bool *needs = calloc(count, sizeof(bool));
-    if (needs == NULL)
+    if(needs == NULL)
         return exit_build_failure;
 
     /* Phase 1: resolve object paths and ask the WSDB what is stale. Finishing
        all str_list_push here keeps the object pointers stable for phase 2. */
-    for (size_t i = 0; i < count; i++) {
+    for(size_t i = 0; i < count; i++) {
         const char *source = str_list_get(sources, i);
-        if (source_is_cpp(source))
+        if(source_is_cpp(source))
             *any_cpp = true;
         char object[PATH_BUFFER_SIZE];
-        if (!object_path_for(root, profile_name(profile), source, object, sizeof object)) {
+        if(!object_path_for(root, profile_name(profile), source, object, sizeof object)) {
             free(needs);
             return exit_build_failure;
         }
-        if (!make_parent_dirs(object)) {
+        if(!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
             free(needs);
             return exit_build_failure;
         }
-        if (!str_list_push(objects, object)) {
+        if(!str_list_push(objects, object)) {
             free(needs);
             return exit_build_failure;
         }
-        char *command = compile_command_string(root, source, object, settings, target,
-                                               profile_opts, extra_opts, include_flag, chain);
+        char *command = compile_command_string(root, source, object, settings, target, profile_opts,
+                                               extra_opts, include_flag, chain);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
         free(command);
     }
 
     size_t to_build = 0;
-    for (size_t i = 0; i < count; i++)
+    for(size_t i = 0; i < count; i++)
         to_build += needs[i] ? 1 : 0;
-    if (to_build == 0) {
+    if(to_build == 0) {
         *any_compiled = false;
         free(needs);
         return exit_ok;
@@ -464,7 +393,7 @@ static int compile_sources(const char *root, build_profile profile,
     /* Phase 2: compile the stale units concurrently (no WSDB access here). */
     compile_task *tasks = calloc(to_build, sizeof(compile_task));
     task_pool *pool = task_pool_create(0);
-    if (tasks == NULL || pool == NULL) {
+    if(tasks == NULL || pool == NULL) {
         free(tasks);
         task_pool_destroy(pool);
         free(needs);
@@ -474,8 +403,8 @@ static int compile_sources(const char *root, build_profile profile,
     atomic_bool failed = false;
     int result = exit_ok;
     size_t queued = 0;
-    for (size_t i = 0; i < count && result == exit_ok; i++) {
-        if (!needs[i])
+    for(size_t i = 0; i < count && result == exit_ok; i++) {
+        if(!needs[i])
             continue;
         tasks[queued] = (compile_task){
             .root = root,
@@ -490,31 +419,29 @@ static int compile_sources(const char *root, build_profile profile,
             .chain = chain,
             .failed = &failed,
         };
-        if (!task_pool_submit(pool, compile_task_run, &tasks[queued]))
+        if(!task_pool_submit(pool, compile_task_run, &tasks[queued]))
             result = exit_build_failure;
         queued++;
     }
     task_pool_wait(pool);
     task_pool_destroy(pool);
 
-    if (result == exit_ok && atomic_load(&failed))
+    if(result == exit_ok && atomic_load(&failed))
         result = exit_build_failure;
 
     /* Phase 3: record what was actually built (single-threaded). This runs even
        when a unit failed, so the units that did compile are not thrown away and
        recompiled on the next run. */
-    for (size_t i = 0; i < queued; i++) {
+    for(size_t i = 0; i < queued; i++) {
         const compile_task *task = &tasks[i];
-        if (!task->succeeded) {
+        if(!task->succeeded) {
             discard_depfile(task->object);
             continue;
         }
-        char *command = compile_command_string(root, task->source, task->object, settings,
-                                               target, profile_opts, extra_opts,
-                                               include_flag, chain);
-        if (command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
-            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n",
-                    task->source);
+        char *command = compile_command_string(root, task->source, task->object, settings, target,
+                                               profile_opts, extra_opts, include_flag, chain);
+        if(command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
+            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", task->source);
         free(command);
     }
 
@@ -527,8 +454,8 @@ static int compile_sources(const char *root, build_profile profile,
 /* Return true if the executable must be re-linked: it is missing or older
    than at least one object file. */
 static bool link_needed(const str_list *objects, const char *binary) {
-    for (size_t i = 0; i < str_list_count(objects); i++) {
-        if (fs_source_newer(str_list_get(objects, i), binary))
+    for(size_t i = 0; i < str_list_count(objects); i++) {
+        if(fs_source_newer(str_list_get(objects, i), binary))
             return true;
     }
     return false;
@@ -539,24 +466,23 @@ static bool link_needed(const str_list *objects, const char *binary) {
    system libraries (-l<lib>). */
 static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *objects,
                             const char *binary, const project_target *target,
-                            const project_options *profile_opts,
-                            const resolved_toolchain *chain) {
-    const char *driver = driver_for(chain, any_cpp);
-    if (driver == NULL) {
+                            const project_options *profile_opts, const resolved_toolchain *chain) {
+    const char *driver = compile_flags_driver(chain, any_cpp);
+    if(driver == NULL) {
         fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", binary);
         return false;
     }
     bool ok = str_list_push(argv, driver);
-    for (size_t i = 0; ok && i < str_list_count(objects); i++)
+    for(size_t i = 0; ok && i < str_list_count(objects); i++)
         ok = str_list_push(argv, str_list_get(objects, i));
-    for (size_t i = 0; ok && i < target->options.flag_count; i++)
+    for(size_t i = 0; ok && i < target->options.flag_count; i++)
         ok = str_list_push(argv, target->options.flags[i]);
-    for (size_t i = 0; ok && i < profile_opts->flag_count; i++)
+    for(size_t i = 0; ok && i < profile_opts->flag_count; i++)
         ok = str_list_push(argv, profile_opts->flags[i]);
-    if (ok)
+    if(ok)
         ok = str_list_push(argv, ARG_OUTPUT) && str_list_push(argv, binary);
-    for (size_t i = 0; ok && i < target->link_count; i++)
-        ok = push_prefixed(argv, LINK_FLAG_PREFIX, target->link[i]);
+    for(size_t i = 0; ok && i < target->link_count; i++)
+        ok = compile_flags_push_prefixed(argv, LINK_FLAG_PREFIX, target->link[i]);
     return ok;
 }
 
@@ -565,21 +491,21 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
    link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
                          const project_target *target, const project_options *profile_opts,
-                         const project_env *env, const resolved_toolchain *chain,
-                         bool force, wsdb *db) {
+                         const project_env *env, const resolved_toolchain *chain, bool force,
+                         wsdb *db) {
     str_list argv;
     str_list_init(&argv);
-    if (!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts, chain)) {
+    if(!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts, chain)) {
         str_list_free(&argv);
         return false;
     }
     char *command = join_args(&argv);
 
     bool ok = true;
-    if (force || command == NULL || !wsdb_binary_fresh(db, binary, command)
-        || link_needed(objects, binary)) {
+    if(force || command == NULL || !wsdb_binary_fresh(db, binary, command) ||
+       link_needed(objects, binary)) {
         ok = run_str_argv(&argv, env) == 0;
-        if (ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
+        if(ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", binary);
     }
     free(command);
@@ -592,32 +518,32 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
    anything was recompiled. Shared by build_project and build_tests. */
 static int compile_project(const char *root, build_profile profile, wsdb *db,
                            bool refresh_toolchain, project_ctx *ctx_out,
-                           resolved_toolchain *chain_out, str_list *objects_out,
-                           bool *any_cpp_out, bool *any_compiled_out) {
+                           resolved_toolchain *chain_out, str_list *objects_out, bool *any_cpp_out,
+                           bool *any_compiled_out) {
     int result = load_project(root, ctx_out);
-    if (result != exit_ok)
+    if(result != exit_ok)
         return result;
 
     manifest_profile settings = profile_settings(ctx_out, profile);
 
     char src_dir[PATH_BUFFER_SIZE];
-    if (!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
-        (void)report_long_path(root);
+    if(!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
+        (void)fs_report_long_path(root);
         return exit_build_failure;
     }
-    if (!fs_is_dir(src_dir)) {
+    if(!fs_is_dir(src_dir)) {
         fprintf(stderr, "molto: no " DIR_SRC " directory in '%s'\n", root);
         return exit_build_failure;
     }
 
     str_list sources;
     str_list_init(&sources);
-    if (!source_discovery_collect(src_dir, &sources)) {
+    if(!source_discovery_collect(src_dir, &sources)) {
         fprintf(stderr, "molto: could not read the sources under '%s'\n", src_dir);
         str_list_free(&sources);
         return exit_build_failure;
     }
-    if (str_list_count(&sources) == 0) {
+    if(str_list_count(&sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
         str_list_free(&sources);
         return exit_build_failure;
@@ -627,19 +553,18 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
        known: a project with C++ in it needs a toolchain that has a C++ driver,
        and that is part of the question. */
     bool needs_cpp = false;
-    for (size_t i = 0; i < str_list_count(&sources); i++)
+    for(size_t i = 0; i < str_list_count(&sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&sources, i));
-    result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain,
-                               chain_out);
-    if (result != exit_ok) {
+    result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
+    if(result != exit_ok) {
         str_list_free(&sources);
         return result;
     }
 
     /* Extra room over src_dir for the "-I" prefix and the terminating NUL. */
     char include_flag[PATH_BUFFER_SIZE + 4];
-    if (!fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)) {
-        (void)report_long_path(src_dir);
+    if(!fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)) {
+        (void)fs_report_long_path(src_dir);
         str_list_free(&sources);
         return exit_build_failure;
     }
@@ -647,17 +572,16 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     *any_cpp_out = false;
     *any_compiled_out = false;
     result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
-                             profile_options_for(ctx_out, profile), NULL, &ctx_out->env,
-                             chain_out, db, &sources, objects_out,
-                             any_cpp_out, any_compiled_out);
+                             profile_options_for(ctx_out, profile), NULL, &ctx_out->env, chain_out,
+                             db, &sources, objects_out, any_cpp_out, any_compiled_out);
     str_list_free(&sources);
     return result;
 }
 
-int build_project(const char *root, build_profile profile, bool refresh_toolchain,
-                  char *out_binary, size_t out_binary_size) {
+int build_project(const char *root, build_profile profile, bool refresh_toolchain, char *out_binary,
+                  size_t out_binary_size) {
     wsdb *db = wsdb_open(root);
-    if (db == NULL) {
+    if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
         return exit_build_failure;
     }
@@ -668,32 +592,29 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain,
-                                 &objects, &any_cpp, &any_compiled);
+    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
+                                 &any_cpp, &any_compiled);
 
-    if (result == exit_ok) {
+    if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
-        if (!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
+        if(!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
             str_list_free(&objects);
             (void)wsdb_close(db);
             return exit_build_failure;
         }
-        if (!link_project(any_cpp, &objects, binary, &ctx.target,
-                          profile_options_for(&ctx, profile), &ctx.env, &chain,
-                          any_compiled, db)) {
+        if(!link_project(any_cpp, &objects, binary, &ctx.target, profile_options_for(&ctx, profile),
+                         &ctx.env, &chain, any_compiled, db)) {
             fprintf(stderr, "molto: failed to link '%s'\n", binary);
             result = exit_build_failure;
         }
-        if (result == exit_ok) {
+        if(result == exit_ok) {
             /* Prune objects orphaned by removed sources (scoped to src/). */
             char prefix[PATH_BUFFER_SIZE];
-            if (fs_format_path(prefix, sizeof prefix,
-                               "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
-                               root, profile_name(profile)))
+            if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
+                              root, profile_name(profile)))
                 wsdb_prune(db, &objects, prefix);
-            if (out_binary != NULL && !fs_format_path(out_binary, out_binary_size,
-                                                     "%s", binary)) {
-                (void)report_long_path(binary);
+            if(out_binary != NULL && !fs_format_path(out_binary, out_binary_size, "%s", binary)) {
+                (void)fs_report_long_path(binary);
                 result = exit_build_failure;
             }
         }
@@ -708,7 +629,7 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
    unchanged if it is not under root. */
 static const char *relative_to_root(const char *root, const char *path) {
     size_t root_len = strlen(root);
-    if (strncmp(path, root, root_len) == 0 && path[root_len] == '/')
+    if(strncmp(path, root, root_len) == 0 && path[root_len] == '/')
         return path + root_len + 1;
     return path;
 }
@@ -716,47 +637,45 @@ static const char *relative_to_root(const char *root, const char *path) {
 /* Output path of a test executable: build/<profile>/tests/<name>, mirroring the
    test source's path under tests/ with its extension stripped. */
 [[nodiscard]] static bool test_binary_path(const char *root, const char *profile_dir,
-                                           const char *test_source, char *out,
-                                           size_t out_size) {
+                                           const char *test_source, char *out, size_t out_size) {
     char stem[PATH_BUFFER_SIZE];
-    if (!fs_format_path(stem, sizeof stem, "%s", relative_to_root(root, test_source)))
-        return report_long_path(test_source);
+    if(!fs_format_path(stem, sizeof stem, "%s", relative_to_root(root, test_source)))
+        return fs_report_long_path(test_source);
     char *dot = strrchr(stem, '.');
     char *slash = strrchr(stem, '/');
-    if (dot != NULL && (slash == NULL || dot > slash))
+    if(dot != NULL && (slash == NULL || dot > slash))
         *dot = '\0';
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem)
-        || report_long_path(test_source);
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem) ||
+           fs_report_long_path(test_source);
 }
 
 /* Collect what the tests are built from: everything under tests/, plus the
    extra sources the manifest lists. A listed directory is walked; a listed
    file is taken as it is. This is how a framework living outside src/ — with
    the main() the tests do not have — gets compiled in. */
-static bool collect_test_sources(const char *root, const project_ctx *ctx,
-                                 const char *tests_dir, str_list *out) {
+static bool collect_test_sources(const char *root, const project_ctx *ctx, const char *tests_dir,
+                                 str_list *out) {
     /* A missing or empty tests/ is not an error: there is simply nothing. */
-    if (fs_is_dir(tests_dir) && !source_discovery_collect(tests_dir, out)) {
+    if(fs_is_dir(tests_dir) && !source_discovery_collect(tests_dir, out)) {
         fprintf(stderr, "molto: could not read the tests under '%s'\n", tests_dir);
         return false;
     }
 
-    for (size_t i = 0; i < ctx->test.source_count; i++) {
+    for(size_t i = 0; i < ctx->test.source_count; i++) {
         const char *entry = ctx->test.sources[i];
         char path[PATH_BUFFER_SIZE];
-        bool composed = entry[0] == '/'
-            ? fs_format_path(path, sizeof path, "%s", entry)
-            : fs_format_path(path, sizeof path, "%s/%s", root, entry);
-        if (!composed)
-            return report_long_path(entry);
+        bool composed = entry[0] == '/' ? fs_format_path(path, sizeof path, "%s", entry)
+                                        : fs_format_path(path, sizeof path, "%s/%s", root, entry);
+        if(!composed)
+            return fs_report_long_path(entry);
 
-        if (fs_is_dir(path)) {
-            if (!source_discovery_collect(path, out)) {
+        if(fs_is_dir(path)) {
+            if(!source_discovery_collect(path, out)) {
                 fprintf(stderr, "molto: could not read [test].sources '%s'\n", entry);
                 return false;
             }
-        } else if (fs_path_exists(path)) {
-            if (!str_list_push(out, path))
+        } else if(fs_path_exists(path)) {
+            if(!str_list_push(out, path))
                 return false;
         } else {
             fprintf(stderr, "molto: [test].sources '%s' does not exist\n", entry);
@@ -775,17 +694,17 @@ typedef struct {
     const resolved_toolchain *chain;
     const str_list *lib_objects; /* src objects, minus the app's main */
     bool any_cpp;
-    bool force;                  /* something was recompiled */
+    bool force; /* something was recompiled */
     wsdb *db;
 } test_link_context;
 
 /* Link `objects` into `binary`, and record it as one of the built tests. */
 static bool link_one_test(const test_link_context *context, const str_list *objects,
                           const char *binary, bool cpp, str_list *binaries_out) {
-    if (!make_parent_dirs(binary))
+    if(!make_parent_dirs(binary))
         return false;
-    if (!link_project(cpp, objects, binary, &context->ctx->target, context->profile_opts,
-                      &context->ctx->env, context->chain, context->force, context->db)) {
+    if(!link_project(cpp, objects, binary, &context->ctx->target, context->profile_opts,
+                     &context->ctx->env, context->chain, context->force, context->db)) {
         fprintf(stderr, "molto: failed to link '%s'\n", binary);
         return false;
     }
@@ -794,28 +713,25 @@ static bool link_one_test(const test_link_context *context, const str_list *obje
 
 /* One executable per test file: each links its own object with the project's
    library objects, and brings its own main(). */
-static int link_tests_per_file(const test_link_context *context,
-                               const str_list *test_sources,
-                               const str_list *test_objects,
-                               str_list *binaries_out) {
-    for (size_t i = 0; i < str_list_count(test_sources); i++) {
+static int link_tests_per_file(const test_link_context *context, const str_list *test_sources,
+                               const str_list *test_objects, str_list *binaries_out) {
+    for(size_t i = 0; i < str_list_count(test_sources); i++) {
         const char *source = str_list_get(test_sources, i);
         const char *object = str_list_get(test_objects, i);
 
         char binary[PATH_BUFFER_SIZE];
-        if (!test_binary_path(context->root, context->profile_dir, source,
-                              binary, sizeof binary))
+        if(!test_binary_path(context->root, context->profile_dir, source, binary, sizeof binary))
             return exit_build_failure;
 
         str_list link_objects;
         str_list_init(&link_objects);
         bool ok = str_list_push(&link_objects, object);
-        for (size_t j = 0; ok && j < str_list_count(context->lib_objects); j++)
+        for(size_t j = 0; ok && j < str_list_count(context->lib_objects); j++)
             ok = str_list_push(&link_objects, str_list_get(context->lib_objects, j));
         ok = ok && link_one_test(context, &link_objects, binary,
                                  context->any_cpp || source_is_cpp(source), binaries_out);
         str_list_free(&link_objects);
-        if (!ok)
+        if(!ok)
             return exit_build_failure;
     }
     return exit_ok;
@@ -824,29 +740,27 @@ static int link_tests_per_file(const test_link_context *context,
 /* One executable for the whole suite: every test object, the extra sources,
    and the project's library objects. The main() comes from those extra
    sources, which is what a framework that registers its cases provides. */
-static int link_tests_single(const test_link_context *context,
-                             const str_list *test_sources,
-                             const str_list *test_objects,
-                             str_list *binaries_out) {
-    if (str_list_count(test_objects) == 0)
+static int link_tests_single(const test_link_context *context, const str_list *test_sources,
+                             const str_list *test_objects, str_list *binaries_out) {
+    if(str_list_count(test_objects) == 0)
         return exit_ok; /* nothing to link */
 
     char binary[PATH_BUFFER_SIZE];
-    if (!fs_format_path(binary, sizeof binary, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/%s%s",
-                        context->root, context->profile_dir,
-                        context->ctx->project_name, TEST_SUITE_SUFFIX))
-        return report_long_path(context->ctx->project_name) ? exit_build_failure
-                                                            : exit_build_failure;
+    if(!fs_format_path(binary, sizeof binary, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/%s%s",
+                       context->root, context->profile_dir, context->ctx->project_name,
+                       TEST_SUITE_SUFFIX))
+        return fs_report_long_path(context->ctx->project_name) ? exit_build_failure
+                                                               : exit_build_failure;
 
     str_list link_objects;
     str_list_init(&link_objects);
     bool ok = true;
     bool cpp = context->any_cpp;
-    for (size_t i = 0; ok && i < str_list_count(test_objects); i++) {
+    for(size_t i = 0; ok && i < str_list_count(test_objects); i++) {
         ok = str_list_push(&link_objects, str_list_get(test_objects, i));
         cpp = cpp || source_is_cpp(str_list_get(test_sources, i));
     }
-    for (size_t i = 0; ok && i < str_list_count(context->lib_objects); i++)
+    for(size_t i = 0; ok && i < str_list_count(context->lib_objects); i++)
         ok = str_list_push(&link_objects, str_list_get(context->lib_objects, i));
 
     ok = ok && link_one_test(context, &link_objects, binary, cpp, binaries_out);
@@ -857,7 +771,7 @@ static int link_tests_single(const test_link_context *context,
 int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
                 str_list *test_binaries_out) {
     wsdb *db = wsdb_open(root);
-    if (db == NULL) {
+    if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
         return exit_build_failure;
     }
@@ -868,9 +782,9 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     str_list_init(&objects);
     bool any_cpp = false;
     bool any_compiled = false;
-    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain,
-                                 &objects, &any_cpp, &any_compiled);
-    if (result != exit_ok) {
+    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
+                                 &any_cpp, &any_compiled);
+    if(result != exit_ok) {
         str_list_free(&objects);
         warn_if_not_saved(db);
         return result;
@@ -887,12 +801,12 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     char src_dir[PATH_BUFFER_SIZE];
     char include_flag[PATH_BUFFER_SIZE + 4];
     char tests_dir[PATH_BUFFER_SIZE];
-    if (!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root)
-        || !object_path_for(root, profile_dir, main_source, main_object, sizeof main_object)
-        || !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)
-        || !fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)
-        || !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
-        (void)report_long_path(root);
+    if(!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root) ||
+       !object_path_for(root, profile_dir, main_source, main_object, sizeof main_object) ||
+       !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) ||
+       !fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir) ||
+       !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
+        (void)fs_report_long_path(root);
         str_list_free(&objects);
         warn_if_not_saved(db);
         return exit_build_failure;
@@ -902,17 +816,17 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     /* Library objects = every src object except the app's main object. */
     str_list lib_objects;
     str_list_init(&lib_objects);
-    for (size_t i = 0; i < str_list_count(&objects) && result == exit_ok; i++) {
+    for(size_t i = 0; i < str_list_count(&objects) && result == exit_ok; i++) {
         const char *object = str_list_get(&objects, i);
-        if (has_main && strcmp(object, main_object) == 0)
+        if(has_main && strcmp(object, main_object) == 0)
             continue;
-        if (!str_list_push(&lib_objects, object))
+        if(!str_list_push(&lib_objects, object))
             result = exit_build_failure;
     }
 
     str_list test_sources;
     str_list_init(&test_sources);
-    if (result == exit_ok && !collect_test_sources(root, &ctx, tests_dir, &test_sources))
+    if(result == exit_ok && !collect_test_sources(root, &ctx, tests_dir, &test_sources))
         result = exit_build_failure;
 
     /* Compiled through the same path as the project's own sources, so tests get
@@ -922,12 +836,12 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     str_list_init(&test_objects);
     bool tests_cpp = false;
     bool tests_compiled = false;
-    if (result == exit_ok && str_list_count(&test_sources) > 0)
-        result = compile_sources(root, profile, &settings, include_flag, &ctx.target,
-                                 profile_opts, &ctx.test.options, &ctx.env, &chain, db,
-                                 &test_sources, &test_objects, &tests_cpp, &tests_compiled);
+    if(result == exit_ok && str_list_count(&test_sources) > 0)
+        result = compile_sources(root, profile, &settings, include_flag, &ctx.target, profile_opts,
+                                 &ctx.test.options, &ctx.env, &chain, db, &test_sources,
+                                 &test_objects, &tests_cpp, &tests_compiled);
 
-    if (result == exit_ok) {
+    if(result == exit_ok) {
         const test_link_context context = {
             .root = root,
             .profile_dir = profile_dir,
@@ -939,21 +853,21 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             .force = any_compiled || tests_compiled,
             .db = db,
         };
-        result = ctx.test.mode == test_mode_single
-            ? link_tests_single(&context, &test_sources, &test_objects, test_binaries_out)
-            : link_tests_per_file(&context, &test_sources, &test_objects, test_binaries_out);
+        result =
+            ctx.test.mode == test_mode_single
+                ? link_tests_single(&context, &test_sources, &test_objects, test_binaries_out)
+                : link_tests_per_file(&context, &test_sources, &test_objects, test_binaries_out);
     }
 
     /* A deleted test leaves behind an object and an executable that `molto test`
        would happily keep running. Prune both (RFC-0004). */
-    if (result == exit_ok) {
+    if(result == exit_ok) {
         char prefix[PATH_BUFFER_SIZE];
-        if (fs_format_path(prefix, sizeof prefix,
-                           "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_TESTS "/",
-                           root, profile_dir))
+        if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_TESTS "/",
+                          root, profile_dir))
             wsdb_prune(db, &test_objects, prefix);
-        if (fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/",
-                           root, profile_dir))
+        if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/", root,
+                          profile_dir))
             wsdb_prune(db, test_binaries_out, prefix);
     }
 

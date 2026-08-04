@@ -32,6 +32,17 @@
 [[nodiscard]] bool fs_format_path(char *out, size_t size, const char *format, ...)
     __attribute__((format(printf, 3, 4)));
 
+/* Report on stderr that `what` did not fit the buffer it was composed into, and
+   return false, so a caller can write `... || fs_report_long_path(path)`. Lives
+   beside fs_format_path because it is the one failure that function has. */
+bool fs_report_long_path(const char *what);
+
+/* The path as the user thinks of it: relative to `root` when it is under it,
+   and unchanged otherwise. Points into `path`; nothing is copied. Molto works
+   in absolute paths because the tools run wherever the user invoked it from,
+   and shows relative ones because that is what a project looks like. */
+[[nodiscard]] const char *fs_relative_to(const char *path, const char *root);
+
 /* Create `path` and any missing parent directories. Succeeds if it exists. */
 [[nodiscard]] bool fs_make_dirs(const char *path);
 
