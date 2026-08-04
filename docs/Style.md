@@ -169,16 +169,20 @@ An unmet pin is an error naming both versions, because two releases of one
 formatter produce different output for the same file, and that is precisely the
 noise a formatter exists to remove.
 
-## Everything fails closed
+## Style configuration fails closed
 
 An unknown key, an unknown value, a rule with no translation, a list that
 overflows, a pin that is not met — each is an error with a message naming what
-is wrong. Nothing is ignored.
+is wrong. Nothing in `format.json` or `linter.json` is ignored.
 
 That is deliberate. A key that silently does nothing is worse than one that is
 refused: you would keep the line in your configuration for years believing it
-applied. It is the same choice the TOML parser already makes for a malformed
-`Project.toml`.
+applied.
+
+`Project.toml` does not behave this way — it drops unknown keys without warning,
+for the reason given in [`docs/Project.md`](Project.md#not-implemented-yet).
+These two files describe a style that is either expressible or not; the manifest
+describes a schema that is still growing.
 
 ## Troubleshooting
 

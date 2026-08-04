@@ -1,6 +1,7 @@
 # Bootstrap build for molto.
-# molto cannot build itself yet, so this Makefile drives gcc directly.
-# Targets the C23 subset supported by gcc-12 (-std=c2x). Bump STD to c23
+# molto builds itself (see README.md), but something has to compile the first
+# one, so this Makefile drives gcc directly and hardcodes what molto asks
+# pickup: a compiler that implements the C23 subset (-std=c2x). Bump STD to c23
 # and CC to gcc-14/clang-19 once a modern toolchain is available.
 
 # Force gcc-12 over Make's built-in default (cc), but honor an explicit

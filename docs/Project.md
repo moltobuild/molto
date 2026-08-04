@@ -272,6 +272,15 @@ Unknown tables and unknown keys are **ignored without warning**. A typo in a key
 name is silently dropped, so if a setting seems to have no effect, check its
 spelling against the reference above.
 
+That is the opposite of `format.json` and `linter.json`, which refuse anything
+they do not understand ([`docs/Style.md`](Style.md#style-configuration-fails-closed)).
+The asymmetry is deliberate rather than an oversight: the tables above are
+specified by RFC-0003 and simply not implemented yet, so a manifest that
+declares `[deps]` is valid by design and rejecting it would refuse a correct
+file. A style key, by contrast, is either expressible for the backend or it is
+not. The cost is real — a typo costs you an afternoon — and the trade closes
+once the schema stops growing.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

@@ -5,8 +5,9 @@
 # them is a property of the machine, and pickup answers that. The Makefile has
 # to hardcode `gcc-12` precisely because it cannot ask.
 #
-# The build still runs on that Makefile: molto cannot build itself yet, for
-# reasons that no longer include the compiler.
+# This manifest builds molto: `molto build` and `molto test` both work on it.
+# The Makefile remains as the bootstrap — something has to compile the first
+# molto — not because molto is unable.
 
 [package]
 name = "molto"

@@ -449,30 +449,35 @@ New behavior must be introduced through new RFCs.
 
 ---
 
-# 23. Initial Roadmap
+# 23. Roadmap
 
-Version 0.1
+Version 0.1 — shipped
 
 - Project creation
 - Build
 - Run
+- Test
 - GCC support
 - Linux
 
-Version 0.2
+Version 0.2 — shipped
 
-- Clang
-- Windows
-- macOS
+- Format and lint, with a canonical style model (RFC-0005)
+- Toolchain resolution delegated to pickup, driven by declared requirements
+- Incremental and parallel builds
+- Self-hosting: molto builds molto
 
 Version 0.3
 
+- Clang
 - Registry
 - Recipes
 - Dependency resolution
 
 Version 0.4
 
+- Windows
+- macOS
 - Plugins
 
 Version 1.0
@@ -480,3 +485,7 @@ Version 1.0
 Stable API
 Stable Registry
 Stable Plugin ABI
+
+The 0.1 and 0.2 entries record what was released. Clang, Windows and macOS were
+planned for 0.2 and did not make it: the work went into the toolchain contract
+with pickup and into style instead. They are not dropped, only moved.
