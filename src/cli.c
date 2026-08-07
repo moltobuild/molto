@@ -15,9 +15,15 @@
 
 #include <stdio.h>
 
-#define MOLTO_VERSION "0.2.0"
+/* Handed in by whoever compiled this, from [package] version in Project.toml.
+   Molto defines it for every project it builds, and the bootstrap Makefile
+   reads the same line out of the same file -- so the number lives in one place
+   and a binary cannot disagree with the manifest it was built from. */
+#ifndef MOLTO_PKG_VERSION
+#define MOLTO_PKG_VERSION "0.0.0-unknown"
+#endif
 
-const char *cli_version(void) { return MOLTO_VERSION; }
+const char *cli_version(void) { return MOLTO_PKG_VERSION; }
 
 /* The --all switch of `molto clean`. */
 static const cli_option clean_options[] = {
@@ -178,7 +184,7 @@ static const cli_command commands[] = {
 int cli_run(int argc, char **argv) {
     const cli_app app = {
         .program = "molto",
-        .version = MOLTO_VERSION,
+        .version = MOLTO_PKG_VERSION,
         .tagline = "a modern packaging ecosystem for C and C++",
         .commands = commands,
         .command_count = sizeof commands / sizeof commands[0],

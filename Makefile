@@ -11,7 +11,12 @@ ifeq ($(origin CC),default)
 endif
 
 STD    ?= c2x
+# The version comes from the manifest, the way it does under molto: one place
+# to change it, and no binary that disagrees with the file it was built from.
+VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
+
 CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -pthread -Iinclude
+CFLAGS += -DMOLTO_PKG_VERSION='"$(VERSION)"' 
 LDFLAGS ?=
 
 BUILD_DIR := build
