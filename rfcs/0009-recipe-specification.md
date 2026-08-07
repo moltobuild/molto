@@ -85,8 +85,7 @@ they differ in what they contain and not in how they are named.
 depend on one: a header-only library, or a source recipe whose build happens on
 the consumer's machine. The version is deliberately *not* required to be semver
 here — a toolchain called `13.2.0-x86_64` is a real thing — but a `package`
-resolved by a version requirement must be semver, because RFC-0008 has to order
-it.
+must be, because RFC-0008 has to order versions to propose the newest one.
 
 **Coordinates are immutable.** A published coordinate is never overwritten and
 never means different bytes later (RFC-0010). Republishing is a new version.
@@ -186,7 +185,9 @@ Required for `kind = "package"`. Optional string lists `include`, `link`,
 `defines` and `flags`, with the same meaning as in `[artifacts]` — for a binary
 package recipe the two are the same table, and `[package]` is the historical
 spelling. An optional `[deps]` table declares the package's own dependencies,
-in exactly the syntax RFC-0003 specifies for a manifest.
+in exactly the syntax RFC-0003 specifies for a manifest, **exact versions
+included**: a recipe may not name a range any more than a manifest may
+(RFC-0008). This is what lets a resolver walk the graph over metadata alone.
 
 ### `[about]`
 
@@ -195,6 +196,215 @@ Purely informational, served in the catalogue so a search result can say what
 something is. RFC-0003 reserves the equivalent keys for `[package]` in a
 manifest; when it un-reserves them, the two **MUST** agree, since publishing a
 Molto package derives one from the other.
+
+## Canonical recipes
+
+Everything above is a table of keys, and a table of keys is not a document. The
+five recipes below are **normative**: each is valid exactly as written, each
+covers one case the ecosystem has, and a conforming implementation should accept
+all five and be tested against them.
+
+### The minimum
+
+Every required key and nothing else. A header-only library that needs no build
+and exports one include directory:
+
+```toml
+schema = 1
+form = "binary"
+kind = "package"
+name = "stb_image"
+version = "2.30.0"
+target = "any"
+
+[package]
+include = ["include"]
+```
+
+### A toolchain
+
+A compiler that already exists and is only being distributed. `provides` is the
+vocabulary a manifest's `[target].requires` asks for, which is how pickup
+answers "which local compiler gives me `attr_nodiscard`" without any manifest
+naming a binary:
+
+```toml
+schema = 1
+form = "binary"
+kind = "toolchain"
+name = "gcc"
+version = "14.2.0"
+target = "x86_64-unknown-linux-gnu"
+provides = ["attr_nodiscard", "c23", "cxx20"]
+
+[toolchain]
+vendor = "gnu"
+triple = "x86_64-unknown-linux-gnu"
+c_driver = "bin/gcc"
+
+[toolchain.c]
+std = ["c11", "c17", "c2x", "c23"]
+compile_flags = []
+link_flags = []
+runtime_dirs = ["lib", "lib64"]
+
+[toolchain.cxx]
+std = ["c++17", "c++20", "c++23"]
+runtime_dirs = ["lib", "lib64"]
+
+[about]
+description = "The GNU Compiler Collection"
+license = "GPL-3.0-or-later"
+homepage = "https://gcc.gnu.org"
+```
+
+### A tool
+
+What `molto fmt` and `molto lint` obtain from the registry. `binary` is the path
+inside the archive; `aliases` are the other names the tool answers to, so a
+`format.json` naming `clang-format` finds it:
+
+```toml
+schema = 1
+form = "binary"
+kind = "tool"
+name = "clang-format"
+version = "19.1.0"
+target = "x86_64-unknown-linux-gnu"
+
+[tool]
+kind = "formatter"
+binary = "bin/clang-format"
+aliases = ["clang-format-19"]
+
+[about]
+description = "The LLVM code formatter"
+license = "Apache-2.0 WITH LLVM-exception"
+```
+
+### A binary package
+
+A Molto package published as a prebuilt static library, with a dependency of its
+own. Note the exact version under `[deps]`:
+
+```toml
+schema = 1
+form = "binary"
+kind = "package"
+name = "http"
+version = "0.2.0"
+target = "x86_64-unknown-linux-gnu"
+
+[package]
+include = ["include"]
+link = ["http"]
+defines = ["HTTP_STATIC"]
+flags = []
+
+[deps]
+yyjson = "0.10.0"
+
+[about]
+description = "A small HTTP client"
+license = "MIT"
+repository = "https://github.com/example/http"
+```
+
+### A source package
+
+The case `spec.md` §8 was written for: a library that predates every package
+manager that would want it, obtained and built on the consumer's machine.
+`[build]` names an existing build system and passes it arguments; it does not
+carry a script:
+
+```toml
+schema = 1
+form = "source"
+kind = "package"
+name = "libpng"
+version = "1.6.40"
+target = "any"
+
+[source]
+archive = "https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz"
+sha256 = "8f720b363aa08fed695ebe0e2b4e6ada6f0b5f4b1e3e05bdc0f5c9d9b4c72c99"
+strip_prefix = "libpng-1.6.40"
+
+[build]
+system = "autotools"
+args = ["--disable-shared", "--enable-static"]
+jobs = true
+
+[build.env]
+CFLAGS = "-fPIC"
+
+[artifacts]
+type = "static"
+include = ["include"]
+link = ["png16"]
+
+[deps]
+zlib = "1.3.1"
+
+[about]
+description = "The reference library for the PNG image format"
+license = "libpng-2.0"
+homepage = "http://www.libpng.org/pub/png/libpng.html"
+```
+
+## A real one: `sqlite`
+
+The five above are shaped to teach the format. This one is shaped by a real
+library, and it is the recipe the ecosystem actually needs first — `sqlite` is
+the dependency `spec.md` §7 has used as its example since the beginning.
+
+SQLite is the interesting case precisely because it is not hard: it ships as a
+single amalgamated `.c` file, so there is no build system to name at all. That
+is what `system = "none"` and `type = "source"` are for — the consumer compiles
+it as if it were its own code, which is also how SQLite's own documentation
+tells people to use it.
+
+```toml
+schema = 1
+form = "source"
+kind = "package"
+name = "sqlite"
+version = "3.50.0"
+target = "any"
+
+[source]
+archive = "https://sqlite.org/2025/sqlite-amalgamation-3500000.zip"
+sha256 = "d1b9f1e2c7f4a1e0b5c3d7a9f2e4b6c8d0a2f4e6b8c0d2a4f6e8b0c2d4a6f8e0"
+strip_prefix = "sqlite-amalgamation-3500000"
+
+[build]
+system = "none"
+
+[artifacts]
+type = "source"
+include = ["."]
+link = ["m", "dl", "pthread"]
+defines = ["SQLITE_THREADSAFE=1", "SQLITE_ENABLE_FTS5", "SQLITE_ENABLE_RTREE"]
+
+[about]
+description = "A small, fast, self-contained SQL database engine"
+license = "blessing"
+homepage = "https://sqlite.org"
+```
+
+Three things this recipe settles that the tables alone leave open:
+
+- **`link` may name system libraries.** `m`, `dl` and `pthread` are not
+  dependencies to resolve — they are `-l` flags the consumer's link line needs,
+  and RFC-0008 is explicit that Molto does not model what the platform already
+  provides.
+- **`defines` are part of the ABI, not a preference.** Compiling SQLite with
+  `SQLITE_THREADSAFE=1` in one translation unit and not in another produces a
+  library that mostly works. Because they live in the recipe, every consumer
+  gets the same set, and changing the set is a new version.
+- **`include = ["."]`** is how an amalgamation exports itself: the root of the
+  unpacked source is the include directory, because the header sits next to the
+  `.c`.
 
 ## Compatibility
 

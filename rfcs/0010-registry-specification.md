@@ -109,14 +109,24 @@ forever anywhere is a response whose integrity cannot rest on the transport.
 does not know what "latest" means, and it applies no ordering beyond what it
 was given.
 
-This is the counterpart of RFC-0008's version section, and the split is
-deliberate. Semver is a dialect: caret semantics, pre-release ordering, and the
-zero-major rule are conventions Molto chose, and baking them into the protocol
-would force every private registry — a Postgres box, a static file server, a
-Worker — to reimplement Molto's comparator identically or produce different
-resolutions for the same manifest. Serving opaque strings makes a conforming
-registry something anyone can write in an afternoon, and keeps the resolution
-identical everywhere because there is only one implementation of it.
+Most of the time there is nothing to resolve: a manifest names an exact version
+(RFC-0008) and the client asks for that coordinate directly. Ordering is needed
+only where Molto proposes a version rather than obeying one — `molto add`
+without a version, `molto update`, and the conflict search — and in all three
+the ordering happens on the client.
+
+Keeping it there is deliberate. Semver is a dialect: pre-release ordering and
+build-metadata rules are conventions, and baking them into the protocol would
+force every private registry — a Postgres box, a static file server, a Worker —
+to reimplement Molto's comparator identically or propose different versions for
+the same graph. Serving opaque strings makes a conforming registry something
+anyone can write in an afternoon, and keeps the answer identical everywhere
+because there is only one implementation of it.
+
+What the registry **does** have to serve for the conflict search to work is
+recipes without archives: `GET /v1/{kind}/{name}/{version}/{target}` returns the
+whole parsed recipe, including its `[deps]`, so a client can walk a dependency
+graph over metadata alone and never download a package it will not use.
 
 ## Publishing
 
