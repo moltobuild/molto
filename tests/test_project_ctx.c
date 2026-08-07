@@ -117,8 +117,9 @@ MOLTEST(project_reads_options_base_and_per_profile) {
         "[profile.release]\nflags = [\"-flto\"]\n",
         &ctx, err, sizeof err));
 
-    /* Base options from [target] apply to every profile. */
-    EXPECT_EQ(1, ctx.target.options.define_count);
+    /* Base options from [target] apply to every profile. The count carries the
+       package defines Molto contributes, which are appended after them. */
+    EXPECT_EQ(1 + PROJECT_PKG_DEFINES, ctx.target.options.define_count);
     EXPECT_STREQ("BASE=1", ctx.target.options.defines[0]);
     EXPECT_EQ(1, ctx.target.options.include_count);
     EXPECT_STREQ("vendor", ctx.target.options.include[0]);
@@ -145,10 +146,11 @@ MOLTEST(project_rejects_more_options_than_it_can_hold) {
     char manifest[2048];
     project_ctx ctx;
 
-    /* Exactly at capacity is fine. */
+    /* Exactly at capacity is fine, and the package defines still fit: they sit
+       past the manifest's limit rather than competing with it. */
     manifest_with_defines(manifest, sizeof manifest, PROJECT_MAX_OPTS);
     EXPECT_TRUE(project_parse(manifest, &ctx, err, sizeof err));
-    EXPECT_EQ(PROJECT_MAX_OPTS, ctx.target.options.define_count);
+    EXPECT_EQ(PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES, ctx.target.options.define_count);
 
     /* One more used to be dropped in silence, producing a green build with
        fewer defines than the manifest asked for. */
@@ -216,4 +218,40 @@ MOLTEST(project_without_env_has_none) {
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n", &ctx, err, sizeof err));
     EXPECT_EQ(0, ctx.env.count);
+}
+
+MOLTEST(project_hands_the_package_identity_to_the_compiler) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
+
+    /*
+     * The name and the version are in the manifest already. Passing them to the
+     * compiler is what lets a program report its own version without writing it
+     * down a second time in a header and keeping the two in step by hand.
+     *
+     * Quoted, because what the preprocessor is handed has to arrive as a string
+     * literal rather than as a bare token the program cannot use.
+     */
+    const project_options *options = &ctx.target.options;
+    ASSERT_EQ(PROJECT_PKG_DEFINES, options->define_count);
+    EXPECT_STREQ("MOLTO_PKG_NAME=\"demo_app\"", options->defines[0]);
+    EXPECT_STREQ("MOLTO_PKG_VERSION=\"1.2.3\"", options->defines[1]);
+}
+
+MOLTEST(project_reports_a_name_it_cannot_pass_on) {
+    char err[256] = "";
+    char manifest[256];
+    /* Valid as a package name -- snake_case has no length limit -- and too long
+       to survive being wrapped in a define. */
+    char name[PROJECT_OPT_LEN];
+    memset(name, 'a', sizeof name - 1);
+    name[sizeof name - 1] = '\0';
+    snprintf(manifest, sizeof manifest, "[package]\nname = \"%s\"\n", name);
+
+    /* Truncating it would hand the program an identity nobody declared, which
+       is worse than refusing to build. */
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "name"));
 }

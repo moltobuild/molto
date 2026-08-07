@@ -96,6 +96,42 @@ static bool valid_compiler(const char *name) {
     return ok;
 }
 
+/*
+ * Hand the package's own identity to the code being compiled.
+ *
+ * The name and the version are in the manifest already, and a program that
+ * wants to report its version had until now to write it down a second time in
+ * a header and keep the two in step by hand -- a binary answering with the
+ * version before last looks exactly like one that was never rebuilt.
+ *
+ * Added after the manifest's own entries and past its limit, so a project
+ * declaring the full sixteen defines loses none of them to these. A program
+ * that does not use them does not notice they are there.
+ */
+[[nodiscard]] static bool add_package_defines(project_ctx *out, char *err, size_t err_size) {
+    project_options *options = &out->target.options;
+    const char *const names[PROJECT_PKG_DEFINES] = {
+        PROJECT_PKG_NAME_DEFINE,
+        PROJECT_PKG_VERSION_DEFINE,
+    };
+    const char *const values[PROJECT_PKG_DEFINES] = {
+        out->project_name,
+        out->version,
+    };
+
+    for(size_t i = 0; i < PROJECT_PKG_DEFINES; i++) {
+        /* Quoted, because what reaches the compiler is a string literal: the
+           preprocessor is handed -DMOLTO_PKG_VERSION="0.3.1" and the program
+           sees a char array rather than a bare token it cannot use. */
+        if(!fs_format_path(options->defines[options->define_count], PROJECT_OPT_LEN, "%s=\"%s\"",
+                           names[i], values[i]))
+            return set_error(err, err_size, "package %s is too long to pass to the compiler",
+                             i == 0 ? "name" : "version");
+        options->define_count++;
+    }
+    return true;
+}
+
 /* Read the [env] table. Its keys are the variable names, so they are discovered
    rather than declared in a schema. Values must be strings. */
 [[nodiscard]] static bool read_env(const toml_document *doc, project_env *out, char *err,
@@ -247,7 +283,7 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
 
     if(!manifest_is_valid_name(out->project_name))
         return set_error(err, err_size, "package name is missing or not snake_case");
-    return true;
+    return add_package_defines(out, err, err_size);
 }
 
 bool project_load(const char *path, project_ctx *out, char *err, size_t err_size) {

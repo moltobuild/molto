@@ -22,6 +22,14 @@ typedef enum {
 #define PROJECT_ENV_NAME_MAX 64
 #define PROJECT_ENV_VALUE_MAX 256
 
+/* Defines Molto adds to [target] itself, on top of whatever the manifest
+   declares: the package's name and its version. They sit past the manifest's
+   own limit so that a project declaring the full sixteen loses none of them to
+   something it did not ask for. */
+#define PROJECT_PKG_DEFINES 2
+#define PROJECT_PKG_NAME_DEFINE "MOLTO_PKG_NAME"
+#define PROJECT_PKG_VERSION_DEFINE "MOLTO_PKG_VERSION"
+
 /* Build settings for each known profile. Access as ctx.profile.release, etc. */
 typedef struct {
     manifest_profile debug;
@@ -33,7 +41,9 @@ typedef struct {
 /* Extra compilation options for a scope ([target] base or a profile).
    defines -> -D, include -> -I, flags -> passed verbatim. */
 typedef struct {
-    char defines[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    /* Room for the manifest's own entries plus the ones Molto contributes. Only
+       [target] ever receives those, but the shape is shared with the profiles. */
+    char defines[PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES][PROJECT_OPT_LEN];
     size_t define_count;
     char include[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t include_count;

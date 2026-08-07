@@ -95,12 +95,34 @@ Names only, no `-l` prefix. For a flag the linker needs that is not a library
 
 ```toml
 [target]
-defines = ["_DEFAULT_SOURCE", "MY_APP_VERSION=\"0.1.0\""]
+defines = ["_DEFAULT_SOURCE"]
 flags   = ["-Wall", "-Wextra", "-Wpedantic"]
 ```
 
 `defines` is portable — Molto emits the right form per compiler. `flags` is the
 raw escape hatch, passed through untouched to both the compiler and the linker.
+
+### I want my program to report its own version
+
+You do not have to declare anything. Molto passes the package's name and version
+to every translation unit it compiles, taken from `[package]`:
+
+```c
+#ifndef MOLTO_PKG_VERSION
+#  define MOLTO_PKG_VERSION "0.0.0-unknown"   /* built by something else */
+#endif
+
+printf("%s %s\n", MOLTO_PKG_NAME, MOLTO_PKG_VERSION);
+```
+
+Both arrive as string literals. Writing the version down a second time in a
+header is what this replaces: a binary answering with the version before last
+looks exactly like one that was never rebuilt.
+
+They are added on top of your own `defines` rather than counted against the
+sixteen the manifest allows, and changing the version recompiles the project —
+the version is part of the command line, and a stale object would carry the old
+one.
 
 ### I want a specific language standard
 
