@@ -415,6 +415,80 @@ static bool parse_key_value(toml_document *doc, const char *section, char *text,
     return doc_push(doc, &entry, err, err_size);
 }
 
+/* How many '[' are still open at the end of `text`, ignoring anything inside a
+   string: `name = "a [ b"` opens nothing. Negative counts are clamped to zero
+   because a stray ']' is the value parser's error to report, not this one's. */
+static int open_bracket_count(const char *text) {
+    int depth = 0;
+    for(const char *p = text; *p != '\0'; p++) {
+        if(*p == '"' || *p == '\'') {
+            char quote = *p;
+            /* A basic string may escape its own quote; a literal one may not. */
+            for(p++; *p != '\0' && *p != quote; p++) {
+                if(quote == '"' && *p == '\\' && p[1] != '\0')
+                    p++;
+            }
+            if(*p == '\0')
+                break;
+            continue;
+        }
+        if(*p == '[')
+            depth++;
+        else if(*p == ']' && depth > 0)
+            depth--;
+    }
+    return depth;
+}
+
+/* Append the lines that continue an unterminated array onto `line`, until the
+   brackets balance. Advances `*cursor` and `*line_no` past what it consumed.
+
+   TOML lets an array span lines, and a recipe or a manifest with more than a
+   handful of entries is written that way by every formatter. Reading only the
+   first line would leave the rest to be parsed as keys. */
+static bool gather_array_lines(char *line, size_t size, const char **cursor, int *line_no,
+                               char *err, size_t err_size) {
+    const int opened_at = *line_no;
+    size_t length = strlen(line);
+
+    while(open_bracket_count(line) > 0) {
+        if(**cursor == '\0') {
+            set_err(err, err_size, opened_at, "unterminated array", NULL);
+            return false;
+        }
+
+        char next[TOML_LINE_MAX];
+        size_t n = 0;
+        (*line_no)++;
+        while(**cursor != '\0' && **cursor != '\n') {
+            if(n + 1 >= sizeof next) {
+                set_err(err, err_size, *line_no, "line too long", NULL);
+                return false;
+            }
+            next[n++] = *(*cursor)++;
+        }
+        next[n] = '\0';
+        if(**cursor == '\n')
+            (*cursor)++;
+
+        strip_inline_comment(next);
+        const char *piece = trim(next);
+        if(*piece == '\0')
+            continue;
+
+        /* A space keeps two elements from being glued into one token when a
+           line ends without its comma. */
+        if(length + strlen(piece) + 2 > size) {
+            set_err(err, err_size, opened_at, "array too long", NULL);
+            return false;
+        }
+        line[length++] = ' ';
+        snprintf(line + length, size - length, "%s", piece);
+        length += strlen(piece);
+    }
+    return true;
+}
+
 toml_document *toml_parse(const char *text, char *err, size_t err_size) {
     if(text == NULL) {
         set_err(err, err_size, 0, "null input", NULL);
@@ -452,6 +526,19 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
         char *trimmed = trim(line);
         if(trimmed[0] == '\0')
             continue;
+
+        /* An array may be written across several lines. Gather them into one
+           before anything else looks at the value: a continuation line starts
+           with a string or a ']' and would otherwise be read as a key without
+           an '=', or worse, as a section header. */
+        if(open_bracket_count(trimmed) > 0) {
+            if(!gather_array_lines(line, sizeof line, &cursor, &line_no, err, err_size)) {
+                toml_free(doc);
+                return NULL;
+            }
+            trimmed = trim(line);
+        }
+
         if(trimmed[0] == '[') {
             bool ok = trimmed[1] == '['
                           ? parse_table_array_header(trimmed, counters, &counter_count, section,

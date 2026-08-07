@@ -276,3 +276,62 @@ MOLTEST(toml_reports_a_malformed_array_of_tables) {
     EXPECT_NULL(toml_parse("[[]]\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "empty"));
 }
+
+MOLTEST(toml_reads_an_array_written_across_lines) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("provides = [\n"
+                                    "    \"constexpr\",\n"
+                                    "    \"concepts\",\n"
+                                    "]\n"
+                                    "name = \"clang\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list values;
+    str_list_init(&values);
+    ASSERT_TRUE(toml_get_array(doc, "", "provides", &values));
+    EXPECT_EQ(2, (int)str_list_count(&values));
+    EXPECT_STREQ("constexpr", str_list_get(&values, 0));
+    EXPECT_STREQ("concepts", str_list_get(&values, 1));
+    str_list_free(&values);
+
+    /* What follows the array is still read as a key, not as a leftover. */
+    char name[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "", "name", name, sizeof name));
+    EXPECT_STREQ("clang", name);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_keeps_a_section_after_a_multiline_array) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("std = [\n  \"c17\"\n]\n[toolchain]\nvendor = \"clang\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char vendor[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "toolchain", "vendor", vendor, sizeof vendor));
+    EXPECT_STREQ("clang", vendor);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_does_not_gather_lines_for_a_bracket_inside_a_string) {
+    /* A '[' in a string opens nothing: the next line is its own key. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("description = \"a [ thing\"\nname = \"clang\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char name[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "", "name", name, sizeof name));
+    EXPECT_STREQ("clang", name);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_reports_an_array_that_is_never_closed) {
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("provides = [\n  \"constexpr\",\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "unterminated array"));
+}
