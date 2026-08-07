@@ -126,10 +126,17 @@ recipe).
 
 Removes a dependency entry from `Project.toml`.
 
+### `molto login`
+
+Obtains a token from a registry and stores it in `~/.molto/credentials.toml`,
+readable only by its owner. The password is typed at a terminal with echo
+disabled, or bypassed entirely with `--token` for non-interactive use;
+`--registry` selects the registry. See RFC-0010.
+
 ### `molto publish`
 
 Publishes the current package to a configured registry (public or private,
-see `spec.md` sections 15–16).
+see `spec.md` sections 15–16). Requires a stored credential from `molto login`.
 
 ### `molto update`
 
@@ -175,3 +182,7 @@ run `molto build` first and then the executable directly.
 
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0003: Project Manifest](0003-project-manifest.md)
+- [RFC-0007: Build System](0007-build-system.md) — what `build`, `run` and `test` do
+- [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — `add`, `remove` and `update`, and exit code 3
+- [RFC-0009: Recipe Specification](0009-recipe-specification.md) — the document `publish` reads
+- [RFC-0010: Registry Specification](0010-registry-specification.md) — `login` and `publish`

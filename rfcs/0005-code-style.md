@@ -321,6 +321,8 @@ existing task pool.
 - [RFC-0003: Project Manifest](0003-project-manifest.md)
 - [RFC-0004: Workspace Specification](0004-workspace-specification.md)
 - [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — the store the caching above needs
+- [RFC-0007: Build System](0007-build-system.md) — the discovery walk this widens to headers
+- [RFC-0009: Recipe Specification](0009-recipe-specification.md) — how a formatter or a linter is published and obtained
 
 See also `spec.md` sections 10 (Global Cache), 11 (Workspace Database) and 17
 (Coding Conventions).

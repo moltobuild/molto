@@ -209,3 +209,4 @@ The saving is real and much smaller than lint's, because `clang-format` is not
 - [RFC-0002: CLI Specification](0002-cli-specification.md) — `molto lint`, `molto fmt`, exit codes
 - [RFC-0004: Workspace Specification](0004-workspace-specification.md) — the WSDB, its entry kinds and invariants
 - [RFC-0005: Code Style](0005-code-style.md) — the caching this implements, and the diagnostics model it replays
+- [RFC-0007: Build System](0007-build-system.md) — the freshness rules this reuses, put in the WSDB by the build

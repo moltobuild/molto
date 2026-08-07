@@ -464,15 +464,15 @@ Version 0.2 — shipped
 
 - Format and lint, with a canonical style model (RFC-0005)
 - Toolchain resolution delegated to pickup, driven by declared requirements
-- Incremental and parallel builds
+- Incremental and parallel builds, specified after the fact (RFC-0007)
 - Self-hosting: molto builds molto
 
 Version 0.3
 
 - Clang
-- Registry
-- Recipes
-- Dependency resolution
+- Registry (RFC-0010)
+- Recipes (RFC-0009)
+- Dependency resolution (RFC-0008)
 
 Version 0.4
 

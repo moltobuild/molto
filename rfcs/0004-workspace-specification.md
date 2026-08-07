@@ -209,6 +209,8 @@ Not implemented yet, and each waiting on a feature rather than on this RFC:
 - [RFC-0002: CLI Specification](0002-cli-specification.md)
 - [RFC-0003: Project Manifest](0003-project-manifest.md)
 - [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — adds a fourth entry kind to the store described here
+- [RFC-0007: Build System](0007-build-system.md) — what the build does with the state stored here
+- [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the dependency graph this store has no entry kind for, and why the resolution is not kept here
 
 See also `spec.md` sections 4 (Workspace), 10 (Global Cache) and 11 (Workspace
 Database).

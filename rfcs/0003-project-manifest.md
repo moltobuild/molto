@@ -295,3 +295,7 @@ yet, so the format can grow without breaking:
 
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0002: CLI Specification](0002-cli-specification.md)
+- [RFC-0007: Build System](0007-build-system.md) — what `[target]`, `[test]` and `[profile.*]` produce on a command line
+- [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the algorithm behind `[deps]` and `[registries]`
+- [RFC-0009: Recipe Specification](0009-recipe-specification.md) — reuses the `[deps]` syntax, and mirrors the reserved publishing metadata
+- [RFC-0010: Registry Specification](0010-registry-specification.md) — how a named registry is reached
