@@ -5,7 +5,9 @@
 #include <molto/commands/fmt_command.h>
 #include <molto/commands/init_command.h>
 #include <molto/commands/lint_command.h>
+#include <molto/commands/login_command.h>
 #include <molto/commands/new_command.h>
+#include <molto/commands/publish_command.h>
 #include <molto/commands/run_command.h>
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
@@ -44,6 +46,27 @@ static const cli_option lint_options[] = {
     {"--refresh-analysis", 0, cli_opt_flag, NULL,
      "Analyse every file again instead of replaying what did not change", NULL},
     {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, json)", "text"},
+};
+
+/* `molto login` has two ways in: exchange an email and password for a token,
+   or paste one made on the registry's account page. --token is also the only
+   way to log in where no terminal can hide a typed password, such as CI. */
+static const cli_option login_options[] = {
+    {"--registry", 'r', cli_opt_value, "<url>", "Registry to log in to", NULL},
+    {"--email", 'e', cli_opt_value, "<address>", "Account to sign in as (prompted otherwise)",
+     NULL},
+    {"--token", 't', cli_opt_value, "<token>", "Store this token instead of signing in", NULL},
+};
+
+/* `molto publish` finds both its inputs in the current directory by default.
+   --dry-run reads and hashes them and stops before anything is sent, which is
+   the only way to check a recipe without spending a coordinate: they are
+   immutable once published. */
+static const cli_option publish_options[] = {
+    {"--recipe", 0, cli_opt_value, "<path>", "Recipe describing the artifact", "recipe.toml"},
+    {"--file", 'f', cli_opt_value, "<path>", "Archive to publish (the .tar.zst beside the recipe)",
+     NULL},
+    {"--dry-run", 0, cli_opt_flag, NULL, "Check and hash, but send nothing", NULL},
 };
 
 /* `molto fmt` writes by default; --check and --diff are two ways of asking
@@ -106,6 +129,16 @@ static int handle_clean(const cli_args *args) {
     return clean_command_run(cli_args_flag(args, "--all"));
 }
 
+static int handle_login(const cli_args *args) {
+    return login_command_run(cli_args_option(args, "--registry"), cli_args_option(args, "--email"),
+                             cli_args_option(args, "--token"));
+}
+
+static int handle_publish(const cli_args *args) {
+    return publish_command_run(cli_args_option(args, "--recipe"), cli_args_option(args, "--file"),
+                               cli_args_flag(args, "--dry-run"));
+}
+
 static int handle_unimplemented(const cli_args *args) {
     fprintf(stderr,
             "molto: '%s' is not implemented yet "
@@ -134,7 +167,10 @@ static const cli_command commands[] = {
      sizeof lint_options / sizeof lint_options[0], handle_lint},
     {"add", "Add a dependency", "<dep>", NULL, 0, handle_unimplemented},
     {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_unimplemented},
-    {"publish", "Publish the package to a registry", NULL, NULL, 0, handle_unimplemented},
+    {"login", "Store a registry credential", NULL, login_options,
+     sizeof login_options / sizeof login_options[0], handle_login},
+    {"publish", "Publish an artifact to a registry", NULL, publish_options,
+     sizeof publish_options / sizeof publish_options[0], handle_publish},
     {"update", "Update dependency versions", NULL, NULL, 0, handle_unimplemented},
     {"migrate", "Import a Make/CMake/Meson project", "<system>", NULL, 0, handle_unimplemented},
 };
