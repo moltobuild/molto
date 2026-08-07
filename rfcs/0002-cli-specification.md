@@ -116,15 +116,17 @@ Runs compiler diagnostics and Molto's own static checks (e.g. naming
 convention violations, section 17 of `spec.md`) without producing build
 artifacts.
 
-### `molto add <dependency>`
+### `molto add <dependency>[@<version>]`
 
-Adds a dependency to the `[deps]` table of `Project.toml`. Accepts the same
-dependency sources defined in RFC-0003 (registry, git, path, archive,
-recipe).
+Adds a dependency to the `[deps]` table of `Project.toml`, writing an **exact
+version**: the one given after `@`, or the newest the registry offers when it is
+omitted. Accepts the same dependency sources defined in RFC-0003 (registry, git,
+path, archive, recipe). `--dev` adds it to `[dev-deps]` instead, for a
+dependency that must not reach the package's binary (RFC-0008).
 
 ### `molto remove <dependency>`
 
-Removes a dependency entry from `Project.toml`.
+Removes a dependency entry from `Project.toml`, from either table.
 
 ### `molto login`
 
@@ -140,8 +142,11 @@ see `spec.md` sections 15–16). Requires a stored credential from `molto login`
 
 ### `molto update`
 
-Re-resolves dependency versions against the registry within the constraints
-declared in `Project.toml`.
+Asks the registry for newer releases of the declared dependencies, reports what
+would change, and rewrites the exact versions in `Project.toml`. Since the
+manifest names exact versions and never ranges (RFC-0008), an update is a
+deliberate edit that lands in the diff rather than a re-resolution that happens
+on its own.
 
 ### `molto migrate <make|cmake|meson>`
 

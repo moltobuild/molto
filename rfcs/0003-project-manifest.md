@@ -248,7 +248,7 @@ source key must be present:
 
 | Key                | Type          | Description                                                                    |
 |--------------------|---------------|--------------------------------------------------------------------------------|
-| `version`          | string        | Semver requirement; resolved from a registry (source)                          |
+| `version`          | string        | One exact semver version, never a range; fetched from a registry (source)      |
 | `git`              | string        | Git repository URL (source); pair with one of `branch`/`tag`/`rev`             |
 | `branch`           | string        | Git branch (with `git`)                                                        |
 | `tag`              | string        | Git tag (with `git`)                                                           |
@@ -266,6 +266,10 @@ Rules:
 
 - Exactly one source among `version`, `git`, `path`, `archive`, `recipe`. The
   plain-string form `dep = "1.2.3"` is equivalent to `{ version = "1.2.3" }`.
+- **A version is exact.** `^`, `~`, `>=`, `>`, `<`, `<=`, `*` and
+  comma-separated conjunctions are not part of this format, and a value carrying
+  one is a manifest error. RFC-0008 gives the reason: a range authorises code
+  that does not exist yet to enter a build without a diff.
 - `branch`, `tag` and `rev` are only valid alongside `git`, and at most one of
   them may be present.
 - Source repositories are never cached by Molto; only reusable build artifacts
@@ -285,8 +289,10 @@ The following are acknowledged directions but intentionally **not** specified
 yet, so the format can grow without breaking:
 
 - `[features]` — the package's own feature flags and what they enable.
-- `[dev-deps]` / `[build-deps]` — dependencies used only for tests/benches or
-  for build scripts.
+- `[build-deps]` — dependencies needed to run a build rather than to link into
+  it. `[dev-deps]`, once reserved here alongside it, is specified in RFC-0008:
+  same syntax as `[deps]`, resolved only for the root package, and never linked
+  into the package's own binary.
 - `[package]` publishing metadata (`description`, `license`, `authors`, …).
 - `[workspace]` — multi-package workspaces (`members`).
 - A manifest schema/version key for forward compatibility.
