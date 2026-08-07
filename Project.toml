@@ -11,7 +11,7 @@
 
 [package]
 name = "molto"
-version = "0.2.0"
+version = "0.3.0"
 
 [target]
 std = "c2x"
