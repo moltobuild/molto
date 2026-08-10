@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <molto/project/project_deps.h>
 #include <molto/services/manifest_service.h>
 
 /* Artifact kinds from RFC-0003 (spec section 9). */
@@ -112,6 +113,8 @@ typedef struct {
     project_target target;
     project_test test;
     project_env env;
+    project_deps deps;
+    project_registries registries;
     project_profiles profile;
     project_profile_options profile_options; /* per-profile extra options */
 } project_ctx;

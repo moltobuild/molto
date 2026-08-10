@@ -445,23 +445,57 @@ happen.
 
 ## Implementation Status
 
-None of this is implemented. `[deps]` and `[registries]` are not read, there is
-no dependency type, no semver comparator, no lock file, no fetcher for any of
-the five sources, and no global cache. `molto add`, `molto remove` and
-`molto update` exit with code 5 as RFC-0002 requires, which is the correct
-behaviour for an unimplemented command and not a placeholder to be replaced by a
-partial one.
+As of molto 0.5.0, the front half exists: a manifest's dependencies are read,
+and one of them can be turned into fetched source on disk.
+
+What is implemented:
+
+- **The precondition.** Inline tables parse (`src/util/toml.c`), so
+  `sqlite = { git = "…", tag = "…" }` is a dependency rather than a line that
+  vanished. An empty one is now a parse error, since it declares nothing and is
+  therefore invisible to every reader. `toml_section_members` enumerates a
+  table whose entries are themselves tables, which is what `[deps]` needs and
+  what no accessor could do before.
+- **`[deps]` and `[registries]`** (`src/project/project_deps.c`), both
+  spellings, in declaration order, on `project_ctx`. Every key is classified
+  before any is read, so a typo is an error rather than a dependency resolved
+  to something else; a key this RFC defines but nothing implements yet
+  (`optional`, `features`, `default_features`, `artifact`, `recipe`) is refused
+  rather than ignored.
+- **Exact versions** (`manifest_is_exact_version`), refusing every range
+  operator this document forbids and naming the one it found.
+- **The registry client** for the `version` source: `registry_get` plus
+  `resolve_service`, which asks `GET /v1/packages/{name}/{version}`, chooses a
+  target from what was actually published, refuses a yanked artifact, and
+  checks that the recipe it got back describes the coordinate that was asked
+  for.
+- **The fetcher** (`src/services/source_service.c`) for `archive`, `git` and
+  `path`, with the digest verified, `strip_prefix` applied, and the result
+  installed atomically into a cache addressed by coordinate.
+
+What is not:
+
+- **No lock file**, so nothing is reproducible across machines yet.
+- **No conflict search**, because there is no graph: only direct dependencies
+  are read, and a recipe's own `[deps]` is not walked.
+- **No semver comparator.** Versions are validated and compared for equality;
+  nothing orders them, which is what `molto update` would need.
+- **Nothing consumes the result.** `[artifacts]` is read into the same option
+  type the manifest uses, and no build puts it on a compile line yet.
+- `molto add`, `molto remove` and `molto update` still exit with code 5 as
+  RFC-0002 requires, which is the correct behaviour for an unimplemented
+  command and not a placeholder to be replaced by a partial one.
 
 Molto also has no progress reporting of any kind, which the conflict search
 needs. pickup already has it — a four-frame spinner drawn on stderr only when
 stderr is a terminal, and wiped before the real output is printed — and it is a
 self-contained utility to port rather than to reinvent.
 
-The order the work has to happen in is fixed by dependencies between the pieces:
-inline tables in the parser, then a reader for the two dependency tables, then
-the semver comparator, then resolution against a single source (`path` is the
-one with no network), then the lock file, then the registry client, then the
-conflict search and its prompt, then the global cache.
+The order the remaining work has to happen in is fixed by dependencies between
+the pieces: putting a resolved dependency on a compile line (which needs
+nothing that is not already here), then the semver comparator, then the lock
+file, then walking a recipe's own `[deps]` into a graph, then the conflict
+search and its prompt.
 
 ## Non-Goals
 

@@ -158,18 +158,236 @@ MOLTEST(toml_parses_string_arrays) {
     EXPECT_NULL(toml_parse("[t]\nx = [\"a\", \"b\"\n", err, sizeof err));
 }
 
-MOLTEST(toml_skips_inline_tables) {
+MOLTEST(toml_reads_an_inline_table_as_a_subsection) {
+    /* This used to be skipped in silence: the dependency was written, the file
+       parsed, and nothing was there. It now reads back exactly as the
+       equivalent [deps.http] header would. */
     char err[256] = "";
     toml_document *doc = toml_parse(
         "[package]\nname = \"x\"\n[deps]\nhttp = { path = \"m\" }\n", err, sizeof err);
     ASSERT_NOT_NULL(doc);
 
-    /* The inline table is ignored, and the rest of the document still parses. */
-    char buffer[64];
+    char buffer[64] = "";
     EXPECT_TRUE(toml_get_string(doc, "package", "name", buffer, sizeof buffer));
     EXPECT_STREQ("x", buffer);
-    EXPECT_FALSE(toml_get_string(doc, "deps", "http", buffer, sizeof buffer));
+    EXPECT_TRUE(toml_get_string(doc, "deps.http", "path", buffer, sizeof buffer));
+    EXPECT_STREQ("m", buffer);
     toml_free(doc);
+}
+
+MOLTEST(toml_reads_every_member_of_an_inline_table) {
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("[deps]\nsqlite = { git = \"https://x/y.git\", tag = \"3.53.4\" }\n", err,
+                   sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char git[64] = "";
+    char tag[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "deps.sqlite", "git", git, sizeof git));
+    EXPECT_STREQ("https://x/y.git", git);
+    EXPECT_TRUE(toml_get_string(doc, "deps.sqlite", "tag", tag, sizeof tag));
+    EXPECT_STREQ("3.53.4", tag);
+    toml_free(doc);
+}
+
+MOLTEST(toml_enumerates_an_inline_table_like_any_other_section) {
+    /* A dependency reader has to discover the keys it was given, because which
+       source a dependency uses is what the keys say. */
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("[deps]\nhttp = { path = \"modules/http\" }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    EXPECT_TRUE(toml_has_section(doc, "deps.http"));
+
+    str_list keys;
+    str_list_init(&keys);
+    EXPECT_TRUE(toml_section_keys(doc, "deps.http", &keys));
+    ASSERT_EQ(1u, keys.count);
+    EXPECT_STREQ("path", keys.items[0]);
+    str_list_free(&keys);
+    toml_free(doc);
+}
+
+MOLTEST(toml_reads_values_of_every_type_inside_an_inline_table) {
+    char err[256] = "";
+    toml_document *doc = toml_parse(
+        "[build]\ncfg = { jobs = true, level = 3, args = [\"--a\", \"--b\"] }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    bool jobs = false;
+    long level = 0;
+    EXPECT_TRUE(toml_get_bool(doc, "build.cfg", "jobs", &jobs));
+    EXPECT_TRUE(jobs);
+    EXPECT_TRUE(toml_get_int(doc, "build.cfg", "level", &level));
+    EXPECT_EQ(3L, level);
+
+    /* The commas inside the array belong to the array, not to the table. */
+    str_list args;
+    str_list_init(&args);
+    EXPECT_TRUE(toml_get_array(doc, "build.cfg", "args", &args));
+    ASSERT_EQ(2u, args.count);
+    EXPECT_STREQ("--b", args.items[1]);
+    str_list_free(&args);
+    toml_free(doc);
+}
+
+MOLTEST(toml_keeps_a_comma_inside_a_string_out_of_the_split) {
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("[about]\nwho = { name = \"Doe, J\", role = \"author\" }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char name[32] = "";
+    char role[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "about.who", "name", name, sizeof name));
+    EXPECT_STREQ("Doe, J", name);
+    EXPECT_TRUE(toml_get_string(doc, "about.who", "role", role, sizeof role));
+    EXPECT_STREQ("author", role);
+    toml_free(doc);
+}
+
+MOLTEST(toml_reads_a_nested_inline_table) {
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("[deps]\nhttp = { git = \"u\", opts = { tls = true } }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    bool tls = false;
+    EXPECT_TRUE(toml_get_bool(doc, "deps.http.opts", "tls", &tls));
+    EXPECT_TRUE(tls);
+    toml_free(doc);
+}
+
+MOLTEST(toml_refuses_an_empty_inline_table) {
+    /* It declares nothing, so it leaves no entry behind, so no reader can see
+       it — and the only thing it has ever been is a half-written dependency.
+       Real TOML allows it; this parser is a subset that fails closed. */
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("[deps]\nhttp = {}\nname = \"x\"\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "empty inline table"));
+}
+
+MOLTEST(toml_still_tolerates_a_trailing_comma) {
+    /* Distinct from the case above: this table declares something. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("[deps]\nhttp = { path = \"m\", }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char path[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "deps.http", "path", path, sizeof path));
+    EXPECT_STREQ("m", path);
+    toml_free(doc);
+}
+
+MOLTEST(toml_section_members_lists_values_and_tables_in_declaration_order) {
+    /* The reason this exists: `sqlite = { … }` stores nothing under "deps", so
+       toml_section_keys sees only yyjson and a [deps] reader built on it would
+       read half the manifest without complaining. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("[deps]\n"
+                                    "yyjson = \"1.2.32\"\n"
+                                    "sqlite = { git = \"u\", tag = \"v\" }\n"
+                                    "[deps.http]\n"
+                                    "path = \"modules/http\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list members;
+    str_list_init(&members);
+    EXPECT_TRUE(toml_section_members(doc, "deps", &members));
+    ASSERT_EQ(3u, members.count);
+    EXPECT_STREQ("yyjson", members.items[0]);
+    EXPECT_STREQ("sqlite", members.items[1]);
+    EXPECT_STREQ("http", members.items[2]);
+    str_list_free(&members);
+    toml_free(doc);
+}
+
+MOLTEST(toml_section_members_lists_a_child_once_and_never_a_grandchild) {
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("[deps]\nhttp = { git = \"u\", opts = { tls = true } }\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list members;
+    str_list_init(&members);
+    EXPECT_TRUE(toml_section_members(doc, "deps", &members));
+    ASSERT_EQ(1u, members.count);
+    EXPECT_STREQ("http", members.items[0]);
+    str_list_free(&members);
+    toml_free(doc);
+}
+
+MOLTEST(toml_section_members_of_the_root_lists_keys_and_top_level_tables) {
+    char err[256] = "";
+    toml_document *doc =
+        toml_parse("schema = 1\nform = \"source\"\n[source]\ngit = \"u\"\n[build]\nsystem = "
+                   "\"none\"\n",
+                   err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list members;
+    str_list_init(&members);
+    EXPECT_TRUE(toml_section_members(doc, "", &members));
+    ASSERT_EQ(4u, members.count);
+    EXPECT_STREQ("schema", members.items[0]);
+    EXPECT_STREQ("form", members.items[1]);
+    EXPECT_STREQ("source", members.items[2]);
+    EXPECT_STREQ("build", members.items[3]);
+    str_list_free(&members);
+    toml_free(doc);
+}
+
+MOLTEST(toml_section_members_is_empty_for_a_section_nobody_declared) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("[package]\nname = \"x\"\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list members;
+    str_list_init(&members);
+    EXPECT_TRUE(toml_section_members(doc, "deps", &members));
+    EXPECT_EQ(0u, members.count);
+    str_list_free(&members);
+    toml_free(doc);
+}
+
+MOLTEST(toml_section_members_leaves_an_array_of_tables_to_its_own_accessor) {
+    char err[256] = "";
+    toml_document *doc = toml_parse("name = \"x\"\n[[tool]]\npath = \"a\"\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    str_list members;
+    str_list_init(&members);
+    EXPECT_TRUE(toml_section_members(doc, "", &members));
+    ASSERT_EQ(1u, members.count);
+    EXPECT_STREQ("name", members.items[0]);
+    EXPECT_EQ(1u, toml_table_array_count(doc, "tool"));
+    str_list_free(&members);
+    toml_free(doc);
+}
+
+MOLTEST(toml_reports_an_inline_table_that_is_never_closed) {
+    /* TOML forbids a newline inside an inline table, so this is not a value
+       continued on the next line: it is one that never ends. Reporting it here
+       is the difference between a named error and 'expected =' three lines
+       further down. */
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("[deps]\nhttp = { path = \"m\"\nname = \"x\"\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "unterminated inline table"));
+}
+
+MOLTEST(toml_reports_a_malformed_member_instead_of_dropping_it) {
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("[deps]\nhttp = { path }\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "expected '='"));
+}
+
+MOLTEST(toml_reports_characters_after_an_inline_table) {
+    char err[256] = "";
+    EXPECT_NULL(toml_parse("[deps]\nhttp = { path = \"m\" } junk\n", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "trailing characters"));
 }
 
 MOLTEST(toml_reports_malformed_input_with_a_line) {

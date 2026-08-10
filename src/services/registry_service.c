@@ -93,8 +93,9 @@ static bool request(const char *base_url, const char *token, const char *method,
     if(!fs_format_path(url, sizeof url, "%s%s", base_url, path))
         return fail(err, err_size, "the registry URL is too long");
 
-    char type_header[128];
-    snprintf(type_header, sizeof type_header, "content-type: %s", content_type);
+    char type_header[128] = "";
+    if(content_type != NULL)
+        snprintf(type_header, sizeof type_header, "content-type: %s", content_type);
 
     char config[512] = "";
     if(token != NULL && !write_auth_config(token, config, sizeof config))
@@ -107,8 +108,14 @@ static bool request(const char *base_url, const char *token, const char *method,
     argv[n++] = "--show-error";
     argv[n++] = "--request";
     argv[n++] = method;
-    argv[n++] = "--header";
-    argv[n++] = type_header;
+    /* Both optional so that one request path serves an upload, a JSON payload
+       and a plain read: a GET has no body and no content type, and a second
+       copy of this invocation existing only to omit two flags would be a
+       second place for the credential handling to drift. */
+    if(content_type != NULL) {
+        argv[n++] = "--header";
+        argv[n++] = type_header;
+    }
     if(extra_header != NULL) {
         argv[n++] = "--header";
         argv[n++] = extra_header;
@@ -117,8 +124,10 @@ static bool request(const char *base_url, const char *token, const char *method,
         argv[n++] = "--config";
         argv[n++] = config;
     }
-    argv[n++] = body_flag;
-    argv[n++] = body_value;
+    if(body_flag != NULL) {
+        argv[n++] = body_flag;
+        argv[n++] = body_value;
+    }
     argv[n++] = "--write-out";
     argv[n++] = STATUS_MARKER "%{http_code}";
     argv[n++] = url;
@@ -145,6 +154,11 @@ static bool read_token(const registry_response *response, char *token, size_t to
     json_free(doc);
 
     return ok ? true : fail(err, err_size, "the registry issued no token");
+}
+
+bool registry_get(const char *base_url, const char *path, registry_response *out, char *err,
+                  size_t err_size) {
+    return request(base_url, NULL, "GET", path, NULL, NULL, NULL, NULL, out, err, err_size);
 }
 
 bool registry_create_token(const char *base_url, const char *email, const char *password,

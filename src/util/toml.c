@@ -6,6 +6,8 @@
  *     is one (section, key) pair with a typed value (string, integer or bool).
  *     For example the line `opt_level = 3` under `[profile.release]` becomes the
  *     entry { section="profile.release", key="opt_level", int 3 }.
+ *     An inline table is flattened the same way: `sqlite = { tag = "3.53.4" }`
+ *     under `[deps]` becomes { section="deps.sqlite", key="tag", str "3.53.4" }.
  *   - Parsing walks the text one line at a time. For each line we:
  *       1. cut off any inline `# comment` (but not a `#` inside quotes),
  *       2. trim surrounding whitespace,
@@ -333,8 +335,141 @@ static bool parse_string_array(const char *text, str_list *out) {
     return false; /* no closing ']' */
 }
 
+/* Nesting an inline table inside an inline table is legal TOML. The limit is
+   not a judgement about style: it bounds the recursion below, so a pathological
+   document is a parse error rather than a stack overflow. */
+#define TOML_INLINE_DEPTH_MAX 4
+
 static bool parse_key_value(toml_document *doc, const char *section, char *text, char *err,
-                            size_t err_size, int line) {
+                            size_t err_size, int line, int depth);
+
+/* Past a quoted string, starting at its opening quote. Answers the closing
+   quote, or the terminating NUL when the string never closes. */
+static char *skip_quoted(char *text) {
+    const char quote = *text;
+    for(char *p = text + 1; *p != '\0'; p++) {
+        /* A basic string may escape its own quote; a literal one may not. */
+        if(quote == '"' && *p == '\\' && p[1] != '\0')
+            p++;
+        else if(*p == quote)
+            return p;
+    }
+    return text + strlen(text);
+}
+
+/* The '}' closing the inline table that starts at `text`, or NULL when there
+   is none. Braces inside a string are text, not structure. */
+static char *inline_table_end(char *text) {
+    int depth = 0;
+    for(char *p = text; *p != '\0'; p++) {
+        if(*p == '"' || *p == '\'') {
+            p = skip_quoted(p);
+            if(*p == '\0')
+                return NULL;
+        } else if(*p == '{') {
+            depth++;
+        } else if(*p == '}' && --depth == 0) {
+            return p;
+        }
+    }
+    return NULL;
+}
+
+/* The comma ending one member of an inline table, or NULL when this is the
+   last one. A comma inside a string, an array or a nested table belongs to the
+   value and does not end anything. */
+static char *member_end(char *text) {
+    int braces = 0;
+    int brackets = 0;
+    for(char *p = text; *p != '\0'; p++) {
+        if(*p == '"' || *p == '\'')
+            p = skip_quoted(p);
+        else if(*p == '{')
+            braces++;
+        else if(*p == '}' && braces > 0)
+            braces--;
+        else if(*p == '[')
+            brackets++;
+        else if(*p == ']' && brackets > 0)
+            brackets--;
+        else if(*p == ',' && braces == 0 && brackets == 0)
+            return p;
+    }
+    return NULL;
+}
+
+/* The section an inline table's members are stored under: the key, qualified
+   by whatever section the table itself was declared in. */
+static bool nested_section(const char *section, const char *key, char *out, size_t size, char *err,
+                           size_t err_size, int line) {
+    const int written = section[0] == '\0' ? snprintf(out, size, "%s", key)
+                                           : snprintf(out, size, "%s.%s", section, key);
+    if(written < 0 || (size_t)written >= size) {
+        set_err(err, err_size, line, "section name too long", key);
+        return false;
+    }
+    return true;
+}
+
+/* An inline table becomes a subsection, which is what the flat model already
+   is: `sqlite = { git = "…", tag = "v1" }` under [deps] reads back exactly as
+   a `[deps.sqlite]` header with two keys would.
+
+   It used to be skipped in silence, which is the failure this whole ecosystem
+   exists to avoid: the user wrote a dependency, the file parsed without
+   complaint, and the dependency was not there. */
+static bool parse_inline_table(toml_document *doc, const char *section, const char *key,
+                               char *value, char *err, size_t err_size, int line, int depth) {
+    if(depth >= TOML_INLINE_DEPTH_MAX) {
+        set_err(err, err_size, line, "inline tables nested too deeply", key);
+        return false;
+    }
+
+    /* TOML forbids a newline inside an inline table, so an unclosed one is not
+       a value continued on the next line: it is a value that never ends. */
+    char *close = inline_table_end(value);
+    if(close == NULL) {
+        set_err(err, err_size, line, "unterminated inline table", key);
+        return false;
+    }
+    if(*trim(close + 1) != '\0') {
+        set_err(err, err_size, line, "trailing characters after value", key);
+        return false;
+    }
+    *close = '\0';
+
+    char nested[TOML_SECTION_MAX];
+    if(!nested_section(section, key, nested, sizeof nested, err, err_size, line))
+        return false;
+
+    for(char *p = value + 1;;) {
+        char *end = member_end(p);
+        if(end != NULL)
+            *end = '\0';
+        char *member = trim(p);
+        /* An empty table declares nothing, and a table that declares nothing
+           leaves no entry behind — which makes it invisible to every reader,
+           including the one that lists what a section contains. Real TOML
+           allows it; this parser is a subset that fails closed, and the only
+           thing `sqlite = {}` has ever been is a half-written dependency. */
+        if(member[0] == '\0' && end == NULL) {
+            if(p == value + 1) {
+                set_err(err, err_size, line, "empty inline table", key);
+                return false;
+            }
+            break;
+        }
+        if(!parse_key_value(doc, nested, member, err, err_size, line, depth + 1))
+            return false;
+        if(end == NULL)
+            break;
+        p = end + 1;
+    }
+    return true;
+}
+
+static bool parse_key_value(toml_document *doc, const char *section, char *text, char *err,
+                            size_t err_size, int line, int depth) {
     char *equals = strchr(text, '=');
     if(equals == NULL) {
         set_err(err, err_size, line, "expected '='", text);
@@ -397,9 +532,7 @@ static bool parse_key_value(toml_document *doc, const char *section, char *text,
         }
         return true;
     } else if(value[0] == '{') {
-        /* Inline table: recognized but unsupported. Skip it so a [deps] section
-           with inline tables does not break parsing. */
-        return true;
+        return parse_inline_table(doc, section, key, value, err, err_size, line, depth);
     } else if(strcmp(value, "true") == 0 || strcmp(value, "false") == 0) {
         entry.type = toml_field_bool;
         entry.value.boolean = strcmp(value, "true") == 0;
@@ -550,7 +683,7 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
             }
             continue;
         }
-        if(!parse_key_value(doc, section, trimmed, err, err_size, line_no)) {
+        if(!parse_key_value(doc, section, trimmed, err, err_size, line_no, 0)) {
             toml_free(doc);
             return NULL;
         }
@@ -631,6 +764,68 @@ bool toml_section_keys(const toml_document *doc, const char *section, str_list *
         if(strcmp(doc->items[i].section, section) != 0)
             continue;
         if(!str_list_push(out, doc->items[i].key))
+            return false;
+    }
+    return true;
+}
+
+static bool already_listed(const str_list *list, const char *value) {
+    for(size_t i = 0; i < str_list_count(list); i++) {
+        if(strcmp(str_list_get(list, i), value) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* The part of `entry_section` that lies immediately inside `section`, written
+   into `out`. False when the entry is not inside it at all.
+
+   "deps.http.opts" inside "deps" is "http" — the immediate child, never the
+   grandchild, because a caller listing a table wants the members it declares
+   and not the shape of everything beneath them. */
+static bool immediate_child(const char *entry_section, const char *section, char *out,
+                            size_t size) {
+    const char *rest = entry_section;
+    if(section[0] != '\0') {
+        const size_t length = strlen(section);
+        if(strncmp(entry_section, section, length) != 0 || entry_section[length] != '.')
+            return false;
+        rest = entry_section + length + 1;
+    } else if(entry_section[0] == '\0') {
+        return false; /* the root's own values are keys, handled by the caller */
+    }
+
+    const size_t segment = strcspn(rest, ".");
+    if(segment == 0 || segment >= size)
+        return false;
+
+    /* An element of a [[name]] array is stored as "name[0]", and a bare key
+       cannot contain '[' — so a segment that does is one of those, and it is
+       walked with toml_table_array_count rather than listed here. */
+    if(memchr(rest, '[', segment) != NULL)
+        return false;
+
+    snprintf(out, size, "%.*s", (int)segment, rest);
+    return true;
+}
+
+bool toml_section_members(const toml_document *doc, const char *section, str_list *out) {
+    if(doc == NULL || section == NULL)
+        return true;
+
+    /* One pass, so the answer is in declaration order across both spellings: a
+       reader that reports on what it found should name things in the order the
+       user wrote them, and merging two ordered lists afterwards cannot. */
+    for(size_t i = 0; i < doc->count; i++) {
+        const char *entry_section = doc->items[i].section;
+        char member[TOML_SECTION_MAX];
+
+        if(strcmp(entry_section, section) == 0)
+            snprintf(member, sizeof member, "%s", doc->items[i].key);
+        else if(!immediate_child(entry_section, section, member, sizeof member))
+            continue;
+
+        if(!already_listed(out, member) && !str_list_push(out, member))
             return false;
     }
     return true;

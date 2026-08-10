@@ -387,3 +387,78 @@ MOLTEST(wsdb_refuses_a_result_that_watches_nothing) {
     wsdb_close(db);
     fixture_teardown(&fixture);
 }
+
+MOLTEST(wsdb_keeps_two_objects_that_share_a_header_independent) {
+    /* The bug this exists for.
+     *
+     * `molto test` builds src/ and tests/ in two passes. Both include the same
+     * header. When the header changes, the first pass rebuilds and refreshes
+     * what the database knows about that header; the second pass then compared
+     * against that just-refreshed baseline and concluded nothing had changed,
+     * so it kept a stale object and linked it against fresh ones. Two layouts
+     * of the same struct in one binary is a crash with no message.
+     *
+     * An object is judged against what its prerequisites were when *it* was
+     * built, so refreshing one object's view cannot answer for another's. */
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+
+    write_at(fixture.root, "tests/test_main.c", "#include \"util.h\"\nvoid t(void){}\n");
+    write_at(fixture.root, "build/debug/obj/tests/test_main.c.o", "testobjectbytes");
+
+    char test_object[256];
+    char test_source[256];
+    snprintf(test_object, sizeof test_object, "%s/build/debug/obj/tests/test_main.c.o",
+             fixture.root);
+    snprintf(test_source, sizeof test_source, "%s/tests/test_main.c", fixture.root);
+
+    str_list test_prereqs;
+    str_list_init(&test_prereqs);
+    ASSERT_TRUE(str_list_push(&test_prereqs, test_source));
+    ASSERT_TRUE(str_list_push(&test_prereqs, fixture.util_h));
+
+    /* Both recorded against the header as it stands now. */
+    ASSERT_TRUE(wsdb_record_object(db, fixture.object, "cc-main", &fixture.prereqs));
+    ASSERT_TRUE(wsdb_record_object(db, test_object, "cc-test", &test_prereqs));
+    EXPECT_TRUE(wsdb_object_fresh(db, fixture.object, "cc-main"));
+    EXPECT_TRUE(wsdb_object_fresh(db, test_object, "cc-test"));
+
+    /* The header changes. Both are now stale. */
+    write_at(fixture.root, "src/util.h", "int answer(void);\nint extra(void);\n");
+    EXPECT_FALSE(wsdb_object_fresh(db, fixture.object, "cc-main"));
+    EXPECT_FALSE(wsdb_object_fresh(db, test_object, "cc-test"));
+
+    /* The first pass rebuilds and records what it now saw. */
+    ASSERT_TRUE(wsdb_record_object(db, fixture.object, "cc-main", &fixture.prereqs));
+    EXPECT_TRUE(wsdb_object_fresh(db, fixture.object, "cc-main"));
+
+    /* The second pass must still be stale: it has not seen the new header. */
+    EXPECT_FALSE(wsdb_object_fresh(db, test_object, "cc-test"));
+
+    str_list_free(&test_prereqs);
+    wsdb_close(db);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(wsdb_carries_per_object_prerequisites_across_a_reopen) {
+    /* The same independence has to survive being written to disk and read
+       back, or the bug returns on the next invocation of molto. */
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+    ASSERT_TRUE(wsdb_record_object(db, fixture.object, "cc-main", &fixture.prereqs));
+    wsdb_close(db);
+
+    write_at(fixture.root, "src/util.h", "int answer(void);\nint changed(void);\n");
+
+    wsdb *reopened = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(reopened);
+    EXPECT_FALSE(wsdb_object_fresh(reopened, fixture.object, "cc-main"));
+    wsdb_close(reopened);
+    fixture_teardown(&fixture);
+}

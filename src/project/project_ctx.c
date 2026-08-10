@@ -1,6 +1,7 @@
 #include <molto/project/project_ctx.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/util/doc.h>
 #include <molto/util/toml.h>
 
 #include <stdarg.h>
@@ -70,30 +71,18 @@ static bool valid_compiler(const char *name) {
 /* Copy a string array from `doc[section][key]` into a fixed-size destination.
    Overflowing the capacity — or a single value that does not fit — is an error
    rather than a silent truncation: dropping a flag would produce a green build
-   that used different options than the manifest asked for. */
+   that used different options than the manifest asked for.
+
+   The capacity passed is PROJECT_MAX_OPTS and not the destination's own size,
+   because `defines` is deliberately larger: the last two slots belong to the
+   name and version Molto contributes, and a manifest declaring the full
+   sixteen must not take them. */
 [[nodiscard]] static bool read_option_array(const toml_document *doc, const char *section,
                                             const char *key,
                                             char dest[PROJECT_MAX_OPTS][PROJECT_OPT_LEN],
                                             size_t *count, char *err, size_t err_size) {
-    str_list values;
-    str_list_init(&values);
-    bool ok = true;
-    if(toml_get_array(doc, section, key, &values)) {
-        size_t total = str_list_count(&values);
-        for(size_t i = 0; ok && i < total; i++) {
-            const char *value = str_list_get(&values, i);
-            if(*count >= PROJECT_MAX_OPTS)
-                ok = set_error(err, err_size, "[%s].%s has more than %d entries", section, key,
-                               PROJECT_MAX_OPTS);
-            else if(!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
-                ok = set_error(err, err_size, "[%s].%s entry '%s' is longer than %d characters",
-                               section, key, value, PROJECT_OPT_LEN - 1);
-            else
-                (*count)++;
-        }
-    }
-    str_list_free(&values);
-    return ok;
+    return doc_read_strings(doc_from_toml(doc), section, key, dest[0], PROJECT_MAX_OPTS,
+                            PROJECT_OPT_LEN, count, err, err_size);
 }
 
 /*
@@ -277,6 +266,12 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
          read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
          read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size);
 
+    /* Dependencies, and the registries one may name. Checked together after
+       both are read, because a manifest may declare them in either order. */
+    ok = ok && project_deps_read(doc, &out->deps, err, err_size) &&
+         project_registries_read(doc, &out->registries, err, err_size) &&
+         project_deps_check_registries(&out->deps, &out->registries, err, err_size);
+
     toml_free(doc);
     if(!ok)
         return false;
@@ -321,4 +316,5 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
             ctx->profile.bench.opt_level, ctx->profile.bench.debug_info ? "true" : "false");
     fprintf(stream, "profile.custom  = { opt_level = %d, debug_info = %s }\n",
             ctx->profile.custom.opt_level, ctx->profile.custom.debug_info ? "true" : "false");
+    project_deps_dump(&ctx->deps, stream);
 }

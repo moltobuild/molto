@@ -15,10 +15,11 @@
 
 #define WSDB_MAGIC "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
-/* Version 4 adds the analysis-result kind (RFC-0006), whose entry carries a
-   second list; version 3 added resolved toolchains. An older database is
-   discarded and rebuilt. */
-#define WSDB_VERSION 4u
+/* Version 5 records, beside every prerequisite, the content hash that
+   prerequisite had when the artifact was built; version 4 added the
+   analysis-result kind (RFC-0006), version 3 resolved toolchains. An older
+   database is discarded and rebuilt. */
+#define WSDB_VERSION 5u
 #define WSDB_ROOT_MAX 4096
 #define WSDB_PATH (WSDB_ROOT_MAX + 64)        /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
@@ -60,7 +61,19 @@ typedef struct {
     uint64_t hash;    /* inputs: FNV-1a 64 of last-seen content */
     char *command;    /* artifacts: command fingerprint (heap) */
     str_list prereqs; /* objects and results: prerequisite keys */
-    str_list values;  /* results: the recorded output */
+    /* The content hash each prerequisite had when this artifact was built,
+       parallel to `prereqs`.
+
+       It lives here, and not only in the input entry, because an input entry
+       is shared by every artifact that depends on it. Judging staleness
+       against a shared "last seen" is wrong the moment two artifacts are built
+       in separate passes: the first pass refreshes the shared baseline, and
+       the second concludes that a header it has not seen since is unchanged.
+       That produced a stale object linked against fresh ones — the same struct
+       with two layouts — which is a crash with no message. */
+    uint64_t *prereq_hashes;
+    size_t prereq_hash_count;
+    str_list values; /* results: the recorded output */
 } wsdb_entry;
 
 struct wsdb {
@@ -86,6 +99,7 @@ static wsdb_entry *entry_new(wsdb_kind kind) {
 static void entry_free(void *value) {
     wsdb_entry *e = value;
     free(e->command);
+    free(e->prereq_hashes);
     str_list_free(&e->prereqs);
     str_list_free(&e->values);
     free(e);
@@ -146,51 +160,92 @@ static uint64_t hash_file(const char *path) {
 
 /* --- freshness --- */
 
-/* Record/refresh the input signature for `rel` (a key). False means the input
-   has no baseline, so whatever depends on it will be rebuilt. */
-[[nodiscard]] static bool record_input(wsdb *db, const char *rel) {
-    char full[WSDB_PATH];
-    if(!make_full(db->root, rel, full, sizeof full))
-        return false;
-    struct stat info;
-    if(stat(full, &info) != 0)
-        return false;
-    wsdb_entry *e = str_map_get(db->entries, rel);
-    if(e == NULL || e->kind != wsdb_input_kind) {
-        e = entry_new(wsdb_input_kind);
-        if(e == NULL || !str_map_put(db->entries, rel, e)) {
-            entry_free(e);
-            return false;
-        }
-    }
-    e->mtime_ns = stat_mtime_ns(&info);
-    e->size = (uint64_t)info.st_size;
-    e->hash = hash_file(full);
-    return true;
-}
+/* The content hash `rel` has right now, and false when it cannot be read.
 
-/* Has the input `rel` changed since it was recorded? Hybrid: trust mtime+size,
-   confirm with a content hash only when they differ (and refresh on a match).
-   Timestamps are nanosecond-precise, so edits within the same second count. */
-static bool input_unchanged(wsdb *db, const char *rel) {
-    wsdb_entry *e = str_map_get(db->entries, rel);
-    if(e == NULL || e->kind != wsdb_input_kind)
-        return false; /* no baseline -> treat as changed */
+   The input entry is a memo, not a baseline: it caches (mtime, size) -> hash so
+   an unchanged file is not read again on every build. Whether an artifact is
+   stale is decided against the hash stored in that artifact's own entry. */
+[[nodiscard]] static bool current_hash(wsdb *db, const char *rel, uint64_t *out) {
     char full[WSDB_PATH];
     if(!make_full(db->root, rel, full, sizeof full))
         return false;
     struct stat info;
     if(stat(full, &info) != 0)
         return false; /* deleted */
-    if(stat_mtime_ns(&info) == e->mtime_ns && (uint64_t)info.st_size == e->size)
-        return true; /* fast path */
-    if(hash_file(full) == e->hash) {
-        e->mtime_ns = stat_mtime_ns(&info); /* touched, same content: refresh */
-        e->size = (uint64_t)info.st_size;
-        db->dirty = true;
+
+    wsdb_entry *e = str_map_get(db->entries, rel);
+    if(e != NULL && e->kind == wsdb_input_kind && stat_mtime_ns(&info) == e->mtime_ns &&
+       (uint64_t)info.st_size == e->size) {
+        *out = e->hash;
         return true;
     }
-    return false;
+
+    const uint64_t hash = hash_file(full);
+    if(e == NULL || e->kind != wsdb_input_kind) {
+        e = entry_new(wsdb_input_kind);
+        if(e == NULL || !str_map_put(db->entries, rel, e)) {
+            entry_free(e);
+            *out = hash; /* the memo is an optimisation; the answer stands */
+            return true;
+        }
+    }
+    e->mtime_ns = stat_mtime_ns(&info);
+    e->size = (uint64_t)info.st_size;
+    e->hash = hash;
+    db->dirty = true;
+    *out = hash;
+    return true;
+}
+
+/* Replace an artifact's prerequisites, recording what each one hashes to now.
+   A prerequisite that cannot be read leaves the artifact without a complete
+   baseline, which costs a rebuild rather than a wrong answer. */
+[[nodiscard]] static bool set_prereqs(wsdb *db, wsdb_entry *e, const str_list *prereqs) {
+    str_list_free(&e->prereqs);
+    str_list_init(&e->prereqs);
+    free(e->prereq_hashes);
+    e->prereq_hashes = NULL;
+    e->prereq_hash_count = 0;
+
+    const size_t count = str_list_count(prereqs);
+    if(count > 0) {
+        e->prereq_hashes = calloc(count, sizeof *e->prereq_hashes);
+        if(e->prereq_hashes == NULL)
+            return false;
+    }
+
+    bool ok = true;
+    for(size_t i = 0; i < count; i++) {
+        char rel[WSDB_PATH];
+        uint64_t hash = 0;
+        if(!relativize(db->root, str_list_get(prereqs, i), rel, sizeof rel) ||
+           !str_list_push(&e->prereqs, rel) || !current_hash(db, rel, &hash)) {
+            ok = false;
+            continue;
+        }
+        e->prereq_hashes[e->prereq_hash_count++] = hash;
+    }
+    return ok;
+}
+
+/* True when every prerequisite still hashes to what it did when this artifact
+   was built. A count that does not line up means the entry was written by a
+   failed record: rebuild rather than guess which hash belongs to which file. */
+static bool prereqs_unchanged_upto(wsdb *db, const wsdb_entry *e, size_t count) {
+    if(count > e->prereq_hash_count || count > str_list_count(&e->prereqs))
+        return false;
+    for(size_t i = 0; i < count; i++) {
+        uint64_t hash = 0;
+        if(!current_hash(db, str_list_get(&e->prereqs, i), &hash) || hash != e->prereq_hashes[i])
+            return false;
+    }
+    return true;
+}
+
+static bool prereqs_unchanged(wsdb *db, const wsdb_entry *e) {
+    if(e->prereq_hash_count != str_list_count(&e->prereqs))
+        return false;
+    return prereqs_unchanged_upto(db, e, e->prereq_hash_count);
 }
 
 bool wsdb_object_fresh(wsdb *db, const char *object, const char *command) {
@@ -205,11 +260,7 @@ bool wsdb_object_fresh(wsdb *db, const char *object, const char *command) {
     struct stat info;
     if(stat(object, &info) != 0)
         return false;
-    for(size_t i = 0; i < str_list_count(&e->prereqs); i++) {
-        if(!input_unchanged(db, str_list_get(&e->prereqs, i)))
-            return false;
-    }
-    return true;
+    return prereqs_unchanged(db, e);
 }
 
 bool wsdb_record_object(wsdb *db, const char *object, const char *command,
@@ -226,19 +277,8 @@ bool wsdb_record_object(wsdb *db, const char *object, const char *command,
         }
     }
     entry_set_command(e, command);
-    str_list_free(&e->prereqs);
-    str_list_init(&e->prereqs);
     db->dirty = true;
-    /* A prerequisite we fail to record leaves the object without a complete
-       baseline, so report it: the object is simply rebuilt next time. */
-    bool ok = true;
-    for(size_t i = 0; i < str_list_count(prereqs); i++) {
-        char prel[WSDB_PATH];
-        if(!relativize(db->root, str_list_get(prereqs, i), prel, sizeof prel) ||
-           !str_list_push(&e->prereqs, prel) || !record_input(db, prel))
-            ok = false;
-    }
-    return ok;
+    return set_prereqs(db, e, prereqs);
 }
 
 bool wsdb_binary_fresh(wsdb *db, const char *binary, const char *command) {
@@ -281,9 +321,10 @@ bool wsdb_toolchain_fresh(wsdb *db, const char *key, const char *request) {
         return false;
     if(str_list_count(&e->prereqs) == 0)
         return false;
-    /* The compiler is the first value and was recorded as an input, so this is
-       the same check that guards a source file: replaced binary, stale answer. */
-    return input_unchanged(db, str_list_get(&e->prereqs, 0));
+    /* Only the first entry is a file; the rest are plain facts about it. So
+       this watches exactly the compiler binary — replaced binary, stale
+       answer — with the same content check that guards a source file. */
+    return prereqs_unchanged_upto(db, e, 1);
 }
 
 bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request, const str_list *values) {
@@ -301,13 +342,24 @@ bool wsdb_record_toolchain(wsdb *db, const char *key, const char *request, const
     entry_set_command(e, request);
     str_list_free(&e->prereqs);
     str_list_init(&e->prereqs);
+    free(e->prereq_hashes);
+    e->prereq_hashes = NULL;
+    e->prereq_hash_count = 0;
     db->dirty = true;
 
     bool ok = true;
     for(size_t i = 0; i < str_list_count(values); i++)
         ok = str_list_push(&e->prereqs, str_list_get(values, i)) && ok;
-    /* Only the compiler is an input; the rest are plain facts about it. */
-    return ok && record_input(db, str_list_get(&e->prereqs, 0));
+
+    /* Only the compiler is an input; the rest are plain facts about it, so one
+       hash is recorded and one is checked. */
+    e->prereq_hashes = calloc(1, sizeof *e->prereq_hashes);
+    if(e->prereq_hashes == NULL)
+        return false;
+    if(!current_hash(db, str_list_get(&e->prereqs, 0), &e->prereq_hashes[0]))
+        return false;
+    e->prereq_hash_count = 1;
+    return ok;
 }
 
 bool wsdb_toolchain_values(wsdb *db, const char *key, str_list *out) {
@@ -333,11 +385,7 @@ bool wsdb_result_fresh(wsdb *db, const char *key, const char *fingerprint) {
        one is a bug in the caller, and reading one has to be survivable. */
     if(str_list_count(&e->prereqs) == 0)
         return false;
-    for(size_t i = 0; i < str_list_count(&e->prereqs); i++) {
-        if(!input_unchanged(db, str_list_get(&e->prereqs, i)))
-            return false;
-    }
-    return true;
+    return prereqs_unchanged(db, e);
 }
 
 bool wsdb_record_result(wsdb *db, const char *key, const char *fingerprint, const str_list *prereqs,
@@ -354,19 +402,11 @@ bool wsdb_record_result(wsdb *db, const char *key, const char *fingerprint, cons
         }
     }
     entry_set_command(e, fingerprint);
-    str_list_free(&e->prereqs);
-    str_list_init(&e->prereqs);
     str_list_free(&e->values);
     str_list_init(&e->values);
     db->dirty = true;
 
-    bool ok = true;
-    for(size_t i = 0; i < str_list_count(prereqs); i++) {
-        char rel[WSDB_PATH];
-        if(!relativize(db->root, str_list_get(prereqs, i), rel, sizeof rel) ||
-           !str_list_push(&e->prereqs, rel) || !record_input(db, rel))
-            ok = false;
-    }
+    bool ok = set_prereqs(db, e, prereqs);
     for(size_t i = 0; i < str_list_count(values); i++)
         ok = str_list_push(&e->values, str_list_get(values, i)) && ok;
     return ok;
@@ -494,9 +534,14 @@ static void save_entry(const char *key, void *value, void *vctx) {
     } else {
         c->ok = write_str(c->f, e->command != NULL ? e->command : "");
         if(c->ok && kind_has_list(e->kind)) {
-            c->ok = write_u32(c->f, (uint32_t)str_list_count(&e->prereqs));
+            c->ok = write_u32(c->f, (uint32_t)str_list_count(&e->prereqs)) &&
+                    write_u32(c->f, (uint32_t)e->prereq_hash_count);
             for(size_t i = 0; c->ok && i < str_list_count(&e->prereqs); i++)
                 c->ok = write_str(c->f, str_list_get(&e->prereqs, i));
+            /* Written after the names rather than interleaved, because a
+               toolchain records fewer hashes than it has entries. */
+            for(size_t i = 0; c->ok && i < e->prereq_hash_count; i++)
+                c->ok = write_u64(c->f, e->prereq_hashes[i]);
         }
         if(c->ok && kind_has_values(e->kind)) {
             c->ok = write_u32(c->f, (uint32_t)str_list_count(&e->values));
@@ -610,12 +655,22 @@ static void wsdb_load(wsdb *db) {
                 e->command = command;
                 if(kind_has_list(raw_kind)) {
                     uint32_t prereq_count;
-                    ok = read_u32(f, &prereq_count) && prereq_count <= WSDB_STRING_MAX;
+                    uint32_t hash_count;
+                    ok = read_u32(f, &prereq_count) && prereq_count <= WSDB_STRING_MAX &&
+                         read_u32(f, &hash_count) && hash_count <= prereq_count;
                     for(uint32_t p = 0; ok && p < prereq_count; p++) {
                         char *prereq = read_str(f);
                         if(prereq == NULL || !str_list_push(&e->prereqs, prereq))
                             ok = false;
                         free(prereq);
+                    }
+                    if(ok && hash_count > 0) {
+                        e->prereq_hashes = calloc(hash_count, sizeof *e->prereq_hashes);
+                        ok = e->prereq_hashes != NULL;
+                        for(uint32_t h = 0; ok && h < hash_count; h++)
+                            ok = read_u64(f, &e->prereq_hashes[h]);
+                        if(ok)
+                            e->prereq_hash_count = hash_count;
                     }
                 }
                 if(ok && kind_has_values(raw_kind)) {

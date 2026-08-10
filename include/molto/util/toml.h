@@ -10,9 +10,19 @@
 /*
  * A small, robust TOML parser. It supports a useful subset: [section] and
  * [a.b] headers, bare keys, inline comments, basic and literal strings, signed
- * integers with '_' separators, and booleans. Arrays and inline tables are
- * recognized and skipped (so a [deps] section does not break parsing). It fails
- * closed: any malformed input yields NULL and a line-tagged message.
+ * integers with '_' separators, booleans, single-line string arrays, and inline
+ * tables. It fails closed: any malformed input yields NULL and a line-tagged
+ * message.
+ *
+ * An inline table is stored as a subsection, so it reads back exactly as the
+ * equivalent header would:
+ *
+ *   [deps]
+ *   sqlite = { git = "https://…", tag = "3.53.4" }
+ *
+ *   toml_get_string(doc, "deps.sqlite", "git", url, sizeof url);
+ *
+ * which is also how toml_section_keys enumerates it.
  *
  * Two ways to read the parsed document:
  *
@@ -60,6 +70,32 @@ void toml_free(toml_document *doc);
    (caller-initialised). For sections whose keys are not known in advance, such
    as a table of environment variables. Returns false on allocation failure. */
 [[nodiscard]] bool toml_section_keys(const toml_document *doc, const char *section, str_list *out);
+
+/* Append the names declared immediately inside `section`, once each and in
+   declaration order, to `out` (caller-initialised) — whether each was written
+   as a value or as a table.
+
+     [deps]
+     yyjson = "1.2.32"
+     sqlite = { git = "…", tag = "…" }
+     [deps.http.opts]
+     jobs = 4
+
+   answers "yyjson", "sqlite", "http" for "deps": the immediate name, never the
+   grandchild "http.opts", and never twice. Pass "" for the top level, which
+   answers the root's own keys and the names of the top-level tables.
+
+   It exists because a table whose entries are themselves tables cannot be
+   enumerated otherwise: toml_section_keys answers only the entries written as a
+   plain value, since `sqlite = { … }` stores its members under "deps.sqlite"
+   and stores nothing at all under "deps". A [deps] reader built on that would
+   read half a manifest and report no error, which is the failure this parser
+   exists to prevent.
+
+   An element of a [[name]] array is not a member: it is stored as "name[0]" and
+   is walked with toml_table_array_count. Returns false on allocation failure. */
+[[nodiscard]] bool toml_section_members(const toml_document *doc, const char *section,
+                                        str_list *out);
 
 /* Copy the string elements of an array value into `out` (caller-initialised).
    Returns false if the key is absent or is not a string array. Arrays must fit

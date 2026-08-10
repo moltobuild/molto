@@ -24,6 +24,10 @@ typedef struct {
     char name[COORDINATE_MAX];
     char version[COORDINATE_MAX];
     char target[COORDINATE_MAX];
+    /* form = "source": the recipe is the whole artifact and there are no bytes
+       to upload. Absent means "binary", which is what every recipe published
+       before the key existed was. */
+    bool from_source;
 } coordinate;
 
 static void report(const char *message) { fprintf(stderr, "molto: %s\n", message); }
@@ -49,6 +53,61 @@ static const char *required_table_of(const char *kind) {
     return NULL;
 }
 
+/* The tables a source recipe carries instead: where it comes from, how it is
+   built, and what a consumer gets. */
+static const char *const SOURCE_TABLES[] = {"source", "build", "artifacts"};
+
+static bool has_table(const toml_document *doc, const char *kind, const char *table) {
+    if(toml_has_section(doc, table))
+        return true;
+    fprintf(stderr, "molto: a %s recipe needs a [%s] table\n", kind, table);
+    return false;
+}
+
+/* Which mode the recipe is in. Declared, never inferred from which tables
+   happen to be present: a source recipe with a misspelled [souce] would
+   otherwise be a valid binary one whose archive merely went missing. */
+static bool read_form(const toml_document *doc, bool *from_source) {
+    char form[COORDINATE_MAX] = "";
+    if(!toml_get_string(doc, "", "form", form, sizeof form)) {
+        *from_source = false;
+        return true;
+    }
+    if(strcmp(form, "binary") == 0) {
+        *from_source = false;
+        return true;
+    }
+    if(strcmp(form, "source") == 0) {
+        *from_source = true;
+        return true;
+    }
+    fprintf(stderr, "molto: unknown recipe form '%s'\n", form);
+    return false;
+}
+
+/* A source recipe describes something to be built on the machine that wants
+   it, which a toolchain and a tool exist precisely to avoid. */
+static bool check_tables(const toml_document *doc, const coordinate *at) {
+    if(at->from_source) {
+        if(strcmp(at->kind, "package") != 0) {
+            fprintf(stderr, "molto: a %s recipe must be form = \"binary\"\n", at->kind);
+            return false;
+        }
+        for(size_t i = 0; i < sizeof SOURCE_TABLES / sizeof SOURCE_TABLES[0]; i++) {
+            if(!has_table(doc, at->kind, SOURCE_TABLES[i]))
+                return false;
+        }
+        return true;
+    }
+
+    const char *table = required_table_of(at->kind);
+    if(table == NULL) {
+        fprintf(stderr, "molto: unknown recipe kind '%s'\n", at->kind);
+        return false;
+    }
+    return has_table(doc, at->kind, table);
+}
+
 static bool read_coordinate(const char *path, coordinate *out) {
     char *text = fs_read_file(path);
     if(text == NULL) {
@@ -67,18 +126,8 @@ static bool read_coordinate(const char *path, coordinate *out) {
     bool ok = read_key(doc, "kind", out->kind, sizeof out->kind) &&
               read_key(doc, "name", out->name, sizeof out->name) &&
               read_key(doc, "version", out->version, sizeof out->version) &&
-              read_key(doc, "target", out->target, sizeof out->target);
-
-    if(ok) {
-        const char *table = required_table_of(out->kind);
-        if(table == NULL) {
-            fprintf(stderr, "molto: unknown recipe kind '%s'\n", out->kind);
-            ok = false;
-        } else if(!toml_has_section(doc, table)) {
-            fprintf(stderr, "molto: a %s recipe needs a [%s] table\n", out->kind, table);
-            ok = false;
-        }
-    }
+              read_key(doc, "target", out->target, sizeof out->target) &&
+              read_form(doc, &out->from_source) && check_tables(doc, out);
 
     toml_free(doc);
     return ok;
@@ -171,10 +220,12 @@ static bool checksum_of(const char *file, char *out, size_t size) {
 
 /* --- publishing --- */
 
-static void describe(const coordinate *at, const char *archive, const char *checksum,
-                     const char *registry) {
+static void describe(const coordinate *at, const char *registry) {
     fprintf(stderr, "Publishing %s %s@%s (%s)\n", at->kind, at->name, at->version, at->target);
     fprintf(stderr, "  registry %s\n", registry);
+}
+
+static void describe_archive(const char *archive, const char *checksum) {
     fprintf(stderr, "  archive  %s\n", archive);
     fprintf(stderr, "  sha256   %s\n", checksum);
 }
@@ -226,13 +277,38 @@ static bool record(const credentials *creds, const coordinate *at, const char *r
     return true;
 }
 
-int publish_command_run(const char *recipe, const char *file, bool dry_run) {
-    const char *recipe_path = recipe != NULL && recipe[0] != '\0' ? recipe : DEFAULT_RECIPE;
+/* A source recipe: one request and no bytes anywhere. The recipe is the whole
+   artifact, so there is nothing to find, nothing to hash and nothing to
+   upload -- which is also why naming an archive for one is a mistake worth
+   reporting rather than an argument to ignore. */
+static int publish_source(const coordinate *at, const char *recipe_path, const char *file,
+                          bool dry_run) {
+    if(file != NULL && file[0] != '\0') {
+        report("a source recipe has no archive to publish; drop --file");
+        return exit_usage_error;
+    }
 
-    coordinate at = {0};
-    if(!read_coordinate(recipe_path, &at))
-        return exit_invalid_manifest;
+    credentials creds = {0};
+    char err[256] = "";
+    if(!credentials_load(&creds, err, sizeof err)) {
+        report(err);
+        return exit_dependency_failure;
+    }
 
+    describe(at, creds.registry);
+    fprintf(stderr, "  source   recipe only, no archive\n");
+    if(dry_run) {
+        fprintf(stderr, "  dry run: nothing was sent\n");
+        return exit_ok;
+    }
+
+    if(!record(&creds, at, recipe_path))
+        return exit_dependency_failure;
+    return exit_ok;
+}
+
+static int publish_binary(const coordinate *at, const char *recipe_path, const char *file,
+                          bool dry_run) {
     char archive[PATH_MAX_LEN];
     if(file != NULL && file[0] != '\0')
         snprintf(archive, sizeof archive, "%s", file);
@@ -255,7 +331,8 @@ int publish_command_run(const char *recipe, const char *file, bool dry_run) {
         return exit_dependency_failure;
     }
 
-    describe(&at, archive, checksum, creds.registry);
+    describe(at, creds.registry);
+    describe_archive(archive, checksum);
     if(dry_run) {
         fprintf(stderr, "  dry run: nothing was sent\n");
         return exit_ok;
@@ -264,10 +341,24 @@ int publish_command_run(const char *recipe, const char *file, bool dry_run) {
     /* The bytes first and the row last: a blob without a row is invisible and
        costs only storage, while a row without its blob is an artifact nobody
        can download and the registry cannot serve around. */
-    if(!upload(&creds, &at, archive, checksum))
+    if(!upload(&creds, at, archive, checksum))
         return exit_dependency_failure;
-    if(!record(&creds, &at, recipe_path))
+    if(!record(&creds, at, recipe_path))
         return exit_dependency_failure;
+    return exit_ok;
+}
+
+int publish_command_run(const char *recipe, const char *file, bool dry_run) {
+    const char *recipe_path = recipe != NULL && recipe[0] != '\0' ? recipe : DEFAULT_RECIPE;
+
+    coordinate at = {0};
+    if(!read_coordinate(recipe_path, &at))
+        return exit_invalid_manifest;
+
+    const int code = at.from_source ? publish_source(&at, recipe_path, file, dry_run)
+                                    : publish_binary(&at, recipe_path, file, dry_run);
+    if(code != exit_ok || dry_run)
+        return code;
 
     fprintf(stderr, "Published %s %s@%s (%s)\n", at.kind, at.name, at.version, at.target);
     return exit_ok;
