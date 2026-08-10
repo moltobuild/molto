@@ -372,3 +372,120 @@ MOLTEST(a_build_without_dependencies_writes_no_lock) {
 
     sandbox_close(&at);
 }
+
+/* --- holding a resolution against what was locked --- */
+
+/* The resolution that produced a lock agrees with it. Anything else here would
+   mean a build could never be repeated. */
+MOLTEST(a_resolution_verifies_against_its_own_lock) {
+    sandbox at;
+    project_ctx ctx;
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(build_chain(&at, &ctx, &graph));
+
+    char err[512] = "";
+    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, err, sizeof err));
+
+    lockfile lock;
+    ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
+    EXPECT_TRUE(lockfile_verify(&lock, graph, err, sizeof err));
+
+    lockfile_free(&lock);
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* A coordinate that now points somewhere else. The registry is a remote party
+   and a coordinate is supposed to be immutable, so this is the check the lock
+   exists for. */
+MOLTEST(a_source_that_moved_is_refused) {
+    sandbox at;
+    project_ctx ctx;
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(build_chain(&at, &ctx, &graph));
+
+    char path[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(path, sizeof path, "%s/Molto.lock", at.root));
+    ASSERT_TRUE(fs_write_file(path, "version = 1\nroot = \"app\"\n\n"
+                                    "[[package]]\nname = \"a\"\nsource = \"path+/elsewhere/a\"\n"
+                                    "scopes = [\"runtime\"]\ndependencies = [\"b\"]\n\n"
+                                    "[[package]]\nname = \"b\"\nsource = \"path+/elsewhere/b\"\n"
+                                    "scopes = [\"runtime\"]\ndependencies = []\n"));
+
+    lockfile lock;
+    char err[512] = "";
+    ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
+    EXPECT_FALSE(lockfile_verify(&lock, graph, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "now comes from"));
+
+    lockfile_free(&lock);
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* A dependency that appeared out of a coordinate that was supposed to be
+   frozen. This is the shape a compromised release has. */
+MOLTEST(a_package_the_lock_never_saw_is_refused) {
+    sandbox at;
+    project_ctx ctx;
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(build_chain(&at, &ctx, &graph));
+
+    /* The lock knows `a` and not the `b` that `a` pulls in. */
+    char path[PATH_MAX_LEN];
+    char lock_text[DEP_GRAPH_SOURCE_MAX + PATH_MAX_LEN];
+    const dep_node *a = dep_graph_find(graph, "a");
+    ASSERT_NOT_NULL(a);
+    snprintf(lock_text, sizeof lock_text,
+             "version = 1\nroot = \"app\"\n\n[[package]]\nname = \"a\"\nsource = \"%s\"\n"
+             "scopes = [\"runtime\"]\ndependencies = []\n",
+             a->source);
+    ASSERT_TRUE(fs_format_path(path, sizeof path, "%s/Molto.lock", at.root));
+    ASSERT_TRUE(fs_write_file(path, lock_text));
+
+    lockfile lock;
+    char err[512] = "";
+    ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
+    EXPECT_FALSE(lockfile_verify(&lock, graph, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "'b'"));
+
+    lockfile_free(&lock);
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* And the build refuses too, rather than warning: a resolution that disagrees
+   with the lock is the one case where continuing is the wrong default. */
+MOLTEST(a_build_stops_when_the_lock_disagrees) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    EXPECT_TRUE(make_package(&at, "greet", NULL));
+
+    char dir[PATH_MAX_LEN];
+    char file[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(dir, sizeof dir, "%s/app/src", at.root));
+    ASSERT_TRUE(fs_make_dirs(dir));
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/main.c", dir));
+    ASSERT_TRUE(fs_write_file(file, "int main(void) { return 0; }\n"));
+
+    char manifest[PATH_MAX_LEN * 2];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[target]\nstd = \"c17\"\n"
+             "[deps]\ngreet = { path = \"%s/greet\" }\n",
+             at.root);
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/app/Project.toml", at.root));
+    ASSERT_TRUE(fs_write_file(file, manifest));
+
+    char app[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(app, sizeof app, "%s/app", at.root));
+    ASSERT_EQ(exit_ok, build_project(app, profile_debug, false, NULL, 0));
+
+    /* Someone repoints the same name at a different directory. */
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/Molto.lock", app));
+    ASSERT_TRUE(fs_write_file(file, "version = 1\nroot = \"app\"\n\n[[package]]\n"
+                                    "name = \"greet\"\nsource = \"path+/somewhere/else\"\n"
+                                    "scopes = [\"runtime\"]\ndependencies = []\n"));
+    EXPECT_EQ(exit_dependency_failure, build_project(app, profile_debug, false, NULL, 0));
+
+    sandbox_close(&at);
+}

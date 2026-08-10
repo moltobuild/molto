@@ -75,6 +75,21 @@ typedef struct {
    rather than patched. */
 [[nodiscard]] bool lockfile_matches(const lockfile *lock, const project_ctx *ctx);
 
+/* Refuse a resolution that does not match what was locked.
+ *
+ * This is what a lock file is *for*. Exact versions already make the numbers
+ * reproducible (RFC-0008); what they cannot do is notice that the bytes behind
+ * one of those numbers changed. A coordinate is supposed to be immutable
+ * (RFC-0010), so a package that resolves to a different checksum, a different
+ * origin, or that has grown a dependency it did not have, is either a registry
+ * that rewrote history or an attack — and both are worth stopping a build for.
+ *
+ * Only meaningful when `lockfile_matches` already said the manifest is
+ * unchanged: a user editing `[deps]` is *expected* to change the resolution.
+ */
+[[nodiscard]] bool lockfile_verify(const lockfile *lock, const dep_graph *graph, char *err,
+                                   size_t err_size);
+
 void lockfile_free(lockfile *lock);
 
 #endif /* MOLTO_LOCKFILE_H */

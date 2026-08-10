@@ -705,12 +705,31 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     if(ctx->deps.count == 0 && ctx->dev_deps.count == 0)
         return true;
 
-    dep_graph *graph = NULL;
-    if(!dep_graph_resolve(ctx, &graph, err, err_size))
-        return false;
+    /* Read before resolving, so what comes back can be held against it. A
+       missing or stale lock is not an error: there is simply nothing to check
+       against, and one is written at the end either way. */
+    lockfile lock;
+    char lock_err[512] = "";
+    const bool locked =
+        lockfile_read(root, &lock, lock_err, sizeof lock_err) && lockfile_matches(&lock, ctx);
 
-    bool ok = deps_prepare_graph(graph, out, err, err_size) &&
-              deps_prepare_dev(graph, dev_out, err, err_size);
+    dep_graph *graph = NULL;
+    if(!dep_graph_resolve(ctx, &graph, err, err_size)) {
+        if(lock.packages != NULL)
+            lockfile_free(&lock);
+        return false;
+    }
+
+    bool ok = !locked || lockfile_verify(&lock, graph, err, err_size);
+    if(lock.packages != NULL)
+        lockfile_free(&lock);
+    if(!ok) {
+        dep_graph_free(graph);
+        return false;
+    }
+
+    ok = deps_prepare_graph(graph, out, err, err_size) &&
+         deps_prepare_dev(graph, dev_out, err, err_size);
     /* Failing to record a resolution that succeeded must not fail the build:
        the objects are correct either way, and the cost is that the next build
        resolves again. Silence would be worse — a lock file nobody can write is

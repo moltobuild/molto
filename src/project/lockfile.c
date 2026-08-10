@@ -16,6 +16,9 @@
 #define SCOPE_RUNTIME "runtime"
 #define SCOPE_DEV "dev"
 
+/* The file whose edits make a lock stale, named in the message that says so. */
+#define MANIFEST_FILENAME "Project.toml"
+
 /* Grown as needed; the initial size holds a small graph without a realloc. */
 #define RENDER_INITIAL 4096
 
@@ -300,6 +303,45 @@ bool lockfile_matches(const lockfile *lock, const project_ctx *ctx) {
     const bool complete = ok && str_map_size(seen) == lock->count;
     str_map_destroy(seen);
     return complete;
+}
+
+/* --- verifying --- */
+
+bool lockfile_verify(const lockfile *lock, const dep_graph *graph, char *err, size_t err_size) {
+    for(size_t i = 0; i < dep_graph_count(graph); i++) {
+        const dep_node *node = dep_graph_at(graph, i);
+        const lock_package *locked = find_package(lock, node->name);
+
+        /* A package the lock never saw, on a manifest that has not changed,
+           means something upstream grew a dependency under a coordinate that
+           was supposed to be frozen. */
+        if(locked == NULL)
+            return set_error(
+                err, err_size,
+                "'%s' is in this build and not in " LOCKFILE_NAME ", though " MANIFEST_FILENAME
+                " has not changed. Something it depends on "
+                "changed what *it* depends on. Check the diff, then delete " LOCKFILE_NAME
+                " to accept it",
+                node->name);
+
+        if(strcmp(locked->version, node->version) != 0)
+            return set_error(err, err_size,
+                             "'%s' resolves to version '%s' and " LOCKFILE_NAME " records '%s'",
+                             node->name, node->version, locked->version);
+        if(strcmp(locked->source, node->source) != 0)
+            return set_error(err, err_size,
+                             "'%s' now comes from %s and " LOCKFILE_NAME " records %s", node->name,
+                             node->source, locked->source);
+        /* A checksum only one side has is not a mismatch: a path dependency
+           has none, and neither did a lock written before one was recorded. */
+        if(locked->checksum[0] != '\0' && node->checksum[0] != '\0' &&
+           strcmp(locked->checksum, node->checksum) != 0)
+            return set_error(err, err_size,
+                             "'%s' %s hashes to %s and " LOCKFILE_NAME " records %s. The same "
+                             "coordinate served different bytes",
+                             node->name, node->version, node->checksum, locked->checksum);
+    }
+    return true;
 }
 
 void lockfile_free(lockfile *lock) {
