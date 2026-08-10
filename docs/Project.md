@@ -322,10 +322,16 @@ Three rules worth knowing:
 `molto add` and `molto remove` edit these tables for you:
 
 ```sh
-molto add sqlite@3.53.4               # into [deps]
+molto add sqlite                      # the newest release, written as an exact version
+molto add sqlite@3.53.4               # that one
 molto add tinytest --dev --path ../tt # into [dev-deps]
 molto remove sqlite
 ```
+
+Adding a name you already have is how you upgrade it — the same move as
+`npm install`. Without `@<version>` Molto asks the registry what the newest
+release is and **writes that number into the manifest**, so the choice is made
+once, in a diff you can read, and never again behind your back.
 
 They edit lines rather than rewriting the file, so your comments, alignment and
 key order survive — and re-adding a name at a new version replaces it where it
@@ -345,8 +351,7 @@ These are specified in RFC-0003 but do nothing in the current binary:
 | Table / key | Behaviour today |
 |---|---|
 | `package.artifact` | **Hard error.** Every project links an executable; `static`/`shared` would need `ar`, `-shared` and `-fPIC`, so the key is refused rather than accepted and ignored |
-| `molto update` | Exits with code 5. Picking a newer release needs a version comparator that does not exist yet; edit the version by hand |
-| `molto add <name>` with no `@<version>` | Refused, for the same reason: Molto cannot yet say which release is newest |
+| `molto update` | Exits with code 5, and stays that way: `molto add <name>` is the upgrade, the way `npm install` is |
 | A dependency published as a prebuilt library | Refused with a message. Only `[artifacts] type = "source"` can be consumed |
 | `[features]`, `[build-deps]`, `[workspace]` | Not read |
 | `dep.recipe`, `artifact`, `optional`, `features`, `default_features` | Refused rather than ignored |
