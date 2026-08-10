@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <molto/project/project_deps.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/source_service.h>
 
@@ -31,6 +32,11 @@ typedef struct {
     /* Where to fetch from, when the recipe's form is source. */
     source_spec source;
     recipe_artifacts artifacts;
+    /* What this package depends on in turn, read from the same recipe. It is
+       here because it is only readable while the registry's answer is alive,
+       and because a second request to learn it would ask the registry the
+       question it already answered. */
+    project_deps deps;
     /* Binary form only, and empty for a source recipe, which has no bytes in
        the registry at all. */
     char download_url[SOURCE_URL_MAX];

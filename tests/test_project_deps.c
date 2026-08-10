@@ -2,6 +2,8 @@
 
 #include <molto/project/project_ctx.h>
 #include <molto/project/project_deps.h>
+#include <molto/util/doc.h>
+#include <molto/util/json.h>
 #include <molto/util/toml.h>
 
 #include <stdio.h>
@@ -322,4 +324,61 @@ MOLTEST(a_bad_dependency_fails_the_whole_manifest) {
                                "[deps]\nsqlite = \"~3.53.0\"\n",
                                &ctx, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "'~'"));
+}
+
+/* --- the same reader, on the encoding a registry answers with (RFC-0010) --- */
+
+/* Reads a [deps] table out of a recipe served as JSON, the way a registry
+   serves one inside an artifact's metadata. */
+static bool read_deps_json(const char *text, project_deps *out, char *err, size_t err_size) {
+    json_document *doc = json_parse(text);
+    if (doc == NULL) {
+        snprintf(err, err_size, "not JSON");
+        return false;
+    }
+    const bool ok = project_deps_read_doc(doc_from_json(json_root(doc)), out, err, err_size);
+    json_free(doc);
+    return ok;
+}
+
+/* Discovering a transitive dependency means reading the [deps] of a recipe that
+   never was a file. Both spellings have to survive the crossing, or the graph
+   depends on which encoding a dependency happened to arrive in. */
+MOLTEST(deps_read_the_same_from_a_recipe_served_as_json) {
+    project_deps deps;
+    char err[512] = "";
+    ASSERT_TRUE(read_deps_json("{\"kind\":\"package\",\"deps\":{"
+                               "\"yyjson\":\"0.10.0\","
+                               "\"png\":{\"git\":\"https://x/png.git\",\"tag\":\"v1.6.40\"}"
+                               "}}",
+                               &deps, err, sizeof err));
+
+    ASSERT_EQ(2u, deps.count);
+    EXPECT_STREQ("yyjson", deps.items[0].name);
+    EXPECT_EQ(dep_resolution_registry, deps.items[0].resolution);
+    EXPECT_STREQ("0.10.0", deps.items[0].version);
+
+    EXPECT_STREQ("png", deps.items[1].name);
+    EXPECT_EQ(dep_source_git, deps.items[1].source);
+    EXPECT_EQ(dep_resolution_carried, deps.items[1].resolution);
+    EXPECT_STREQ("https://x/png.git", deps.items[1].location);
+    EXPECT_EQ(dep_git_ref_tag, deps.items[1].git_ref);
+    EXPECT_STREQ("v1.6.40", deps.items[1].reference);
+}
+
+/* A recipe with no [deps] is a leaf, not a failure: most of them are. */
+MOLTEST(a_recipe_without_deps_is_a_leaf) {
+    project_deps deps;
+    char err[512] = "";
+    ASSERT_TRUE(read_deps_json("{\"kind\":\"package\",\"name\":\"sqlite\"}", &deps, err, sizeof err));
+    EXPECT_EQ(0u, deps.count);
+}
+
+/* The rules are the reader's, not the manifest's: a range published in a recipe
+   is refused exactly as one written by hand. */
+MOLTEST(a_range_in_a_recipe_is_refused_too) {
+    project_deps deps;
+    char err[512] = "";
+    EXPECT_FALSE(read_deps_json("{\"deps\":{\"png\":\">=1.6.0\"}}", &deps, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "'>='"));
 }

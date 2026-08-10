@@ -85,11 +85,11 @@ static bool is_known_key(const char *key) {
 
 /* Every key is classified before any is read, so a typo is an error instead of
    a dependency that silently resolves to something else. */
-static bool check_keys(const toml_document *doc, const char *section, const char *name, char *err,
+static bool check_keys(doc_view doc, const char *section, const char *name, char *err,
                        size_t err_size) {
     str_list keys;
     str_list_init(&keys);
-    if(!toml_section_keys(doc, section, &keys)) {
+    if(!doc_table_members(doc, section, &keys)) {
         str_list_free(&keys);
         return set_error(err, err_size, "could not read [deps].%s", name);
     }
@@ -134,20 +134,20 @@ static bool read_version(const char *name, const char *version, project_dep *out
 
 /* The plain-string form. RFC-0003: `dep = "1.2.3"` is exactly
    `dep = { version = "1.2.3" }`. */
-static bool read_shorthand(const toml_document *doc, const char *name, project_dep *out, char *err,
+static bool read_shorthand(doc_view doc, const char *name, project_dep *out, char *err,
                            size_t err_size) {
     char version[DEP_VERSION_MAX * 2];
-    if(!toml_get_string(doc, DEPS_SECTION, name, version, sizeof version))
+    if(!doc_get_string(doc, DEPS_SECTION, name, version, sizeof version))
         return set_error(err, err_size, "[deps].%s must be a version string or a table", name);
     return read_version(name, version, out, err, err_size);
 }
 
-static bool read_source_key(const toml_document *doc, const char *section, const char *name,
-                            project_dep *out, char *err, size_t err_size) {
+static bool read_source_key(doc_view doc, const char *section, const char *name, project_dep *out,
+                            char *err, size_t err_size) {
     bool found = false;
     for(size_t i = 0; i < sizeof DEP_SOURCES / sizeof DEP_SOURCES[0]; i++) {
         char value[DEP_LOCATION_MAX];
-        if(!toml_get_string(doc, section, DEP_SOURCES[i].key, value, sizeof value))
+        if(!doc_get_string(doc, section, DEP_SOURCES[i].key, value, sizeof value))
             continue;
         if(found)
             return set_error(err, err_size,
@@ -173,12 +173,12 @@ static bool read_source_key(const toml_document *doc, const char *section, const
     return true;
 }
 
-static bool read_git_ref(const toml_document *doc, const char *section, const char *name,
-                         project_dep *out, char *err, size_t err_size) {
+static bool read_git_ref(doc_view doc, const char *section, const char *name, project_dep *out,
+                         char *err, size_t err_size) {
     bool found = false;
     for(size_t i = 0; i < sizeof DEP_GIT_REFS / sizeof DEP_GIT_REFS[0]; i++) {
         char value[DEP_REFERENCE_MAX];
-        if(!toml_get_string(doc, section, DEP_GIT_REFS[i].key, value, sizeof value))
+        if(!doc_get_string(doc, section, DEP_GIT_REFS[i].key, value, sizeof value))
             continue;
         if(found)
             return set_error(err, err_size,
@@ -196,8 +196,8 @@ static bool read_git_ref(const toml_document *doc, const char *section, const ch
     return true;
 }
 
-static bool read_table(const toml_document *doc, const char *section, const char *name,
-                       project_dep *out, char *err, size_t err_size) {
+static bool read_table(doc_view doc, const char *section, const char *name, project_dep *out,
+                       char *err, size_t err_size) {
     if(!check_keys(doc, section, name, err, err_size))
         return false;
     if(!read_source_key(doc, section, name, out, err, err_size))
@@ -205,11 +205,11 @@ static bool read_table(const toml_document *doc, const char *section, const char
     if(!read_git_ref(doc, section, name, out, err, err_size))
         return false;
 
-    if(!toml_get_string(doc, section, "registry", out->registry, sizeof out->registry))
+    if(!doc_get_string(doc, section, "registry", out->registry, sizeof out->registry))
         out->registry[0] = '\0';
-    if(!toml_get_string(doc, section, "sha256", out->sha256, sizeof out->sha256))
+    if(!doc_get_string(doc, section, "sha256", out->sha256, sizeof out->sha256))
         out->sha256[0] = '\0';
-    if(!toml_get_string(doc, section, "strip_prefix", out->strip_prefix, sizeof out->strip_prefix))
+    if(!doc_get_string(doc, section, "strip_prefix", out->strip_prefix, sizeof out->strip_prefix))
         out->strip_prefix[0] = '\0';
 
     if(out->resolution == dep_resolution_registry)
@@ -225,8 +225,7 @@ static bool read_table(const toml_document *doc, const char *section, const char
     return true;
 }
 
-static bool read_one(const toml_document *doc, const char *name, project_dep *out, char *err,
-                     size_t err_size) {
+static bool read_one(doc_view doc, const char *name, project_dep *out, char *err, size_t err_size) {
     memset(out, 0, sizeof *out);
 
     if(!manifest_is_valid_name(name))
@@ -243,16 +242,16 @@ static bool read_one(const toml_document *doc, const char *name, project_dep *ou
     /* A value under [deps] is the shorthand; a table under [deps.<name>] is the
        long form. The parser stores an inline table exactly as it stores a
        header, so both arrive here the same way. */
-    return toml_has_section(doc, section) ? read_table(doc, section, name, out, err, err_size)
-                                          : read_shorthand(doc, name, out, err, err_size);
+    return doc_has_table(doc, section) ? read_table(doc, section, name, out, err, err_size)
+                                       : read_shorthand(doc, name, out, err, err_size);
 }
 
-bool project_deps_read(const toml_document *doc, project_deps *out, char *err, size_t err_size) {
+bool project_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t err_size) {
     out->count = 0;
 
     str_list names;
     str_list_init(&names);
-    if(!toml_section_members(doc, DEPS_SECTION, &names)) {
+    if(!doc_table_members(doc, DEPS_SECTION, &names)) {
         str_list_free(&names);
         return set_error(err, err_size, "could not read the [deps] table");
     }
@@ -274,6 +273,10 @@ bool project_deps_read(const toml_document *doc, project_deps *out, char *err, s
     if(!ok)
         out->count = 0;
     return ok;
+}
+
+bool project_deps_read(const toml_document *doc, project_deps *out, char *err, size_t err_size) {
+    return project_deps_read_doc(doc_from_toml(doc), out, err, err_size);
 }
 
 bool project_dep_to_source(const project_dep *dep, source_spec *out, char *err, size_t err_size) {

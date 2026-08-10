@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include <molto/services/source_service.h>
+#include <molto/util/doc.h>
 #include <molto/util/toml.h>
 
 /*
@@ -113,6 +114,16 @@ typedef struct {
    supported yet. */
 [[nodiscard]] bool project_deps_read(const toml_document *doc, project_deps *out, char *err,
                                      size_t err_size);
+
+/* The same, through doc_view, so a recipe's `[deps]` is read by exactly the
+   code that reads a manifest's — whether that recipe arrived as TOML on disk or
+   as the JSON a registry serves inside an artifact's metadata.
+
+   A transitive dependency is discovered this way, and it has to be the same
+   reader: a graph built from two parsers is a graph whose edges disagree about
+   what a dependency is. */
+[[nodiscard]] bool project_deps_read_doc(doc_view doc, project_deps *out, char *err,
+                                         size_t err_size);
 
 /* Read the `[registries]` table. An absent table is not an error. */
 [[nodiscard]] bool project_registries_read(const toml_document *doc, project_registries *out,
