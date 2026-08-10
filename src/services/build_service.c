@@ -701,15 +701,16 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
  * needed one — molto's own repository included.
  */
 [[nodiscard]] static bool prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
-                                           char *err, size_t err_size) {
-    if(ctx->deps.count == 0)
+                                           prepared_deps *dev_out, char *err, size_t err_size) {
+    if(ctx->deps.count == 0 && ctx->dev_deps.count == 0)
         return true;
 
     dep_graph *graph = NULL;
     if(!dep_graph_resolve(ctx, &graph, err, err_size))
         return false;
 
-    bool ok = deps_prepare_graph(graph, out, err, err_size);
+    bool ok = deps_prepare_graph(graph, out, err, err_size) &&
+              deps_prepare_dev(graph, dev_out, err, err_size);
     /* Failing to record a resolution that succeeded must not fail the build:
        the objects are correct either way, and the cost is that the next build
        resolves again. Silence would be worse — a lock file nobody can write is
@@ -729,7 +730,8 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
 static int compile_project(const char *root, build_profile profile, wsdb *db,
                            bool refresh_toolchain, project_ctx *ctx_out,
                            resolved_toolchain *chain_out, str_list *objects_out,
-                           str_list *include_flags_out, bool *any_cpp_out, bool *any_compiled_out) {
+                           str_list *include_flags_out, bool *any_cpp_out, bool *any_compiled_out,
+                           prepared_deps *dev_out) {
     int result = load_project(root, ctx_out);
     if(result != exit_ok)
         return result;
@@ -754,7 +756,7 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     prepared_deps deps;
     prepared_deps_init(&deps);
     char deps_err[512] = "";
-    if(!prepare_and_lock(root, ctx_out, &deps, deps_err, sizeof deps_err)) {
+    if(!prepare_and_lock(root, ctx_out, &deps, dev_out, deps_err, sizeof deps_err)) {
         fprintf(stderr, "molto: %s\n", deps_err);
         prepared_deps_free(&deps);
         return exit_dependency_failure;
@@ -870,8 +872,13 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     str_list_init(&include_flags);
     bool any_cpp = false;
     bool any_compiled = false;
+    /* Development dependencies are resolved here too — they share the graph and
+       the version check — but this build links none of them. */
+    prepared_deps dev;
+    prepared_deps_init(&dev);
     int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &include_flags, &any_cpp, &any_compiled);
+                                 &include_flags, &any_cpp, &any_compiled, &dev);
+    prepared_deps_free(&dev);
 
     if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
@@ -1065,9 +1072,12 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     str_list_init(&include_flags);
     bool any_cpp = false;
     bool any_compiled = false;
+    prepared_deps dev;
+    prepared_deps_init(&dev);
     int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &include_flags, &any_cpp, &any_compiled);
+                                 &include_flags, &any_cpp, &any_compiled, &dev);
     if(result != exit_ok) {
+        prepared_deps_free(&dev);
         str_list_free(&objects);
         str_list_free(&include_flags);
         warn_if_not_saved(db);
@@ -1096,6 +1106,50 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     }
     bool has_main = fs_path_exists(main_source);
 
+    /*
+     * What `[dev-deps]` adds, and only here.
+     *
+     * Their include directories go onto the line that compiles `tests/` and
+     * onto no other, which is what makes the separation real: a source under
+     * `src/` that includes one fails to compile with "no such file", on the
+     * first build, rather than at link time or in production (RFC-0008).
+     *
+     * Their defines and flags land in `[test].options` and their libraries in
+     * this `ctx`'s link list — both local to this function, so the binary
+     * `molto build` produces never sees them.
+     */
+    if(result == exit_ok && str_list_count(&dev.includes) > 0) {
+        char flag[PATH_BUFFER_SIZE + 4];
+        for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.includes); i++) {
+            const char *directory = str_list_get(&dev.includes, i);
+            if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory) ||
+               !str_list_push(&include_flags, flag))
+                result = exit_build_failure;
+        }
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.defines); i++) {
+        if(!append_option(ctx.test.options.defines, &ctx.test.options.define_count,
+                          PROJECT_MAX_OPTS, str_list_get(&dev.defines, i), "[test].defines"))
+            result = exit_build_failure;
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.flags); i++) {
+        if(!append_option(ctx.test.options.flags, &ctx.test.options.flag_count, PROJECT_MAX_OPTS,
+                          str_list_get(&dev.flags, i), "[test].flags"))
+            result = exit_build_failure;
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.links); i++) {
+        const char *library = str_list_get(&dev.links, i);
+        if(ctx.target.link_count >= PROJECT_MAX_LINK ||
+           !fs_format_path(ctx.target.link[ctx.target.link_count], PROJECT_LINK_NAME_MAX, "%s",
+                           library)) {
+            fprintf(stderr, "molto: a development dependency's '%s' does not fit the link line\n",
+                    library);
+            result = exit_build_failure;
+        } else {
+            ctx.target.link_count++;
+        }
+    }
+
     /* Library objects = every src object except the app's main object. */
     str_list lib_objects;
     str_list_init(&lib_objects);
@@ -1105,6 +1159,31 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             continue;
         if(!str_list_push(&lib_objects, object))
             result = exit_build_failure;
+    }
+
+    /* A development dependency's own sources are compiled in their own pass,
+       against their own options, exactly as a runtime one's are — and their
+       objects join the test link rather than the project's. */
+    if(result == exit_ok && str_list_count(&dev.sources) > 0) {
+        project_options dev_options;
+        memset(&dev_options, 0, sizeof dev_options);
+        str_list dev_include_flags;
+        str_list_init(&dev_include_flags);
+        project_target dev_target = ctx.target;
+        memset(&dev_target.options, 0, sizeof dev_target.options);
+        dev_target.link_count = 0;
+
+        bool dev_cpp = false;
+        bool dev_compiled = false;
+        if(!collect_dep_options(&dev, &dev_options, &dev_include_flags))
+            result = exit_build_failure;
+        else
+            result = compile_sources(root, profile, &settings, &dev_include_flags, &dev_target,
+                                     NULL, &dev_options, &ctx.env, &chain, db, &dev.sources,
+                                     &lib_objects, &dev_cpp, &dev_compiled);
+        any_cpp = any_cpp || dev_cpp;
+        any_compiled = any_compiled || dev_compiled;
+        str_list_free(&dev_include_flags);
     }
 
     str_list test_sources;
@@ -1154,6 +1233,7 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             wsdb_prune(db, test_binaries_out, prefix);
     }
 
+    prepared_deps_free(&dev);
     str_list_free(&test_objects);
     str_list_free(&test_sources);
     str_list_free(&lib_objects);
