@@ -1,5 +1,6 @@
 #include <molto/cli.h>
 
+#include <molto/commands/add_command.h>
 #include <molto/commands/build_command.h>
 #include <molto/commands/clean_command.h>
 #include <molto/commands/fmt_command.h>
@@ -14,6 +15,7 @@
 #include <molto/util/cli.h>
 
 #include <stdio.h>
+#include <string.h>
 
 /* Handed in by whoever compiled this, from [package] version in Project.toml.
    Molto defines it for every project it builds, and the bootstrap Makefile
@@ -28,6 +30,16 @@ const char *cli_version(void) { return MOLTO_PKG_VERSION; }
 /* The --all switch of `molto clean`. */
 static const cli_option clean_options[] = {
     {"--all", 'a', cli_opt_flag, NULL, "Also remove .bin/ (the incremental state)", NULL},
+};
+
+/* `molto add`. The source keys mirror RFC-0003's, so what is typed here and
+   what ends up in the manifest are spelled the same. */
+static const cli_option add_options[] = {
+    {"--dev", 0, cli_opt_flag, NULL, "Add to [dev-deps]: needed to develop, never shipped", NULL},
+    {"--git", 0, cli_opt_value, "<url>", "Take it from a git repository", NULL},
+    {"--path", 0, cli_opt_value, "<dir>", "Take it from a local directory", NULL},
+    {"--archive", 0, cli_opt_value, "<url>", "Take it from a source archive", NULL},
+    {"--registry", 0, cli_opt_value, "<name>", "Resolve it against a named registry", NULL},
 };
 
 /* The options shared by build/run/test. --refresh-toolchain asks again which
@@ -97,6 +109,49 @@ static int handle_new(const cli_args *args) {
 static int handle_init(const cli_args *args) {
     (void)args;
     return init_command_run();
+}
+
+/* `<name>@<version>` is one argument, because that is how a version is asked
+   for everywhere else a package manager is used. */
+static int handle_add(const cli_args *args) {
+    const char *spec = cli_args_positional(args, 0);
+    char name[128] = "";
+    const char *version = NULL;
+    if(spec != NULL) {
+        const char *at = strrchr(spec, '@');
+        if(at == NULL) {
+            snprintf(name, sizeof name, "%s", spec);
+        } else {
+            snprintf(name, sizeof name, "%.*s", (int)(at - spec), spec);
+            version = at + 1;
+        }
+    }
+
+    /* Exactly one source, checked here so the message is about the command
+       line rather than about a manifest the user did not write by hand. */
+    static const char *const keys[] = {"git", "path", "archive"};
+    const char *source_key = NULL;
+    const char *source = NULL;
+    for(size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        char flag[16];
+        snprintf(flag, sizeof flag, "--%s", keys[i]);
+        const char *value = cli_args_option(args, flag);
+        if(value == NULL)
+            continue;
+        if(source != NULL) {
+            fprintf(stderr, "molto: a dependency has exactly one source\n");
+            return exit_usage_error;
+        }
+        source_key = keys[i];
+        source = value;
+    }
+
+    return add_command_run(spec == NULL ? NULL : name, version, source_key, source,
+                           cli_args_option(args, "--registry"), cli_args_flag(args, "--dev"));
+}
+
+static int handle_remove(const cli_args *args) {
+    return remove_command_run(cli_args_positional(args, 0));
 }
 
 static bool wants_refresh(const cli_args *args) {
@@ -171,8 +226,9 @@ static const cli_command commands[] = {
     {"bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented},
     {"lint", "Run diagnostics and static checks", NULL, lint_options,
      sizeof lint_options / sizeof lint_options[0], handle_lint},
-    {"add", "Add a dependency", "<dep>", NULL, 0, handle_unimplemented},
-    {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_unimplemented},
+    {"add", "Add a dependency", "<dep>[@<version>]", add_options,
+     sizeof add_options / sizeof add_options[0], handle_add},
+    {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_remove},
     {"login", "Store a registry credential", NULL, login_options,
      sizeof login_options / sizeof login_options[0], handle_login},
     {"publish", "Publish an artifact to a registry", NULL, publish_options,

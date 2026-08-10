@@ -319,6 +319,20 @@ Three rules worth knowing:
 - **Development dependencies are not transitive.** Only yours are resolved.
   A library you depend on does not drag its test framework into your build.
 
+`molto add` and `molto remove` edit these tables for you:
+
+```sh
+molto add sqlite@3.53.4               # into [deps]
+molto add tinytest --dev --path ../tt # into [dev-deps]
+molto remove sqlite
+```
+
+They edit lines rather than rewriting the file, so your comments, alignment and
+key order survive — and re-adding a name at a new version replaces it where it
+already sits, keeping any comment beside it. Every edit is parsed before it is
+written: one that would leave a manifest Molto cannot read is refused and your
+file is untouched.
+
 Resolving writes `Molto.lock`, which records the whole graph — including the
 transitive packages your manifest never mentions — with a `scopes` array saying
 which builds reach each one. It is generated; commit it, and edit
@@ -331,7 +345,8 @@ These are specified in RFC-0003 but do nothing in the current binary:
 | Table / key | Behaviour today |
 |---|---|
 | `package.artifact` | **Hard error.** Every project links an executable; `static`/`shared` would need `ar`, `-shared` and `-fPIC`, so the key is refused rather than accepted and ignored |
-| `molto add` / `remove` / `update` | Exit with code 5. Edit `[deps]` by hand for now |
+| `molto update` | Exits with code 5. Picking a newer release needs a version comparator that does not exist yet; edit the version by hand |
+| `molto add <name>` with no `@<version>` | Refused, for the same reason: Molto cannot yet say which release is newest |
 | A dependency published as a prebuilt library | Refused with a message. Only `[artifacts] type = "source"` can be consumed |
 | `[features]`, `[build-deps]`, `[workspace]` | Not read |
 | `dep.recipe`, `artifact`, `optional`, `features`, `default_features` | Refused rather than ignored |
