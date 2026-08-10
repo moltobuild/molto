@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define DEPS_SECTION "deps"
+#define DEV_DEPS_SECTION "dev-deps"
 #define REGISTRIES_SECTION "registries"
 
 /* Longest "deps.<name>" this reader composes. */
@@ -85,22 +86,22 @@ static bool is_known_key(const char *key) {
 
 /* Every key is classified before any is read, so a typo is an error instead of
    a dependency that silently resolves to something else. */
-static bool check_keys(doc_view doc, const char *section, const char *name, char *err,
-                       size_t err_size) {
+static bool check_keys(doc_view doc, const char *table, const char *section, const char *name,
+                       char *err, size_t err_size) {
     str_list keys;
     str_list_init(&keys);
     if(!doc_table_members(doc, section, &keys)) {
         str_list_free(&keys);
-        return set_error(err, err_size, "could not read [deps].%s", name);
+        return set_error(err, err_size, "could not read [%s].%s", table, name);
     }
 
     bool ok = true;
     for(size_t i = 0; ok && i < str_list_count(&keys); i++) {
         const char *key = str_list_get(&keys, i);
         if(is_in(DEP_PENDING_KEYS, sizeof DEP_PENDING_KEYS / sizeof DEP_PENDING_KEYS[0], key))
-            ok = set_error(err, err_size, "[deps].%s: '%s' is not supported yet", name, key);
+            ok = set_error(err, err_size, "[%s].%s: '%s' is not supported yet", table, name, key);
         else if(!is_known_key(key))
-            ok = set_error(err, err_size, "[deps].%s: unknown key '%s'", name, key);
+            ok = set_error(err, err_size, "[%s].%s: unknown key '%s'", table, name, key);
     }
 
     str_list_free(&keys);
@@ -109,22 +110,22 @@ static bool check_keys(doc_view doc, const char *section, const char *name, char
 
 /* --- reading one dependency --- */
 
-static bool read_version(const char *name, const char *version, project_dep *out, char *err,
-                         size_t err_size) {
+static bool read_version(const char *table, const char *name, const char *version, project_dep *out,
+                         char *err, size_t err_size) {
     char range_operator[8] = "";
     if(!manifest_is_exact_version(version, range_operator, sizeof range_operator)) {
         if(range_operator[0] != '\0')
             return set_error(err, err_size,
-                             "[deps].%s = \"%s\" is a version range, and versions are exact. The "
+                             "[%s].%s = \"%s\" is a version range, and versions are exact. The "
                              "operator '%s' is not part of the manifest format (RFC-0008): a range "
                              "lets a release nobody has read enter this build without a diff. "
                              "Write the one version you mean",
-                             name, version, range_operator);
-        return set_error(err, err_size, "[deps].%s = \"%s\" is not a version", name, version);
+                             table, name, version, range_operator);
+        return set_error(err, err_size, "[%s].%s = \"%s\" is not a version", table, name, version);
     }
     if(strlen(version) >= DEP_VERSION_MAX)
-        return set_error(err, err_size, "[deps].%s: the version is longer than %d characters", name,
-                         DEP_VERSION_MAX - 1);
+        return set_error(err, err_size, "[%s].%s: the version is longer than %d characters", table,
+                         name, DEP_VERSION_MAX - 1);
 
     out->source = dep_source_version;
     out->resolution = dep_resolution_registry;
@@ -134,16 +135,16 @@ static bool read_version(const char *name, const char *version, project_dep *out
 
 /* The plain-string form. RFC-0003: `dep = "1.2.3"` is exactly
    `dep = { version = "1.2.3" }`. */
-static bool read_shorthand(doc_view doc, const char *name, project_dep *out, char *err,
-                           size_t err_size) {
+static bool read_shorthand(doc_view doc, const char *table, const char *name, project_dep *out,
+                           char *err, size_t err_size) {
     char version[DEP_VERSION_MAX * 2];
-    if(!doc_get_string(doc, DEPS_SECTION, name, version, sizeof version))
-        return set_error(err, err_size, "[deps].%s must be a version string or a table", name);
-    return read_version(name, version, out, err, err_size);
+    if(!doc_get_string(doc, table, name, version, sizeof version))
+        return set_error(err, err_size, "[%s].%s must be a version string or a table", table, name);
+    return read_version(table, name, version, out, err, err_size);
 }
 
-static bool read_source_key(doc_view doc, const char *section, const char *name, project_dep *out,
-                            char *err, size_t err_size) {
+static bool read_source_key(doc_view doc, const char *table, const char *section, const char *name,
+                            project_dep *out, char *err, size_t err_size) {
     bool found = false;
     for(size_t i = 0; i < sizeof DEP_SOURCES / sizeof DEP_SOURCES[0]; i++) {
         char value[DEP_LOCATION_MAX];
@@ -151,13 +152,13 @@ static bool read_source_key(doc_view doc, const char *section, const char *name,
             continue;
         if(found)
             return set_error(err, err_size,
-                             "[deps].%s names more than one source, and a dependency has exactly "
+                             "[%s].%s names more than one source, and a dependency has exactly "
                              "one",
-                             name);
+                             table, name);
         found = true;
 
         if(DEP_SOURCES[i].source == dep_source_version) {
-            if(!read_version(name, value, out, err, err_size))
+            if(!read_version(table, name, value, out, err, err_size))
                 return false;
             continue;
         }
@@ -169,12 +170,13 @@ static bool read_source_key(doc_view doc, const char *section, const char *name,
 
     if(!found)
         return set_error(err, err_size,
-                         "[deps].%s names no source: one of version, git, path or archive", name);
+                         "[%s].%s names no source: one of version, git, path or archive", table,
+                         name);
     return true;
 }
 
-static bool read_git_ref(doc_view doc, const char *section, const char *name, project_dep *out,
-                         char *err, size_t err_size) {
+static bool read_git_ref(doc_view doc, const char *table, const char *section, const char *name,
+                         project_dep *out, char *err, size_t err_size) {
     bool found = false;
     for(size_t i = 0; i < sizeof DEP_GIT_REFS / sizeof DEP_GIT_REFS[0]; i++) {
         char value[DEP_REFERENCE_MAX];
@@ -182,27 +184,27 @@ static bool read_git_ref(doc_view doc, const char *section, const char *name, pr
             continue;
         if(found)
             return set_error(err, err_size,
-                             "[deps].%s sets more than one of branch, tag and rev, and they name "
+                             "[%s].%s sets more than one of branch, tag and rev, and they name "
                              "the same thing",
-                             name);
+                             table, name);
         found = true;
         out->git_ref = DEP_GIT_REFS[i].ref;
         snprintf(out->reference, sizeof out->reference, "%s", value);
     }
 
     if(found && out->source != dep_source_git)
-        return set_error(err, err_size, "[deps].%s names a git reference but no git repository",
-                         name);
+        return set_error(err, err_size, "[%s].%s names a git reference but no git repository",
+                         table, name);
     return true;
 }
 
-static bool read_table(doc_view doc, const char *section, const char *name, project_dep *out,
-                       char *err, size_t err_size) {
-    if(!check_keys(doc, section, name, err, err_size))
+static bool read_table(doc_view doc, const char *table, const char *section, const char *name,
+                       project_dep *out, char *err, size_t err_size) {
+    if(!check_keys(doc, table, section, name, err, err_size))
         return false;
-    if(!read_source_key(doc, section, name, out, err, err_size))
+    if(!read_source_key(doc, table, section, name, out, err, err_size))
         return false;
-    if(!read_git_ref(doc, section, name, out, err, err_size))
+    if(!read_git_ref(doc, table, section, name, out, err, err_size))
         return false;
 
     if(!doc_get_string(doc, section, "registry", out->registry, sizeof out->registry))
@@ -221,39 +223,41 @@ static bool read_table(doc_view doc, const char *section, const char *name, proj
     source_spec spec;
     char reason[256] = "";
     if(!project_dep_to_source(out, &spec, reason, sizeof reason))
-        return set_error(err, err_size, "[deps].%s: %s", name, reason);
+        return set_error(err, err_size, "[%s].%s: %s", table, name, reason);
     return true;
 }
 
-static bool read_one(doc_view doc, const char *name, project_dep *out, char *err, size_t err_size) {
+static bool read_one(doc_view doc, const char *table, const char *name, project_dep *out, char *err,
+                     size_t err_size) {
     memset(out, 0, sizeof *out);
 
     if(!manifest_is_valid_name(name))
-        return set_error(err, err_size, "[deps].%s is not a package name", name);
+        return set_error(err, err_size, "[%s].%s is not a package name", table, name);
     if(strlen(name) >= DEP_NAME_MAX)
-        return set_error(err, err_size, "[deps].%s is longer than %d characters", name,
+        return set_error(err, err_size, "[%s].%s is longer than %d characters", table, name,
                          DEP_NAME_MAX - 1);
     snprintf(out->name, sizeof out->name, "%s", name);
 
     char section[DEP_SECTION_MAX];
-    if(snprintf(section, sizeof section, "%s.%s", DEPS_SECTION, name) < 0)
-        return set_error(err, err_size, "[deps].%s: the name is too long", name);
+    if(snprintf(section, sizeof section, "%s.%s", table, name) < 0)
+        return set_error(err, err_size, "[%s].%s: the name is too long", table, name);
 
     /* A value under [deps] is the shorthand; a table under [deps.<name>] is the
        long form. The parser stores an inline table exactly as it stores a
        header, so both arrive here the same way. */
-    return doc_has_table(doc, section) ? read_table(doc, section, name, out, err, err_size)
-                                       : read_shorthand(doc, name, out, err, err_size);
+    return doc_has_table(doc, section) ? read_table(doc, table, section, name, out, err, err_size)
+                                       : read_shorthand(doc, table, name, out, err, err_size);
 }
 
-bool project_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t err_size) {
+bool project_deps_read_table(doc_view doc, const char *table, project_deps *out, char *err,
+                             size_t err_size) {
     out->count = 0;
 
     str_list names;
     str_list_init(&names);
-    if(!doc_table_members(doc, DEPS_SECTION, &names)) {
+    if(!doc_table_members(doc, table, &names)) {
         str_list_free(&names);
-        return set_error(err, err_size, "could not read the [deps] table");
+        return set_error(err, err_size, "could not read the [%s] table", table);
     }
 
     bool ok = true;
@@ -261,10 +265,10 @@ bool project_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t er
     /* Checked before any entry is read, so the message is about the limit and
        not about whatever the thirty-third entry happens to say. */
     if(total > PROJECT_MAX_DEPS)
-        ok = set_error(err, err_size, "[deps] has more than %d entries", PROJECT_MAX_DEPS);
+        ok = set_error(err, err_size, "[%s] has more than %d entries", table, PROJECT_MAX_DEPS);
 
     for(size_t i = 0; ok && i < total; i++) {
-        ok = read_one(doc, str_list_get(&names, i), &out->items[out->count], err, err_size);
+        ok = read_one(doc, table, str_list_get(&names, i), &out->items[out->count], err, err_size);
         if(ok)
             out->count++;
     }
@@ -273,6 +277,14 @@ bool project_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t er
     if(!ok)
         out->count = 0;
     return ok;
+}
+
+bool project_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t err_size) {
+    return project_deps_read_table(doc, DEPS_SECTION, out, err, err_size);
+}
+
+bool project_dev_deps_read_doc(doc_view doc, project_deps *out, char *err, size_t err_size) {
+    return project_deps_read_table(doc, DEV_DEPS_SECTION, out, err, err_size);
 }
 
 bool project_deps_read(const toml_document *doc, project_deps *out, char *err, size_t err_size) {
@@ -354,8 +366,9 @@ const char *project_registries_url(const project_registries *registries, const c
     return NULL;
 }
 
-bool project_deps_check_registries(const project_deps *deps, const project_registries *registries,
-                                   char *err, size_t err_size) {
+bool project_deps_check_registries(const project_deps *deps, const char *table,
+                                   const project_registries *registries, char *err,
+                                   size_t err_size) {
     for(size_t i = 0; i < deps->count; i++) {
         const project_dep *dep = &deps->items[i];
         if(dep->registry[0] == '\0')
@@ -364,9 +377,9 @@ bool project_deps_check_registries(const project_deps *deps, const project_regis
            against somewhere the manifest did not name. */
         if(project_registries_url(registries, dep->registry) == NULL)
             return set_error(err, err_size,
-                             "[deps].%s names the registry '%s', which [registries] does not "
+                             "[%s].%s names the registry '%s', which [registries] does not "
                              "declare",
-                             dep->name, dep->registry);
+                             table, dep->name, dep->registry);
     }
     return true;
 }

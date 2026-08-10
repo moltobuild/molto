@@ -267,10 +267,16 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
          read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size);
 
     /* Dependencies, and the registries one may name. Checked together after
-       both are read, because a manifest may declare them in either order. */
-    ok = ok && project_deps_read(doc, &out->deps, err, err_size) &&
+       both are read, because a manifest may declare them in either order.
+
+       Both tables are read here and kept apart: what separates them is not how
+       they are written but where their flags are allowed to land, and that is
+       the build's decision (RFC-0008). */
+    ok = ok && project_deps_read_doc(doc_from_toml(doc), &out->deps, err, err_size) &&
+         project_dev_deps_read_doc(doc_from_toml(doc), &out->dev_deps, err, err_size) &&
          project_registries_read(doc, &out->registries, err, err_size) &&
-         project_deps_check_registries(&out->deps, &out->registries, err, err_size);
+         project_deps_check_registries(&out->deps, "deps", &out->registries, err, err_size) &&
+         project_deps_check_registries(&out->dev_deps, "dev-deps", &out->registries, err, err_size);
 
     toml_free(doc);
     if(!ok)

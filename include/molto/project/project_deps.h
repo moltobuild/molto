@@ -125,6 +125,17 @@ typedef struct {
 [[nodiscard]] bool project_deps_read_doc(doc_view doc, project_deps *out, char *err,
                                          size_t err_size);
 
+/* `[dev-deps]`: the dependencies a package needs while it is being developed
+   and does not ship — test frameworks, benchmark harnesses (RFC-0008). Same
+   syntax and same rules as `[deps]`, which is why it is the same reader with
+   another table name. */
+[[nodiscard]] bool project_dev_deps_read_doc(doc_view doc, project_deps *out, char *err,
+                                             size_t err_size);
+
+/* Either table by name, for a caller that has one to name. */
+[[nodiscard]] bool project_deps_read_table(doc_view doc, const char *table, project_deps *out,
+                                           char *err, size_t err_size);
+
 /* Read the `[registries]` table. An absent table is not an error. */
 [[nodiscard]] bool project_registries_read(const toml_document *doc, project_registries *out,
                                            char *err, size_t err_size);
@@ -132,7 +143,7 @@ typedef struct {
 /* Refuse a dependency naming a registry that `registries` does not declare.
    Separate from reading because it needs both tables, and a manifest may
    declare them in either order. */
-[[nodiscard]] bool project_deps_check_registries(const project_deps *deps,
+[[nodiscard]] bool project_deps_check_registries(const project_deps *deps, const char *table,
                                                  const project_registries *registries, char *err,
                                                  size_t err_size);
 
