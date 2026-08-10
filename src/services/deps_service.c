@@ -1,28 +1,12 @@
 #include <molto/services/deps_service.h>
 
-#include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/recipe_service.h>
-#include <molto/services/registry_service.h>
-#include <molto/services/resolve_service.h>
 #include <molto/services/source_discovery.h>
-#include <molto/services/source_service.h>
-#include <molto/util/toml.h>
 
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-
-/* The file a dependency that carries its own source has to bring. `[deps]` can
-   say where bytes are but not what to compile out of them, so the source
-   describes itself — the same way a git dependency in Cargo brings its own
-   Cargo.toml. */
-#define CARRIED_RECIPE "recipe.toml"
-
-/* Where a source with no version of its own is cached: it is not
-   platform-specific, and its cache key is a digest or a commit id. */
-#define CARRIED_TARGET "any"
 
 #define DEPS_PATH_MAX 1024
 
@@ -53,23 +37,6 @@ void prepared_deps_free(prepared_deps *out) {
     str_list_free(&out->defines);
     str_list_free(&out->flags);
     str_list_free(&out->links);
-}
-
-/* --- which registry answers for a dependency --- */
-
-/* `[registries]` if the dependency named one, then whatever `molto login`
-   stored, then the official one. A dependency naming a registry the manifest
-   does not declare was already refused when the manifest was read. */
-static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
-                                const credentials *creds) {
-    if(dep->registry[0] != '\0') {
-        const char *url = project_registries_url(&ctx->registries, dep->registry);
-        if(url != NULL)
-            return url;
-    }
-    if(creds->registry[0] != '\0')
-        return creds->registry;
-    return REGISTRY_DEFAULT_URL;
 }
 
 /* --- collecting what a dependency contributes --- */
@@ -167,100 +134,31 @@ static bool collect(const recipe_artifacts *artifacts, const char *root, prepare
                     err_size);
 }
 
-/* --- one dependency --- */
+/* --- the whole graph --- */
 
-static bool prepare_from_registry(const project_ctx *ctx, const project_dep *dep,
-                                  const credentials *creds, prepared_deps *out, char *err,
-                                  size_t err_size) {
-    resolved_dep resolved;
-    if(!resolve_version(registry_for(ctx, dep, creds), dep->name, dep->version, &resolved, err,
-                        err_size))
-        return false;
-    if(resolved.coordinate.form != recipe_form_source)
-        return set_error(err, err_size,
-                         "%s %s is published as a prebuilt artifact, and molto cannot consume one "
-                         "yet",
-                         dep->name, dep->version);
-
-    char root[DEPS_PATH_MAX];
-    if(!source_fetch(&resolved.source, dep->name, dep->version, resolved.coordinate.target, root,
-                     sizeof root, err, err_size))
-        return false;
-
-    return collect(&resolved.artifacts, root, out, err, err_size);
-}
-
-/* The recipe a fetched source brings with it. Read through the same doc_view
-   the registry's answer goes through, so the two cannot come to disagree. */
-static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *out,
-                                char *err, size_t err_size) {
-    char path[DEPS_PATH_MAX];
-    if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
-        return set_error(err, err_size, "the recipe path for '%s' is too long", name);
-    if(!fs_path_exists(path))
-        return set_error(err, err_size,
-                         "'%s' brings no " CARRIED_RECIPE " at the root of its source, and [deps] "
-                         "has nowhere to say what to compile",
-                         name);
-
-    char *text = fs_read_file(path);
-    if(text == NULL)
-        return set_error(err, err_size, "could not read %s", path);
-
-    char parse_err[256] = "";
-    toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
-    free(text);
-    if(doc == NULL)
-        return set_error(err, err_size, "%s is not valid TOML: %s", path, parse_err);
-
-    const bool ok = recipe_read_artifacts(doc_from_toml(doc), out, err, err_size);
-    toml_free(doc);
-    return ok;
-}
-
-static bool prepare_carried(const project_dep *dep, prepared_deps *out, char *err,
-                            size_t err_size) {
-    source_spec spec;
-    if(!project_dep_to_source(dep, &spec, err, err_size))
-        return false;
-
-    /* A path dependency is used where it is, so it has no cache key and its
-       directory is the source. */
-    char root[DEPS_PATH_MAX];
-    if(spec.origin == source_origin_path) {
-        if(!source_fetch(&spec, dep->name, "", CARRIED_TARGET, root, sizeof root, err, err_size))
-            return false;
-    } else {
-        char key[SOURCE_DIGEST_MAX];
-        if(!source_cache_key(&spec, key, sizeof key, err, err_size))
-            return false;
-        if(!source_fetch(&spec, dep->name, key, CARRIED_TARGET, root, sizeof root, err, err_size))
-            return false;
+bool deps_prepare_graph(const dep_graph *graph, prepared_deps *out, char *err, size_t err_size) {
+    /* Nodes come out sorted by name, so the flags a build receives are the same
+       on every machine. That is the only ordering guarantee this makes: `-l`
+       entries name system libraries, which the platform resolves, and nothing
+       here is a built library whose link order could matter yet. */
+    for(size_t i = 0; i < dep_graph_count(graph); i++) {
+        const dep_node *node = dep_graph_at(graph, i);
+        char reason[512] = "";
+        if(!collect(&node->artifacts, node->root, out, reason, sizeof reason))
+            return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
     }
-
-    recipe_artifacts artifacts;
-    if(!read_carried_recipe(root, dep->name, &artifacts, err, err_size))
-        return false;
-    return collect(&artifacts, root, out, err, err_size);
+    return true;
 }
 
 bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err, size_t err_size) {
     if(ctx->deps.count == 0)
         return true;
 
-    /* Reads need no token, so a machine that never ran `molto login` resolves
-       against the official registry like any other. */
-    credentials creds = {0};
-    (void)credentials_load(&creds, NULL, 0);
+    dep_graph *graph = NULL;
+    if(!dep_graph_resolve(ctx, &graph, err, err_size))
+        return false;
 
-    for(size_t i = 0; i < ctx->deps.count; i++) {
-        const project_dep *dep = &ctx->deps.items[i];
-        char reason[512] = "";
-        const bool ok = dep->resolution == dep_resolution_registry
-                            ? prepare_from_registry(ctx, dep, &creds, out, reason, sizeof reason)
-                            : prepare_carried(dep, out, reason, sizeof reason);
-        if(!ok)
-            return set_error(err, err_size, "dependency '%s': %s", dep->name, reason);
-    }
-    return true;
+    const bool ok = deps_prepare_graph(graph, out, err, err_size);
+    dep_graph_free(graph);
+    return ok;
 }

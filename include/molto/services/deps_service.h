@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <molto/project/project_ctx.h>
+#include <molto/services/dep_graph.h>
 #include <molto/util/str_list.h>
 
 /*
@@ -47,5 +48,11 @@ void prepared_deps_free(prepared_deps *out);
    to say what to compile, so the source has to say it itself. */
 [[nodiscard]] bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err,
                                 size_t err_size);
+
+/* The same, from a graph already resolved. Split out because everything here
+   is filesystem work on a graph that is already in hand, and a caller that
+   also wants to write a lock file should not resolve twice to get both. */
+[[nodiscard]] bool deps_prepare_graph(const dep_graph *graph, prepared_deps *out, char *err,
+                                      size_t err_size);
 
 #endif /* MOLTO_DEPS_SERVICE_H */
