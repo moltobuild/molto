@@ -270,12 +270,35 @@ static bool report_conflict(const dep_node *seen, const project_dep *dep, const 
                      identify(dep->version, source), requirer(required_by));
 }
 
+/* Give `node` and everything under it a scope it did not have.
+ *
+ * Reachable by name alone, because the pass that created these nodes has
+ * already finished: development dependencies are walked only after every
+ * runtime one is in the graph, so a node found here has all of its own
+ * children in the graph too. The scope bit doubles as the visited mark, which
+ * is what stops a cycle.
+ */
+static void widen_scope(dep_graph *graph, dep_node *node, unsigned scope) {
+    if((node->scope & scope) == scope)
+        return;
+    node->scope |= scope;
+    for(size_t i = 0; i < str_list_count(&node->dependencies); i++) {
+        dep_node *child = str_map_get(graph->index, str_list_get(&node->dependencies, i));
+        if(child != NULL)
+            widen_scope(graph, child, scope);
+    }
+}
+
 /* One entry of the queue: a dependency still to visit, and who named it. The
    dependency is copied rather than pointed at, because the recipe it came out
    of is freed as soon as its parent has been visited. */
 typedef struct {
     project_dep dep;
     char required_by[DEP_NAME_MAX];
+    /* Inherited by everything this entry pulls in: a package reached only
+       through a development dependency is itself only ever compiled into the
+       test build. */
+    unsigned scope;
 } pending;
 
 typedef struct {
@@ -285,8 +308,8 @@ typedef struct {
     size_t capacity;
 } queue;
 
-static bool queue_push(queue *q, const project_dep *dep, const char *required_by, char *err,
-                       size_t err_size) {
+static bool queue_push(queue *q, const project_dep *dep, const char *required_by, unsigned scope,
+                       char *err, size_t err_size) {
     if(q->count == q->capacity) {
         const size_t grown = q->capacity == 0 ? 16 : q->capacity * 2;
         pending *items = realloc(q->items, grown * sizeof *items);
@@ -297,14 +320,15 @@ static bool queue_push(queue *q, const project_dep *dep, const char *required_by
     }
     q->items[q->count].dep = *dep;
     snprintf(q->items[q->count].required_by, DEP_NAME_MAX, "%s", required_by);
+    q->items[q->count].scope = scope;
     q->count++;
     return true;
 }
 
-static bool enqueue_all(queue *q, const project_deps *deps, const char *required_by, char *err,
-                        size_t err_size) {
+static bool enqueue_all(queue *q, const project_deps *deps, const char *required_by, unsigned scope,
+                        char *err, size_t err_size) {
     for(size_t i = 0; i < deps->count; i++) {
-        if(!queue_push(q, &deps->items[i], required_by, err, err_size))
+        if(!queue_push(q, &deps->items[i], required_by, scope, err, err_size))
             return false;
     }
     return true;
@@ -338,10 +362,14 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
        directories and unify them silently, which is the same duplicate-symbol
        problem wearing a different hat — and the version of a path dependency
        is empty, so it would compare equal to anything. */
-    const dep_node *seen = dep_graph_find(graph, dep->name);
+    dep_node *seen = str_map_get(graph->index, dep->name);
     if(seen != NULL) {
         if(strcmp(seen->version, dep->version) != 0 || strcmp(seen->source, source) != 0)
             return report_conflict(seen, dep, source, entry->required_by, err, err_size);
+        /* Required by both tables: one node, compiled once, reachable from both
+           builds. Everything below it inherits the wider scope too, which is
+           why this walks rather than just setting a flag. */
+        widen_scope(graph, seen, entry->scope);
         return true;
     }
 
@@ -377,10 +405,11 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     snprintf(node->checksum, sizeof node->checksum, "%s", found->checksum);
     snprintf(node->required_by, sizeof node->required_by, "%s", entry->required_by);
     snprintf(node->source, sizeof node->source, "%s", source);
+    node->scope = entry->scope;
     node->artifacts = found->artifacts;
 
     ok = record_edges(node, &found->deps, err, err_size) &&
-         enqueue_all(q, &found->deps, dep->name, err, err_size);
+         enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);
     if(ok)
         ok = graph_push(graph, node, err, err_size);
     if(!ok)
@@ -408,8 +437,20 @@ bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err, size_
     credentials creds = {0};
     (void)credentials_load(&creds, NULL, 0);
 
+    /* Runtime first, so a package required by both is created as a runtime one
+       and then widened. Development dependencies are only ever taken from the
+       root package: a dependency's own are read and ignored, which is what
+       keeps a library's test framework out of its consumer's build. */
     queue q = {0};
-    bool ok = enqueue_all(&q, &ctx->deps, "", err, err_size);
+    bool ok = enqueue_all(&q, &ctx->deps, "", dep_scope_runtime, err, err_size);
+    for(; ok && q.head < q.count; q.head++)
+        ok = visit_one(ctx, &q.items[q.head], &creds, graph, &q, err, err_size);
+
+    /* Only now, with every runtime package in the graph, are the development
+       ones walked. Doing them in one pass would let a node be created under the
+       narrower scope while its children were still queued, and widening it
+       later would not reach them. */
+    ok = ok && enqueue_all(&q, &ctx->dev_deps, "", dep_scope_dev, err, err_size);
     for(; ok && q.head < q.count; q.head++)
         ok = visit_one(ctx, &q.items[q.head], &creds, graph, &q, err, err_size);
     free(q.items);

@@ -49,10 +49,19 @@ void prepared_deps_free(prepared_deps *out);
 [[nodiscard]] bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err,
                                 size_t err_size);
 
-/* The same, from a graph already resolved. Split out because everything here
-   is filesystem work on a graph that is already in hand, and a caller that
-   also wants to write a lock file should not resolve twice to get both. */
+/* The same, from a graph already resolved: everything that ships. Split out
+   because everything here is filesystem work on a graph that is already in
+   hand, and a caller that also wants to write a lock file should not resolve
+   twice to get both. */
 [[nodiscard]] bool deps_prepare_graph(const dep_graph *graph, prepared_deps *out, char *err,
                                       size_t err_size);
+
+/* What the test build adds on top: the packages reachable only through
+   `[dev-deps]`. Their include directories never reach the command line that
+   compiles `src/`, which is what makes the separation real rather than
+   documented — a source that includes one fails to compile, on the first
+   build, with "no such file" (RFC-0008). */
+[[nodiscard]] bool deps_prepare_dev(const dep_graph *graph, prepared_deps *out, char *err,
+                                    size_t err_size);
 
 #endif /* MOLTO_DEPS_SERVICE_H */

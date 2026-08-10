@@ -36,10 +36,22 @@
 #define DEP_GRAPH_SOURCE_MAX (SOURCE_URL_MAX + 64)
 
 /*
+ * Which build a package belongs to.
+ *
+ * A flag set rather than a choice: the same package can be required by
+ * `[deps]` and by `[dev-deps]`, and then it is both — one node, one version,
+ * reachable from either build.
+ */
+typedef enum {
+    dep_scope_runtime = 1 << 0, /* linked into the package's own binary */
+    dep_scope_dev = 1 << 1,     /* only ever reaches the test build */
+} dep_scope;
+
+/*
  * One resolved package.
  *
  * It carries both halves on purpose: what a build needs (`root`, `artifacts`)
- * and what a lock file records (`version`, `source`, `checksum`,
+ * and what a lock file records (`version`, `source`, `checksum`, `scope`,
  * `dependencies`). Splitting them would mean walking the graph twice, and the
  * second walk is the one that goes to the network.
  */
@@ -59,6 +71,9 @@ typedef struct {
     /* Who pulled it in, for the message a conflict prints. "" when the root
        package named it directly. */
     char required_by[DEP_NAME_MAX];
+    /* One or both of dep_scope. A package required by both tables carries
+       both, and is compiled once. */
+    unsigned scope;
     /* The names it depends on, sorted, for the lock's `dependencies`. */
     str_list dependencies;
     recipe_artifacts artifacts;
@@ -66,12 +81,23 @@ typedef struct {
 
 typedef struct dep_graph dep_graph;
 
-/* Resolve every dependency `ctx` declares, and everything those declare in
-   turn, fetching each into the shared cache.
+/* Resolve every dependency `ctx` declares in `[deps]` and `[dev-deps]`, and
+   everything those declare in turn, fetching each into the shared cache.
 
-   An empty `[deps]` succeeds with an empty graph and touches no network. A
-   conflict, an unreachable registry or a source that brings no recipe fails
-   with a reason naming the dependency and who required it. */
+   The two tables share one graph and one version per name. They have to: a
+   test binary links the objects of `src/`, compiled against the runtime
+   version, together with the objects of `tests/`. Two versions of one library
+   in that link are duplicate symbols or a silent ODR violation, which is the
+   same reason `[deps]` alone allows only one (RFC-0008).
+
+   Development dependencies are **not transitive**: only the root package's are
+   walked, and a dependency's own `[dev-deps]` is never read. Otherwise adding
+   one small library would drag in its test framework and its mocks, none of
+   which will ever be compiled.
+
+   Empty tables succeed with an empty graph and touch no network. A conflict, an
+   unreachable registry or a source that brings no recipe fails with a reason
+   naming the dependency and who required it. */
 [[nodiscard]] bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err,
                                      size_t err_size);
 

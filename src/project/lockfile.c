@@ -9,11 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Every dependency in this graph is one a build links, because nothing else
-   can be declared yet. The key is written all the same: a lock read by a molto
-   that knows about development dependencies must not have to guess what an
-   entry without it meant. */
+/* Which build a locked package belongs to (RFC-0008). Both, for one required
+   by `[deps]` and `[dev-deps]` alike: it is one package at one version, and
+   the array says which builds reach it — so a production install can fetch
+   only what it links. */
 #define SCOPE_RUNTIME "runtime"
+#define SCOPE_DEV "dev"
 
 /* Grown as needed; the initial size holds a small graph without a realloc. */
 #define RENDER_INITIAL 4096
@@ -98,10 +99,17 @@ char *lockfile_render(const char *package, const dep_graph *graph) {
 
     for(size_t i = 0; ok && i < dep_graph_count(graph); i++) {
         const dep_node *node = dep_graph_at(graph, i);
+        /* Ordered, not as encountered: runtime before dev, always, so the diff
+           of a regenerated lock stays empty. */
         str_list scopes;
         str_list_init(&scopes);
-        ok = str_list_push(&scopes, SCOPE_RUNTIME) && buffer_puts(&out, "\n[[package]]\n") &&
-             buffer_put_pair(&out, "name", node->name);
+        ok = true;
+        if(node->scope & dep_scope_runtime)
+            ok = str_list_push(&scopes, SCOPE_RUNTIME);
+        if(ok && (node->scope & dep_scope_dev))
+            ok = str_list_push(&scopes, SCOPE_DEV);
+        ok =
+            ok && buffer_puts(&out, "\n[[package]]\n") && buffer_put_pair(&out, "name", node->name);
         /* A version is omitted rather than written empty: a path dependency has
            none, and "" would read as a version that happens to be blank. */
         if(ok && node->version[0] != '\0')

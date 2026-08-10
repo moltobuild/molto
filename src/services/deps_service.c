@@ -136,18 +136,33 @@ static bool collect(const recipe_artifacts *artifacts, const char *root, prepare
 
 /* --- the whole graph --- */
 
-bool deps_prepare_graph(const dep_graph *graph, prepared_deps *out, char *err, size_t err_size) {
-    /* Nodes come out sorted by name, so the flags a build receives are the same
-       on every machine. That is the only ordering guarantee this makes: `-l`
-       entries name system libraries, which the platform resolves, and nothing
-       here is a built library whose link order could matter yet. */
+/* Nodes come out sorted by name, so the flags a build receives are the same on
+   every machine. That is the only ordering guarantee made here: `-l` entries
+   name system libraries, which the platform resolves, and nothing is a built
+   library whose link order could matter yet. */
+static bool collect_scope(const dep_graph *graph, unsigned wanted, unsigned without,
+                          prepared_deps *out, char *err, size_t err_size) {
     for(size_t i = 0; i < dep_graph_count(graph); i++) {
         const dep_node *node = dep_graph_at(graph, i);
+        if((node->scope & wanted) == 0 || (node->scope & without) != 0)
+            continue;
         char reason[512] = "";
         if(!collect(&node->artifacts, node->root, out, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
     }
     return true;
+}
+
+bool deps_prepare_graph(const dep_graph *graph, prepared_deps *out, char *err, size_t err_size) {
+    return collect_scope(graph, dep_scope_runtime, 0, out, err, err_size);
+}
+
+bool deps_prepare_dev(const dep_graph *graph, prepared_deps *out, char *err, size_t err_size) {
+    /* Only what the test build *adds*. A package required by both tables is
+       already in the runtime set, and handing it over twice would put its
+       sources on the test link line twice — which is a duplicate symbol, the
+       exact failure the one-version rule exists to prevent. */
+    return collect_scope(graph, dep_scope_dev, dep_scope_runtime, out, err, err_size);
 }
 
 bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err, size_t err_size) {
