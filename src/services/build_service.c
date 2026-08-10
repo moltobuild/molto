@@ -4,6 +4,7 @@
 #include <molto/build/depfile.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/project/lockfile.h>
 #include <molto/project/project_ctx.h>
 #include <molto/services/deps_service.h>
 #include <molto/services/fs_service.h>
@@ -687,6 +688,41 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     return true;
 }
 
+/*
+ * Resolve the whole graph, reduce it to flags, and write down what was
+ * resolved.
+ *
+ * One walk answers both questions, which is why the lock is written here and
+ * not by a command of its own: the graph is in hand exactly once, and going
+ * back for it would mean asking the registry the same thing twice.
+ *
+ * A project with no dependencies writes no lock file. There is nothing to
+ * record, and creating one would put a file in every project that has never
+ * needed one — molto's own repository included.
+ */
+[[nodiscard]] static bool prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
+                                           char *err, size_t err_size) {
+    if(ctx->deps.count == 0)
+        return true;
+
+    dep_graph *graph = NULL;
+    if(!dep_graph_resolve(ctx, &graph, err, err_size))
+        return false;
+
+    bool ok = deps_prepare_graph(graph, out, err, err_size);
+    /* Failing to record a resolution that succeeded must not fail the build:
+       the objects are correct either way, and the cost is that the next build
+       resolves again. Silence would be worse — a lock file nobody can write is
+       a reproducibility guarantee nobody has. */
+    if(ok && !lockfile_write(root, ctx->project_name, graph, err, err_size)) {
+        fprintf(stderr, "molto: warning: %s\n", err);
+        err[0] = '\0';
+    }
+
+    dep_graph_free(graph);
+    return ok;
+}
+
 /* Load the manifest and compile every source under `root/src` into `objects`
    (caller-initialised, caller-freed). Reports whether C++ is present and whether
    anything was recompiled. Shared by build_project and build_tests. */
@@ -718,7 +754,7 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     prepared_deps deps;
     prepared_deps_init(&deps);
     char deps_err[512] = "";
-    if(!deps_prepare(ctx_out, &deps, deps_err, sizeof deps_err)) {
+    if(!prepare_and_lock(root, ctx_out, &deps, deps_err, sizeof deps_err)) {
         fprintf(stderr, "molto: %s\n", deps_err);
         prepared_deps_free(&deps);
         return exit_dependency_failure;
