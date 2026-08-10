@@ -197,7 +197,13 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
     if(resolved == NULL)
         return set_error(err, err_size, "out of memory resolving dependencies");
 
-    bool ok = resolve_version(registry_for(ctx, dep, creds), dep->name, dep->version, resolved, err,
+    /* What the registry said last time, if it is still on disk. A published
+       coordinate never changes (RFC-0010) and the manifest names an exact
+       version, so there is nothing a fresh request could tell us that the
+       remembered answer does not — and without this, every build of every
+       project asks every registry to repeat itself. */
+    bool ok = resolve_remembered(dep->name, dep->version, resolved) ||
+              resolve_version(registry_for(ctx, dep, creds), dep->name, dep->version, resolved, err,
                               err_size);
     if(ok && resolved->coordinate.form != recipe_form_source)
         ok = set_error(err, err_size,
@@ -208,6 +214,10 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         ok = source_fetch(&resolved->source, dep->name, dep->version, resolved->coordinate.target,
                           out->root, sizeof out->root, err, err_size);
     if(ok) {
+        /* Only now, with the source installed: the fetch replaces the whole
+           directory this writes into. */
+        if(resolved->body[0] != '\0')
+            resolve_remember(dep->name, dep->version, resolved->body);
         snprintf(out->version, sizeof out->version, "%s", dep->version);
         snprintf(out->checksum, sizeof out->checksum, "%s", resolved->source.sha256);
         out->artifacts = resolved->artifacts;

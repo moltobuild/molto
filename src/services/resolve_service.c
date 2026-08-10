@@ -4,6 +4,8 @@
 #include <molto/services/registry_service.h>
 #include <molto/util/json.h>
 
+#include <stdlib.h>
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +15,10 @@
 #define ANY_TARGET "any"
 
 #define RESOLVE_PATH_MAX 512
+
+/* The registry's answer, kept beside the source it describes. Named like the
+   cache's own stamp so an unpacked archive cannot collide with it. */
+#define RELEASE_FILE ".molto-release.json"
 
 /* Enough to name the targets a version was published for, in the message that
    says none of them was usable. */
@@ -175,6 +181,41 @@ bool resolve_read_release(const char *body, const char *name, const char *versio
     return ok;
 }
 
+/* --- remembering an answer --- */
+
+/* Beside the source it describes, under the name the fetch never writes. */
+static bool release_path(const char *name, const char *version, char *out, size_t size) {
+    char directory[RESOLVE_PATH_MAX];
+    return source_cache_path(name, version, ANY_TARGET, directory, sizeof directory) &&
+           fs_format_path(out, size, "%s/%s", directory, RELEASE_FILE);
+}
+
+bool resolve_remembered(const char *name, const char *version, resolved_dep *out) {
+    if(!source_is_cached(name, version, ANY_TARGET))
+        return false;
+
+    char path[RESOLVE_PATH_MAX];
+    if(!release_path(name, version, path, sizeof path) || !fs_path_exists(path))
+        return false;
+
+    char *body = fs_read_file(path);
+    if(body == NULL)
+        return false;
+
+    /* Read through exactly the path a live answer takes, so a remembered one
+       cannot be accepted where a fresh one would have been refused. */
+    char ignored[256] = "";
+    const bool ok = resolve_read_release(body, name, version, out, ignored, sizeof ignored);
+    free(body);
+    return ok;
+}
+
+void resolve_remember(const char *name, const char *version, const char *body) {
+    char path[RESOLVE_PATH_MAX];
+    if(release_path(name, version, path, sizeof path))
+        (void)fs_write_file(path, body);
+}
+
 bool resolve_version(const char *base_url, const char *name, const char *version, resolved_dep *out,
                      char *err, size_t err_size) {
     char path[RESOLVE_PATH_MAX];
@@ -194,5 +235,10 @@ bool resolve_version(const char *base_url, const char *name, const char *version
                          name, version, detail);
     }
 
-    return resolve_read_release(response.body, name, version, out, err, err_size);
+    if(!resolve_read_release(response.body, name, version, out, err, err_size))
+        return false;
+    /* Remembered by the caller, after the fetch: writing it now would put it
+       in a directory the fetch is about to replace. */
+    snprintf(out->body, sizeof out->body, "%s", response.body);
+    return true;
 }
