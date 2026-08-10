@@ -3,8 +3,11 @@
 #include <molto/exit_code.h>
 #include <molto/project/manifest_edit.h>
 #include <molto/project/project_deps.h>
+#include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
+#include <molto/services/registry_service.h>
+#include <molto/services/resolve_service.h>
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
@@ -30,6 +33,39 @@ static bool manifest_path(char *out, size_t out_size) {
         return false;
     }
     return true;
+}
+
+/* Which registry answers when no version was given.
+ *
+ * A named one is looked up in the manifest that is about to be edited, then
+ * whatever `molto login` stored, then the official one — the same order the
+ * resolver uses, so `molto add` and the build that follows it cannot end up
+ * asking two different registries about one name. */
+static const char *registry_url(const char *named) {
+    static char url[REGISTRY_URL_MAX];
+
+    if(named != NULL) {
+        char root[PATH_BUFFER_SIZE];
+        char path[PATH_BUFFER_SIZE];
+        project_ctx ctx;
+        char err[256] = "";
+        if(workspace_find_root(root, sizeof root) &&
+           fs_format_path(path, sizeof path, "%s/" MANIFEST_FILENAME, root) &&
+           project_load(path, &ctx, err, sizeof err)) {
+            const char *declared = project_registries_url(&ctx.registries, named);
+            if(declared != NULL) {
+                snprintf(url, sizeof url, "%s", declared);
+                return url;
+            }
+        }
+    }
+
+    credentials creds = {0};
+    if(credentials_load(&creds, NULL, 0) && creds.registry[0] != '\0') {
+        snprintf(url, sizeof url, "%s", creds.registry);
+        return url;
+    }
+    return REGISTRY_DEFAULT_URL;
 }
 
 /* The TOML right-hand side for the entry being added.
@@ -67,15 +103,19 @@ int add_command_run(const char *name, const char *version, const char *source_ke
         fprintf(stderr, "molto: '%s' is not a package name\n", name);
         return exit_usage_error;
     }
-    /* Refused here rather than resolved: choosing "the newest" is `molto
-       update`'s job, and it needs a version comparator Molto does not have
-       yet. Saying so beats writing a version nobody chose. */
+    /* No version asked for: take the newest the registry has. The number is
+       then written into the manifest like any other, so what a build resolves
+       is still exactly what the file says — "newest" is decided once, here,
+       and never again behind the user's back. */
+    char newest[DEP_VERSION_MAX] = "";
     if(source == NULL && (version == NULL || version[0] == '\0')) {
-        fprintf(stderr,
-                "molto: add %s needs a version, as %s@<version>. Molto cannot pick the newest one "
-                "yet\n",
-                name, name);
-        return exit_usage_error;
+        char reason[512] = "";
+        if(!resolve_latest_version(registry_url(registry), name, newest, sizeof newest, reason,
+                                   sizeof reason)) {
+            fprintf(stderr, "molto: %s\n", reason);
+            return exit_dependency_failure;
+        }
+        version = newest;
     }
     if(version != NULL && source == NULL) {
         char range_operator[8] = "";

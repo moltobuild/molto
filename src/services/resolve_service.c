@@ -3,6 +3,8 @@
 #include <molto/services/fs_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/util/json.h>
+#include <molto/util/semver.h>
+#include <molto/util/str_list.h>
 
 #include <stdlib.h>
 
@@ -178,6 +180,59 @@ bool resolve_read_release(const char *body, const char *name, const char *versio
                     read_artifact(artifact, name, version, out, err, err_size);
 
     json_free(doc);
+    return ok;
+}
+
+/* --- the newest release --- */
+
+/* The versions in a catalogue listing: { kind, name, releases: [ {version} ] }. */
+static bool read_versions(const char *body, str_list *out, char *err, size_t err_size) {
+    json_document *doc = json_parse(body);
+    if(doc == NULL)
+        return set_error(err, err_size, "the registry's answer was not JSON");
+
+    const json_value releases = json_get(json_root(doc), "releases");
+    bool ok = json_type_of(releases) == json_type_array;
+    if(!ok)
+        (void)set_error(err, err_size, "the registry's answer carried no 'releases' list");
+
+    for(size_t i = 0; ok && i < json_count(releases); i++) {
+        const char *version = json_string(json_get(json_at(releases, i), "version"));
+        if(version != NULL && !str_list_push(out, version))
+            ok = set_error(err, err_size, "out of memory reading the catalogue");
+    }
+
+    json_free(doc);
+    return ok;
+}
+
+bool resolve_latest_version(const char *base_url, const char *name, char *out, size_t out_size,
+                            char *err, size_t err_size) {
+    char path[RESOLVE_PATH_MAX];
+    if(!fs_format_path(path, sizeof path, "/v1/packages/%s", name))
+        return set_error(err, err_size, "the registry path for %s is too long", name);
+
+    registry_response response;
+    if(!registry_get(base_url, path, &response, err, err_size))
+        return false;
+    if(response.status == 404)
+        return set_error(err, err_size, "there is no package called '%s' in the registry", name);
+    if(response.status != 200) {
+        char detail[512];
+        registry_explain(&response, detail, sizeof detail);
+        return set_error(err, err_size, "the registry answered %ld for %s: %s", response.status,
+                         name, detail);
+    }
+
+    str_list versions;
+    str_list_init(&versions);
+    bool ok = read_versions(response.body, &versions, err, err_size);
+    if(ok && str_list_count(&versions) == 0)
+        ok = set_error(err, err_size, "'%s' is in the registry with no releases", name);
+    if(ok && !semver_highest((const char *const *)versions.items, str_list_count(&versions), out,
+                             out_size))
+        ok = set_error(err, err_size, "'%s' has no release with a version molto can order", name);
+    str_list_free(&versions);
     return ok;
 }
 

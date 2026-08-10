@@ -51,6 +51,18 @@ typedef struct {
 [[nodiscard]] bool resolve_version(const char *base_url, const char *name, const char *version,
                                    resolved_dep *out, char *err, size_t err_size);
 
+/* The newest version published under `name`.
+ *
+ * The catalogue serves versions as opaque strings and in publication order
+ * (RFC-0010), so the ordering happens here: which release is newest is a
+ * semver question, and a registry that answered it would have to reimplement
+ * Molto's comparator to give the same answer.
+ *
+ * A pre-release can be the newest, and is returned when it is. Whether to
+ * write one into a manifest is the caller's call, not this function's. */
+[[nodiscard]] bool resolve_latest_version(const char *base_url, const char *name, char *out,
+                                          size_t out_size, char *err, size_t err_size);
+
 /* Answer from what the registry said last time, without asking again.
  *
  * Sound because a published coordinate is immutable (RFC-0010) and a manifest
