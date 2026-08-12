@@ -104,11 +104,32 @@ RFC-0003 so a reader learns one vocabulary:
 | `sha256` | string | Required with `archive`; the digest of the archive |
 | `path` | string | A local directory, for developing a recipe |
 | `strip_prefix` | string | Leading directory to drop when unpacking an archive |
+| `compression_format` | string | How the archive is packed; absent means infer |
 
 An `archive` without a `sha256` is invalid. A URL is a promise about a location,
 not about content, and a recipe whose output changes when upstream re-rolls a
 tarball is not a recipe — it is a suggestion. `git` needs no digest because a
 commit id is one.
+
+`compression_format` is one of `zip`, `tar`, `tar.gz`, `tar.bz2`, `tar.xz` or
+`tar.zst`, and a name outside that list is a rejected recipe rather than a
+fallback to guessing. It exists because an extension is a naming convention and
+not a fact: a URL may serve a tarball from a path ending in `/download`, or end
+in `.zip` and serve something else. Absent, a reader infers as it always did —
+`.zip` means zip and everything else is handed to `tar`, which detects gzip,
+bzip2, xz and zstd from the bytes — so the key could be added without a flag
+day and an older recipe keeps working.
+
+It belongs to `archive` alone. A `git` origin is a checkout and a `path` is a
+directory; neither is packed, so declaring it beside one is an error rather
+than a key quietly ignored — a recipe that sets it believes something about
+what the consumer will do.
+
+Note what this key is **not**: a hook. The temptation is to let a recipe carry
+a shell command that unpacks it, and that is the same temptation `[build]`
+refuses for the same reason. A recipe that could run a command would make every
+dependency a remote code execution with extra steps, and the format that
+results from naming a bounded set of packings is both safer and easier to read.
 
 ## `[build]`
 
@@ -144,10 +165,26 @@ ends up on a compile or link line of the project that depends on it.
 | Key | Type | Description |
 |---|---|---|
 | `type` | string | `source`, `static` or `shared` (default `static`) |
+| `sources` | array[string] | The sources a consumer compiles; absent means all of them |
+| `exclude` | array[string] | Sources to drop, applied after `sources` |
 | `include` | array[string] | Directories added as `-I`, relative to the artifact root |
 | `link` | array[string] | Libraries added as `-l` |
 | `defines` | array[string] | Defines added as `-D` |
 | `flags` | array[string] | Raw flags a consumer must compile with |
+
+`sources` and `exclude` exist because a source drop is not the same thing as a
+library. An upstream archive contains what upstream ships, and what upstream
+ships is usually more than the library: SQLite's amalgamation carries `shell.c`,
+which has its own `main()`, so a consumer that compiles the whole drop links two
+of them and fails on a duplicate symbol. There is no rule that could infer this
+— `main` is a legitimate symbol in a source file — so the recipe has to say.
+
+They are two keys rather than one because they fail in opposite directions.
+`sources` fails closed: a file added upstream tomorrow does not join the build
+by itself, which is what a dependency pinned to a version should mean. `exclude`
+fails open, and is the shorter statement when a drop is almost entirely library
+and the exception is named. Naming both is allowed and `exclude` wins, so a
+recipe can narrow a list it inherits without rewriting it.
 
 `flags` is the escape hatch and, as in RFC-0003, it is passed verbatim and is
 the least portable thing a recipe can contain. A recipe that needs it for
@@ -369,19 +406,20 @@ schema = 1
 form = "source"
 kind = "package"
 name = "sqlite"
-version = "3.50.0"
+version = "3.53.4"
 target = "any"
 
 [source]
-archive = "https://sqlite.org/2025/sqlite-amalgamation-3500000.zip"
-sha256 = "d1b9f1e2c7f4a1e0b5c3d7a9f2e4b6c8d0a2f4e6b8c0d2a4f6e8b0c2d4a6f8e0"
-strip_prefix = "sqlite-amalgamation-3500000"
+archive = "https://sqlite.org/2026/sqlite-amalgamation-3530400.zip"
+sha256 = "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d"
+strip_prefix = "sqlite-amalgamation-3530400"
 
 [build]
 system = "none"
 
 [artifacts]
 type = "source"
+sources = ["sqlite3.c"]
 include = ["."]
 link = ["m", "dl", "pthread"]
 defines = ["SQLITE_THREADSAFE=1", "SQLITE_ENABLE_FTS5", "SQLITE_ENABLE_RTREE"]
@@ -392,7 +430,7 @@ license = "blessing"
 homepage = "https://sqlite.org"
 ```
 
-Three things this recipe settles that the tables alone leave open:
+Four things this recipe settles that the tables alone leave open:
 
 - **`link` may name system libraries.** `m`, `dl` and `pthread` are not
   dependencies to resolve — they are `-l` flags the consumer's link line needs,
@@ -405,6 +443,25 @@ Three things this recipe settles that the tables alone leave open:
 - **`include = ["."]`** is how an amalgamation exports itself: the root of the
   unpacked source is the include directory, because the header sits next to the
   `.c`.
+- **`sources` is not optional in practice.** The archive also carries `shell.c`
+  and its `main()`. Without the list the consumer links two of them, and the
+  first thing anyone learns about this recipe is a duplicate symbol.
+
+The `sha256` above is worth a note, because getting it wrong is easy and the
+mistake is invisible: sqlite.org publishes a **SHA3-256** on its download page,
+and both digests are sixty-four hex characters, so one reads exactly like the
+other. They answer different questions and a recipe needs both, at different
+times. Upstream's digest verifies that the file the publisher downloaded is the
+file upstream released; the recipe's `sha256` verifies that every consumer
+fetches the bytes the publisher verified. A publisher checks the first by hand,
+once, and writes the second — which is why this RFC asks for one algorithm
+rather than for whichever one an origin happens to prefer.
+
+One thing it settles that is not in the recipe at all: the digest is **not** the
+hash sqlite.org prints on its download page. That page publishes SHA3-256 and
+this format carries SHA-256, so copying the published figure produces a recipe
+that fails verification on every machine. The two are worth cross-checking
+against each other, which is the only reason to have both.
 
 ## Compatibility
 
@@ -438,16 +495,21 @@ What a registry validates today (`recipe.ts`): `kind`, `name`, `version` and
 kinds, `[toolchain]`'s required strings and its optional per-language lists,
 `[tool]`'s role and binary, and `[package]`'s four string lists.
 
-What is specified here and validated nowhere:
+Since molto 0.4.0 and registry 0.2.0, both modes exist end to end for
+publication: `schema` and `form` are read and validated, `[source]`, `[build]`
+and `[artifacts]` are validated for a source recipe, `molto publish` sends one
+without looking for an archive, and the registry stores it with no blob (its
+`artifacts` table carries a `form` column and nulls the four blob fields for
+one). `source_service` fetches a `[source]` — archive with its digest verified,
+git at a rev, or a local path — into a cache addressed by coordinate.
 
-- **`schema` and `form`.** Neither key exists yet, which is why there is only
-  one mode in practice. `form` is the cheaper of the two to add and the more
-  urgent, because without it a source recipe cannot be told from an incomplete
-  binary one.
-- **`[source]`, `[build]` and `[artifacts]`.** No source recipe can be
-  published, resolved or built. This is the largest gap in this RFC and it is
-  blocked on RFC-0008: a source recipe with no dependency resolution to consume
-  it would be a document nothing reads.
+What is specified here and consumed nowhere:
+
+- **`[build]` and `[artifacts]` at build time.** They are validated and stored,
+  and nothing acts on them: no build system is run, and nothing puts `include`,
+  `link`, `defines` or `sources` on a compile line. This is the largest gap in
+  this RFC and it is blocked on the rest of RFC-0008 — a resolver to decide
+  *that* a dependency is wanted, which the fetcher and the recipe then serve.
 - **`[deps]` inside a package recipe.** It is checked to be a table and nothing
   more — its keys, sources and constraints are unvalidated. Since a registry
   cannot resolve versions (RFC-0010) it cannot check satisfiability, but it can

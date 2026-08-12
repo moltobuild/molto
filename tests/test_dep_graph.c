@@ -1,0 +1,268 @@
+#include <moltest.h>
+
+#include <molto/project/project_ctx.h>
+#include <molto/services/dep_graph.h>
+#include <molto/services/fs_service.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Walking the whole graph, without a network.
+ *
+ * A `path` dependency carries its own recipe, and a recipe's `[deps]` is read
+ * by the same code that reads a manifest's — so a chain of directories
+ * exercises every edge the walk can follow. What is not here is resolution
+ * against a registry, which test_resolve_service.c covers against canned
+ * bodies. */
+
+#define PATH_MAX_LEN 512
+
+typedef struct {
+    char root[64];
+} sandbox;
+
+static bool sandbox_open(sandbox *at) {
+    snprintf(at->root, sizeof at->root, "%s", "/tmp/molto_graph_XXXXXX");
+    return mkdtemp(at->root) != NULL;
+}
+
+static void sandbox_close(const sandbox *at) { (void)fs_remove_tree(at->root); }
+
+/* One package on disk: a source file, and a recipe naming `deps` as its own
+   dependencies — each of which is a sibling directory in the same sandbox. */
+static bool make_package(const sandbox *at, const char *name, const char *deps) {
+    char dir[PATH_MAX_LEN];
+    char file[PATH_MAX_LEN];
+    if (!fs_format_path(dir, sizeof dir, "%s/%s", at->root, name) || !fs_make_dirs(dir))
+        return false;
+
+    char recipe[PATH_MAX_LEN * 4];
+    snprintf(recipe, sizeof recipe,
+             "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+             "name = \"%s\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+             "[artifacts]\ntype = \"source\"\nsources = [\"%s.c\"]\ninclude = [\".\"]\n"
+             "%s",
+             name, name, deps == NULL ? "" : deps);
+
+    if (!fs_format_path(file, sizeof file, "%s/recipe.toml", dir) || !fs_write_file(file, recipe))
+        return false;
+    if (!fs_format_path(file, sizeof file, "%s/%s.c", dir, name))
+        return false;
+    return fs_write_file(file, "int answer(void) { return 1; }\n");
+}
+
+/* A `[deps]` fragment naming one sibling package by path. */
+static void dep_on(const sandbox *at, const char *name, char *out, size_t out_size) {
+    snprintf(out, out_size, "[deps]\n%s = { path = \"%s/%s\" }\n", name, at->root, name);
+}
+
+/* A root manifest depending on the named sibling packages by path. */
+static bool parse_root(const sandbox *at, const char *const *names, size_t count, project_ctx *out,
+                       char *err, size_t err_size) {
+    char manifest[PATH_MAX_LEN * 4];
+    int used = snprintf(manifest, sizeof manifest,
+                        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[deps]\n");
+    for (size_t i = 0; i < count; i++) {
+        used += snprintf(manifest + used, sizeof manifest - (size_t)used,
+                         "%s = { path = \"%s/%s\" }\n", names[i], at->root, names[i]);
+    }
+    return project_parse(manifest, out, err, err_size);
+}
+
+/* The point of the whole exercise: the manifest names one dependency and the
+   build gets three, because each recipe named the next. */
+MOLTEST(the_graph_reaches_past_what_the_manifest_declared) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "c", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    dep_on(&at, "b", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "c", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+    ASSERT_EQ(1u, ctx.deps.count);
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    EXPECT_EQ(3u, dep_graph_count(graph));
+    /* Sorted by name, so a lock file's diff is worth reading. */
+    EXPECT_STREQ("a", dep_graph_at(graph, 0)->name);
+    EXPECT_STREQ("b", dep_graph_at(graph, 1)->name);
+    EXPECT_STREQ("c", dep_graph_at(graph, 2)->name);
+
+    /* And each node remembers who pulled it in, which is what a conflict
+       message and a lock file both need. */
+    EXPECT_STREQ("", dep_graph_find(graph, "a")->required_by);
+    EXPECT_STREQ("a", dep_graph_find(graph, "b")->required_by);
+    EXPECT_STREQ("b", dep_graph_find(graph, "c")->required_by);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* The edges, recorded per node, are what a lock file writes as `dependencies`
+   and what makes the graph reconstructible without walking it again. */
+MOLTEST(a_node_records_its_own_edges_sorted) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 4];
+    snprintf(deps, sizeof deps, "[deps]\nz = { path = \"%s/z\" }\nm = { path = \"%s/m\" }\n",
+             at.root, at.root);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "z", NULL));
+    EXPECT_TRUE(make_package(&at, "m", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    const dep_node *a = dep_graph_find(graph, "a");
+    ASSERT_NOT_NULL(a);
+    ASSERT_EQ(2u, str_list_count(&a->dependencies));
+    EXPECT_STREQ("m", str_list_get(&a->dependencies, 0));
+    EXPECT_STREQ("z", str_list_get(&a->dependencies, 1));
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* Two dependents on one package is one node, not two. Anything else is two
+   copies of the same library in one link. */
+MOLTEST(a_package_reached_twice_is_one_node) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "shared", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    EXPECT_TRUE(make_package(&at, "shared", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a", "b"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    EXPECT_EQ(3u, dep_graph_count(graph));
+    EXPECT_NOT_NULL(dep_graph_find(graph, "shared"));
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* A cycle is not an error and must not hang. With `type = "source"` both drops
+   land in one binary, so `a` needing `b` needing `a` describes a build that
+   works; the visited set is what makes it terminate. */
+MOLTEST(a_cycle_terminates_and_is_not_an_error) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "b", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    dep_on(&at, "a", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_EQ(2u, dep_graph_count(graph));
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* One name pointed at two different directories is two packages wearing one
+   name. Unifying them would be the duplicate-symbol problem again, so the walk
+   refuses and says who asked for each. */
+MOLTEST(one_name_from_two_sources_is_a_conflict) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    /* Both dependents call it `png`, and they mean different directories. */
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s/png_old\" }\n", at.root);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s/png_new\" }\n", at.root);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    EXPECT_TRUE(make_package(&at, "png_old", NULL));
+    EXPECT_TRUE(make_package(&at, "png_new", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a", "b"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    EXPECT_FALSE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_NULL(graph);
+
+    /* The message has to name the package and both requirers: the fix is to
+       change one of them, and the user needs to know which two to look at. */
+    EXPECT_NOT_NULL(strstr(err, "png"));
+    EXPECT_NOT_NULL(strstr(err, "png_old"));
+    EXPECT_NOT_NULL(strstr(err, "png_new"));
+    EXPECT_NOT_NULL(strstr(err, " by a"));
+    EXPECT_NOT_NULL(strstr(err, " by b"));
+
+    sandbox_close(&at);
+}
+
+/* A dependency that fails deep in the graph says where it was reached from.
+   "could not read x" without that is a name the manifest never mentions. */
+MOLTEST(a_failure_names_who_required_it) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "missing", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    EXPECT_FALSE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "missing"));
+    EXPECT_NOT_NULL(strstr(err, "required by 'a'"));
+
+    sandbox_close(&at);
+}
+
+/* No dependencies is an empty graph, not a failure, and it must not go looking
+   for a registry to tell it so. */
+MOLTEST(no_dependencies_is_an_empty_graph) {
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n", &ctx, err,
+                              sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_EQ(0u, dep_graph_count(graph));
+    EXPECT_NULL(dep_graph_at(graph, 0));
+
+    dep_graph_free(graph);
+}

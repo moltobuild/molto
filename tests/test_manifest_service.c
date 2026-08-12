@@ -34,6 +34,47 @@ MOLTEST(manifest_service) {
     EXPECT_TRUE(manifest_render_default("Bad Name") == NULL);
 }
 
+MOLTEST(manifest_accepts_an_exact_version) {
+    char operator_found[8] = "";
+    EXPECT_TRUE(manifest_is_exact_version("3.53.4", operator_found, sizeof operator_found));
+    EXPECT_TRUE(manifest_is_exact_version("0.1.0", operator_found, sizeof operator_found));
+    EXPECT_TRUE(manifest_is_exact_version("1.0.0-rc.1", operator_found, sizeof operator_found));
+    EXPECT_TRUE(manifest_is_exact_version("1.0.0+build.5", operator_found, sizeof operator_found));
+    EXPECT_STREQ("", operator_found);
+}
+
+MOLTEST(manifest_rejects_a_version_range) {
+    /* RFC-0008: a range is a standing authorisation to run code that does not
+       exist yet. The operator is reported so the message can name it. */
+    static const struct {
+        const char *version;
+        const char *expected;
+    } ranges[] = {
+        { "^3.5.0", "^" },   { "~3.5.0", "~" },  { ">=1.0.0", ">=" },
+        { "<=2.0.0", "<=" }, { ">1.0.0", ">" },  { "<2.0.0", "<" },
+        { "*", "*" },        { "1.0.0, <2.0.0", "," },
+    };
+
+    for (size_t i = 0; i < sizeof ranges / sizeof ranges[0]; i++) {
+        char operator_found[8] = "";
+        EXPECT_FALSE(manifest_is_exact_version(ranges[i].version, operator_found,
+                                               sizeof operator_found));
+        EXPECT_STREQ(ranges[i].expected, operator_found);
+    }
+}
+
+MOLTEST(manifest_rejects_a_version_that_is_not_one) {
+    /* Semver validates as well as orders, so a typo is caught here rather than
+       compared byte by byte against whatever a registry serves. */
+    static const char *const bad[] = { "", "3.5", "3", "latest", "v3.5.0", "3.5.x", "a.b.c",
+                                       "3.5.0-" };
+
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++)
+        EXPECT_FALSE(manifest_is_exact_version(bad[i], NULL, 0));
+
+    EXPECT_FALSE(manifest_is_exact_version(NULL, NULL, 0));
+}
+
 MOLTEST(manifest_declares_a_language_standard) {
     char *toml = manifest_render_default("my_app");
     ASSERT_NOT_NULL(toml);

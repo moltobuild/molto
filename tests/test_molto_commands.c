@@ -26,8 +26,11 @@ MOLTEST(molto_reports_commands_that_are_not_implemented_yet) {
        a temporary workspace first. */
     /* `login` and `publish` are not here any more: they are implemented, and
        neither is exercised in this file because both would reach a registry. */
+    /* Nor are `add` and `remove`, which now edit the manifest. They are
+       covered in test_manifest_edit.c, which works on a temporary one — a case
+       here would rewrite Molto's own. */
     static const char *pending[] = {
-        "bench", "add", "remove", "update", "migrate",
+        "bench", "update", "migrate",
     };
     for (size_t i = 0; i < sizeof pending / sizeof pending[0]; i++)
         EXPECT_EQ(exit_not_implemented, run_molto(pending[i]));

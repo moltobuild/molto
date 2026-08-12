@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <molto/project/project_deps.h>
 #include <molto/services/manifest_service.h>
 
 /* Artifact kinds from RFC-0003 (spec section 9). */
@@ -112,6 +113,12 @@ typedef struct {
     project_target target;
     project_test test;
     project_env env;
+    project_deps deps;
+    /* `[dev-deps]`: resolved alongside the others, but their flags reach only
+       the test build. Kept apart from `deps` rather than tagged inside it,
+       because "does this ship?" is answered by which list a dependency is in. */
+    project_deps dev_deps;
+    project_registries registries;
     project_profiles profile;
     project_profile_options profile_options; /* per-profile extra options */
 } project_ctx;

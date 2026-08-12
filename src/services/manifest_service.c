@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 bool manifest_is_valid_name(const char *name) {
     if(name == NULL || name[0] == '\0')
@@ -15,6 +16,80 @@ bool manifest_is_valid_name(const char *name) {
             return false;
     }
     return true;
+}
+
+/* The range operators. Two-character ones come first so that at a given
+   position ">=" is reported as ">=" and not as ">". Whitespace is one of them:
+   "1.0.0 2.0.0" is a conjunction with the comma left out. */
+static const char *const RANGE_OPERATORS[] = {">=", "<=", "^", "~", ">", "<",
+                                              "*",  ",",  "=", " ", "\t"};
+
+static void clear_operator(char *out, size_t size) {
+    if(out != NULL && size > 0)
+        out[0] = '\0';
+}
+
+/* The range operator `version` carries, or NULL.
+
+   Scanned left to right rather than operator by operator, so what is reported
+   is the first thing wrong with the string: "1.0.0, <2.0.0" is a conjunction
+   whose comma comes before its '<', and naming the '<' would point past the
+   actual mistake. */
+static const char *range_operator_in(const char *version) {
+    for(const char *p = version; *p != '\0'; p++) {
+        for(size_t i = 0; i < sizeof RANGE_OPERATORS / sizeof RANGE_OPERATORS[0]; i++) {
+            const char *candidate = RANGE_OPERATORS[i];
+            if(strncmp(p, candidate, strlen(candidate)) == 0)
+                return candidate;
+        }
+    }
+    return NULL;
+}
+
+/* One or more digits, ending at `stop`. */
+static bool is_number(const char *text, const char *stop) {
+    if(text == stop)
+        return false;
+    for(const char *p = text; p < stop; p++) {
+        if(*p < '0' || *p > '9')
+            return false;
+    }
+    return true;
+}
+
+/* MAJOR.MINOR.PATCH, with the optional -prerelease and +build tails left
+   unexamined beyond being non-empty: semver's job here is to order releases and
+   to catch a typo, not to gate resolution (RFC-0008). */
+static bool is_semver(const char *version) {
+    const char *tail = version + strcspn(version, "-+");
+    if(*tail != '\0' && tail[1] == '\0')
+        return false; /* a "-" or "+" introducing nothing */
+
+    const char *major = version;
+    const char *first_dot = memchr(major, '.', (size_t)(tail - major));
+    if(first_dot == NULL)
+        return false;
+    const char *minor = first_dot + 1;
+    const char *second_dot = memchr(minor, '.', (size_t)(tail - minor));
+    if(second_dot == NULL)
+        return false;
+
+    return is_number(major, first_dot) && is_number(minor, second_dot) &&
+           is_number(second_dot + 1, tail);
+}
+
+bool manifest_is_exact_version(const char *version, char *out_operator, size_t operator_size) {
+    clear_operator(out_operator, operator_size);
+    if(version == NULL || version[0] == '\0')
+        return false;
+
+    const char *found = range_operator_in(version);
+    if(found != NULL) {
+        if(out_operator != NULL && operator_size > 0)
+            snprintf(out_operator, operator_size, "%s", found);
+        return false;
+    }
+    return is_semver(version);
 }
 
 /* The starter manifest. `std` is declared rather than left to the compiler's

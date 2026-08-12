@@ -4,9 +4,12 @@
 #include <molto/build/depfile.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/project/lockfile.h>
 #include <molto/project/project_ctx.h>
+#include <molto/services/deps_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
+#include <molto/services/object_cache.h>
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/services/toolchain_service.h>
@@ -178,7 +181,7 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
 static bool build_compile_argv(str_list *argv, const char *root, const char *source,
                                const char *object, const manifest_profile *settings,
                                const project_target *target, const project_options *profile_opts,
-                               const project_options *extra_opts, const char *include_flag,
+                               const project_options *extra_opts, const str_list *include_flags,
                                const char *depfile, const resolved_toolchain *chain) {
     bool is_cpp = source_is_cpp(source);
     const char *driver = compile_flags_driver(chain, is_cpp);
@@ -199,14 +202,22 @@ static bool build_compile_argv(str_list *argv, const char *root, const char *sou
         ok = compile_flags_push_std(argv, target, is_cpp);
     if(ok)
         ok = compile_flags_push_options(argv, root, &target->options);
-    if(ok)
+    /* Absent for a dependency, which is compiled against the language standard
+       and its own recipe and nothing else the project chose. */
+    if(ok && profile_opts != NULL)
         ok = compile_flags_push_options(argv, root, profile_opts);
     /* Extra scope, used by tests: applied last so it can add to the rest. */
     if(ok && extra_opts != NULL)
         ok = compile_flags_push_options(argv, root, extra_opts);
     if(ok)
         ok = str_list_push(argv, ARG_DEPFILE_GEN) && str_list_push(argv, ARG_DEPFILE_OUT) &&
-             str_list_push(argv, depfile) && str_list_push(argv, include_flag);
+             str_list_push(argv, depfile);
+    /* Pre-composed "-I" flags: the project's own src/, then one per include
+       directory a dependency exports. They are composed by the caller rather
+       than stored in project_options because a dependency's is an absolute
+       path into the cache, and a manifest option is sized for "-DFOO=1". */
+    for(size_t i = 0; ok && i < str_list_count(include_flags); i++)
+        ok = str_list_push(argv, str_list_get(include_flags, i));
     return ok;
 }
 
@@ -215,7 +226,8 @@ static bool build_compile_argv(str_list *argv, const char *root, const char *sou
 static char *compile_command_string(const char *root, const char *source, const char *object,
                                     const manifest_profile *settings, const project_target *target,
                                     const project_options *profile_opts,
-                                    const project_options *extra_opts, const char *include_flag,
+                                    const project_options *extra_opts,
+                                    const str_list *include_flags,
                                     const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if(!depfile_path_for(object, depfile, sizeof depfile))
@@ -224,7 +236,7 @@ static char *compile_command_string(const char *root, const char *source, const 
     str_list_init(&argv);
     char *command = NULL;
     if(build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
-                          include_flag, depfile, chain))
+                          include_flags, depfile, chain))
         command = join_args(&argv);
     str_list_free(&argv);
     return command;
@@ -236,7 +248,7 @@ static char *compile_command_string(const char *root, const char *source, const 
 static bool compile_one(const char *root, const char *source, const char *object,
                         const manifest_profile *settings, const project_target *target,
                         const project_options *profile_opts, const project_options *extra_opts,
-                        const char *include_flag, const project_env *env,
+                        const str_list *include_flags, const project_env *env,
                         const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if(!depfile_path_for(object, depfile, sizeof depfile))
@@ -244,7 +256,7 @@ static bool compile_one(const char *root, const char *source, const char *object
     str_list argv;
     str_list_init(&argv);
     if(!build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
-                           include_flag, depfile, chain)) {
+                           include_flags, depfile, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -320,7 +332,7 @@ typedef struct {
     const char *source;
     const char *object;
     const manifest_profile *settings;
-    const char *include_flag;
+    const str_list *include_flags;
     const project_target *target;
     const project_options *profile_opts;
     const project_options *extra_opts;
@@ -335,7 +347,7 @@ static void compile_task_run(void *arg) {
     compile_task *task = arg;
     task->succeeded = compile_one(task->root, task->source, task->object, task->settings,
                                   task->target, task->profile_opts, task->extra_opts,
-                                  task->include_flag, task->env, task->chain);
+                                  task->include_flags, task->env, task->chain);
     if(!task->succeeded) {
         fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
         atomic_store(task->failed, true);
@@ -346,13 +358,51 @@ static void compile_task_run(void *arg) {
    WSDB which units are stale; phase 2 compiles them in parallel; phase 3 (back
    on this thread) records the results into the WSDB. Reports whether C++ is
    present and whether anything was recompiled. */
+/* Take a dependency's object out of the shared cache, and record it as if it
+   had just been compiled — because as far as anything downstream can tell, it
+   was. False when there is nothing to take. */
+[[nodiscard]] static bool take_from_object_cache(wsdb *db, const char *source, const char *object,
+                                                 const char *command) {
+    char cached[OBJECT_CACHE_PATH_MAX];
+    if(!object_cache_path(source, command, cached, sizeof cached))
+        return false;
+    if(!object_cache_take(cached, object))
+        return false;
+
+    /* Without a depfile there are no headers to watch, so the source stands in
+       for them. That is sound here and nowhere else: the tree a dependency was
+       fetched into is immutable, so its headers cannot change without the
+       coordinate changing with them. */
+    str_list prereqs;
+    str_list_init(&prereqs);
+    const bool recorded =
+        str_list_push(&prereqs, source) && wsdb_record_object(db, object, command, &prereqs);
+    str_list_free(&prereqs);
+    if(!recorded)
+        fprintf(stderr, "molto: warning: could not record the cached object for '%s'\n", source);
+    return true;
+}
+
+/* Offer a freshly compiled dependency object to the next project that would
+   compile it the same way. */
+static void share_in_object_cache(const char *source, const char *object, const char *command) {
+    char cached[OBJECT_CACHE_PATH_MAX];
+    if(object_cache_path(source, command, cached, sizeof cached))
+        object_cache_put(object, cached);
+}
+
 static int compile_sources(const char *root, build_profile profile,
-                           const manifest_profile *settings, const char *include_flag,
+                           const manifest_profile *settings, const str_list *include_flags,
                            const project_target *target, const project_options *profile_opts,
                            const project_options *extra_opts, const project_env *env,
                            const resolved_toolchain *chain, wsdb *db, const str_list *sources,
                            str_list *objects, bool *any_cpp, bool *any_compiled) {
     size_t count = str_list_count(sources);
+    /* `objects` accumulates across the passes a build makes — dependencies
+       first, then the project — so this call's entries begin where the list
+       already stood. Indexing it from zero would hand one source another's
+       object, and the second pass would overwrite what the first produced. */
+    const size_t objects_base = str_list_count(objects);
     bool *needs = calloc(count, sizeof(bool));
     if(needs == NULL)
         return exit_build_failure;
@@ -378,8 +428,16 @@ static int compile_sources(const char *root, build_profile profile,
             return exit_build_failure;
         }
         char *command = compile_command_string(root, source, object, settings, target, profile_opts,
-                                               extra_opts, include_flag, chain);
+                                               extra_opts, include_flags, chain);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
+
+        /* A stale object that another project already compiled the same way is
+           not compiled again: it is copied out of the shared cache and
+           recorded as if it had been. Only a dependency qualifies, because
+           only a dependency's tree is immutable enough for a coordinate to
+           answer for its contents. */
+        if(needs[i] && command != NULL)
+            needs[i] = !take_from_object_cache(db, source, object, command);
         free(command);
     }
 
@@ -411,9 +469,9 @@ static int compile_sources(const char *root, build_profile profile,
         tasks[queued] = (compile_task){
             .root = root,
             .source = str_list_get(sources, i),
-            .object = str_list_get(objects, i),
+            .object = str_list_get(objects, objects_base + i),
             .settings = settings,
-            .include_flag = include_flag,
+            .include_flags = include_flags,
             .target = target,
             .profile_opts = profile_opts,
             .extra_opts = extra_opts,
@@ -450,9 +508,11 @@ static int compile_sources(const char *root, build_profile profile,
             continue;
         }
         char *command = compile_command_string(root, task->source, task->object, settings, target,
-                                               profile_opts, extra_opts, include_flag, chain);
+                                               profile_opts, extra_opts, include_flags, chain);
         if(command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", task->source);
+        if(command != NULL)
+            share_in_object_cache(task->source, task->object, command);
         free(command);
     }
 
@@ -524,13 +584,173 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     return ok;
 }
 
+/* The "-I" flags a compile line carries: the project's own src/, then one per
+   include directory a dependency exports.
+
+   Composed into a list rather than merged into project_options because a
+   dependency's include is an absolute path into the shared cache, and a
+   manifest option is sized for "-DFOO=1" — RFC-0003 caps one at 95 characters,
+   which a real cache path exceeds. */
+[[nodiscard]] static bool compose_include_flags(const char *src_dir, const str_list *dep_includes,
+                                                str_list *out) {
+    char flag[PATH_BUFFER_SIZE + 4];
+    if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, src_dir))
+        return fs_report_long_path(src_dir);
+    if(!str_list_push(out, flag))
+        return false;
+
+    for(size_t i = 0; dep_includes != NULL && i < str_list_count(dep_includes); i++) {
+        const char *directory = str_list_get(dep_includes, i);
+        if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
+            return fs_report_long_path(directory);
+        if(!str_list_push(out, flag))
+            return false;
+    }
+    return true;
+}
+
+/* Append one entry to a fixed-size option array, refusing to overflow it: a
+   dropped define or library produces a green build of something else. */
+[[nodiscard]] static bool append_option(char dest[][PROJECT_OPT_LEN], size_t *count,
+                                        size_t capacity, const char *value, const char *what) {
+    if(*count >= capacity) {
+        fprintf(stderr, "molto: %s has more than %zu entries once dependencies are added\n", what,
+                capacity);
+        return false;
+    }
+    if(!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
+        return fs_report_long_path(value);
+    (*count)++;
+    return true;
+}
+
+/* What a dependency is compiled with: its own defines and flags, and its own
+   include directories as pre-composed "-I" flags. Deliberately not the
+   project's: see the call site. */
+[[nodiscard]] static bool collect_dep_options(const prepared_deps *deps, project_options *options,
+                                              str_list *include_flags) {
+    for(size_t i = 0; i < str_list_count(&deps->defines); i++) {
+        if(!append_option(options->defines, &options->define_count, PROJECT_MAX_OPTS,
+                          str_list_get(&deps->defines, i), "a dependency's defines"))
+            return false;
+    }
+    for(size_t i = 0; i < str_list_count(&deps->flags); i++) {
+        if(!append_option(options->flags, &options->flag_count, PROJECT_MAX_OPTS,
+                          str_list_get(&deps->flags, i), "a dependency's flags"))
+            return false;
+    }
+    char flag[PATH_BUFFER_SIZE + 4];
+    for(size_t i = 0; i < str_list_count(&deps->includes); i++) {
+        const char *directory = str_list_get(&deps->includes, i);
+        if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
+            return fs_report_long_path(directory);
+        if(!str_list_push(include_flags, flag))
+            return false;
+    }
+    return true;
+}
+
+/* Fold what the dependencies contribute into `[target]`.
+ *
+ * A dependency's include directories, defines, flags and libraries are exactly
+ * the things `[target]` already carries, and everything downstream — the
+ * compile line, the link line, `molto lint`, the test build — reads them from
+ * there. Merging here means none of those has to learn what a dependency is.
+ */
+[[nodiscard]] static bool merge_deps(project_ctx *ctx, const prepared_deps *deps) {
+    /* The package name and version live past the manifest's own limit, so a
+       dependency may not take their slots. */
+    for(size_t i = 0; i < str_list_count(&deps->defines); i++) {
+        if(!append_option(ctx->target.options.defines, &ctx->target.options.define_count,
+                          PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES, str_list_get(&deps->defines, i),
+                          "[target].defines"))
+            return false;
+    }
+    for(size_t i = 0; i < str_list_count(&deps->flags); i++) {
+        if(!append_option(ctx->target.options.flags, &ctx->target.options.flag_count,
+                          PROJECT_MAX_OPTS, str_list_get(&deps->flags, i), "[target].flags"))
+            return false;
+    }
+    for(size_t i = 0; i < str_list_count(&deps->links); i++) {
+        const char *library = str_list_get(&deps->links, i);
+        if(ctx->target.link_count >= PROJECT_MAX_LINK) {
+            fprintf(stderr,
+                    "molto: [target].link has more than %d entries once dependencies are "
+                    "added\n",
+                    PROJECT_MAX_LINK);
+            return false;
+        }
+        if(!fs_format_path(ctx->target.link[ctx->target.link_count], PROJECT_LINK_NAME_MAX, "%s",
+                           library))
+            return fs_report_long_path(library);
+        ctx->target.link_count++;
+    }
+    return true;
+}
+
+/*
+ * Resolve the whole graph, reduce it to flags, and write down what was
+ * resolved.
+ *
+ * One walk answers both questions, which is why the lock is written here and
+ * not by a command of its own: the graph is in hand exactly once, and going
+ * back for it would mean asking the registry the same thing twice.
+ *
+ * A project with no dependencies writes no lock file. There is nothing to
+ * record, and creating one would put a file in every project that has never
+ * needed one — molto's own repository included.
+ */
+[[nodiscard]] static bool prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
+                                           prepared_deps *dev_out, char *err, size_t err_size) {
+    if(ctx->deps.count == 0 && ctx->dev_deps.count == 0)
+        return true;
+
+    /* Read before resolving, so what comes back can be held against it. A
+       missing or stale lock is not an error: there is simply nothing to check
+       against, and one is written at the end either way. */
+    lockfile lock;
+    char lock_err[512] = "";
+    const bool locked =
+        lockfile_read(root, &lock, lock_err, sizeof lock_err) && lockfile_matches(&lock, ctx);
+
+    dep_graph *graph = NULL;
+    if(!dep_graph_resolve(ctx, &graph, err, err_size)) {
+        if(lock.packages != NULL)
+            lockfile_free(&lock);
+        return false;
+    }
+
+    bool ok = !locked || lockfile_verify(&lock, graph, err, err_size);
+    if(lock.packages != NULL)
+        lockfile_free(&lock);
+    if(!ok) {
+        dep_graph_free(graph);
+        return false;
+    }
+
+    ok = deps_prepare_graph(graph, out, err, err_size) &&
+         deps_prepare_dev(graph, dev_out, err, err_size);
+    /* Failing to record a resolution that succeeded must not fail the build:
+       the objects are correct either way, and the cost is that the next build
+       resolves again. Silence would be worse — a lock file nobody can write is
+       a reproducibility guarantee nobody has. */
+    if(ok && !lockfile_write(root, ctx->project_name, graph, err, err_size)) {
+        fprintf(stderr, "molto: warning: %s\n", err);
+        err[0] = '\0';
+    }
+
+    dep_graph_free(graph);
+    return ok;
+}
+
 /* Load the manifest and compile every source under `root/src` into `objects`
    (caller-initialised, caller-freed). Reports whether C++ is present and whether
    anything was recompiled. Shared by build_project and build_tests. */
 static int compile_project(const char *root, build_profile profile, wsdb *db,
                            bool refresh_toolchain, project_ctx *ctx_out,
-                           resolved_toolchain *chain_out, str_list *objects_out, bool *any_cpp_out,
-                           bool *any_compiled_out) {
+                           resolved_toolchain *chain_out, str_list *objects_out,
+                           str_list *include_flags_out, bool *any_cpp_out, bool *any_compiled_out,
+                           prepared_deps *dev_out) {
     int result = load_project(root, ctx_out);
     if(result != exit_ok)
         return result;
@@ -547,16 +767,59 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
         return exit_build_failure;
     }
 
+    /* Dependencies first: what they contribute has to be in [target] before a
+       compile line is built out of it, and their sources have to be in the
+       list before the toolchain question is asked — a dependency written in
+       C++ decides which driver this build needs as much as the project's own
+       code does. */
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    char deps_err[512] = "";
+    if(!prepare_and_lock(root, ctx_out, &deps, dev_out, deps_err, sizeof deps_err)) {
+        fprintf(stderr, "molto: %s\n", deps_err);
+        prepared_deps_free(&deps);
+        return exit_dependency_failure;
+    }
+
     str_list sources;
     str_list_init(&sources);
     if(!source_discovery_collect(src_dir, &sources)) {
         fprintf(stderr, "molto: could not read the sources under '%s'\n", src_dir);
         str_list_free(&sources);
+        prepared_deps_free(&deps);
         return exit_build_failure;
+    }
+
+    /* The dependencies' own compile settings, kept apart from the project's.
+       They are what a dependency is compiled with, and merging the two would
+       hand it the consumer's defines and put the consumer's src/ on its
+       include path — where a dependency's `#include "config.h"` would find
+       the application's. It also makes the same dependency compile
+       identically in every project, which is what lets one object be shared. */
+    project_options dep_options;
+    memset(&dep_options, 0, sizeof dep_options);
+    str_list dep_include_flags;
+    str_list_init(&dep_include_flags);
+
+    bool merged = collect_dep_options(&deps, &dep_options, &dep_include_flags) &&
+                  merge_deps(ctx_out, &deps) &&
+                  compose_include_flags(src_dir, &deps.includes, include_flags_out);
+    str_list dep_sources;
+    str_list_init(&dep_sources);
+    for(size_t i = 0; merged && i < str_list_count(&deps.sources); i++)
+        merged = str_list_push(&dep_sources, str_list_get(&deps.sources, i));
+    prepared_deps_free(&deps);
+    if(!merged) {
+        str_list_free(&sources);
+        str_list_free(&dep_sources);
+        str_list_free(&dep_include_flags);
+        return exit_dependency_failure;
     }
     if(str_list_count(&sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
         str_list_free(&sources);
+        str_list_free(&dep_sources);
+        str_list_free(&dep_include_flags);
         return exit_build_failure;
     }
 
@@ -566,25 +829,48 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     bool needs_cpp = false;
     for(size_t i = 0; i < str_list_count(&sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&sources, i));
+    for(size_t i = 0; i < str_list_count(&dep_sources); i++)
+        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&dep_sources, i));
     result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
     if(result != exit_ok) {
         str_list_free(&sources);
+        str_list_free(&dep_sources);
+        str_list_free(&dep_include_flags);
         return result;
-    }
-
-    /* Extra room over src_dir for the "-I" prefix and the terminating NUL. */
-    char include_flag[PATH_BUFFER_SIZE + 4];
-    if(!fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir)) {
-        (void)fs_report_long_path(src_dir);
-        str_list_free(&sources);
-        return exit_build_failure;
     }
 
     *any_cpp_out = false;
     *any_compiled_out = false;
-    result = compile_sources(root, profile, &settings, include_flag, &ctx_out->target,
-                             profile_options_for(ctx_out, profile), NULL, &ctx_out->env, chain_out,
-                             db, &sources, objects_out, any_cpp_out, any_compiled_out);
+
+    /* Dependencies first, and in their own pass: the target they are compiled
+       against carries the language standard and nothing of the project's, so
+       what reaches the compiler is the same in every project that depends on
+       them — which is what makes one compiled object worth sharing. */
+    if(str_list_count(&dep_sources) > 0) {
+        project_target dep_target = ctx_out->target;
+        memset(&dep_target.options, 0, sizeof dep_target.options);
+        dep_target.link_count = 0;
+        bool dep_cpp = false;
+        bool dep_compiled = false;
+        result = compile_sources(root, profile, &settings, &dep_include_flags, &dep_target, NULL,
+                                 &dep_options, &ctx_out->env, chain_out, db, &dep_sources,
+                                 objects_out, &dep_cpp, &dep_compiled);
+        *any_cpp_out = *any_cpp_out || dep_cpp;
+        *any_compiled_out = *any_compiled_out || dep_compiled;
+    }
+    str_list_free(&dep_sources);
+    str_list_free(&dep_include_flags);
+
+    if(result == exit_ok) {
+        bool project_cpp = false;
+        bool project_compiled = false;
+        result =
+            compile_sources(root, profile, &settings, include_flags_out, &ctx_out->target,
+                            profile_options_for(ctx_out, profile), NULL, &ctx_out->env, chain_out,
+                            db, &sources, objects_out, &project_cpp, &project_compiled);
+        *any_cpp_out = *any_cpp_out || project_cpp;
+        *any_compiled_out = *any_compiled_out || project_compiled;
+    }
     str_list_free(&sources);
     return result;
 }
@@ -600,16 +886,24 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     project_ctx ctx;
     resolved_toolchain chain;
     str_list objects;
+    str_list include_flags;
     str_list_init(&objects);
+    str_list_init(&include_flags);
     bool any_cpp = false;
     bool any_compiled = false;
+    /* Development dependencies are resolved here too — they share the graph and
+       the version check — but this build links none of them. */
+    prepared_deps dev;
+    prepared_deps_init(&dev);
     int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &any_cpp, &any_compiled);
+                                 &include_flags, &any_cpp, &any_compiled, &dev);
+    prepared_deps_free(&dev);
 
     if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
         if(!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
             str_list_free(&objects);
+            str_list_free(&include_flags);
             (void)wsdb_close(db);
             return exit_build_failure;
         }
@@ -632,6 +926,7 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     }
 
     str_list_free(&objects);
+    str_list_free(&include_flags);
     warn_if_not_saved(db);
     return result;
 }
@@ -791,13 +1086,19 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     project_ctx ctx;
     resolved_toolchain chain;
     str_list objects;
+    str_list include_flags;
     str_list_init(&objects);
+    str_list_init(&include_flags);
     bool any_cpp = false;
     bool any_compiled = false;
+    prepared_deps dev;
+    prepared_deps_init(&dev);
     int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &any_cpp, &any_compiled);
+                                 &include_flags, &any_cpp, &any_compiled, &dev);
     if(result != exit_ok) {
+        prepared_deps_free(&dev);
         str_list_free(&objects);
+        str_list_free(&include_flags);
         warn_if_not_saved(db);
         return result;
     }
@@ -811,19 +1112,62 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     char main_source[PATH_BUFFER_SIZE];
     char main_object[PATH_BUFFER_SIZE];
     char src_dir[PATH_BUFFER_SIZE];
-    char include_flag[PATH_BUFFER_SIZE + 4];
     char tests_dir[PATH_BUFFER_SIZE];
     if(!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root) ||
        !object_path_for(root, profile_dir, main_source, main_object, sizeof main_object) ||
        !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) ||
-       !fs_format_path(include_flag, sizeof include_flag, INCLUDE_FLAG_FORMAT, src_dir) ||
        !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
         (void)fs_report_long_path(root);
         str_list_free(&objects);
+        str_list_free(&include_flags);
         warn_if_not_saved(db);
         return exit_build_failure;
     }
     bool has_main = fs_path_exists(main_source);
+
+    /*
+     * What `[dev-deps]` adds, and only here.
+     *
+     * Their include directories go onto the line that compiles `tests/` and
+     * onto no other, which is what makes the separation real: a source under
+     * `src/` that includes one fails to compile with "no such file", on the
+     * first build, rather than at link time or in production (RFC-0008).
+     *
+     * Their defines and flags land in `[test].options` and their libraries in
+     * this `ctx`'s link list — both local to this function, so the binary
+     * `molto build` produces never sees them.
+     */
+    if(result == exit_ok && str_list_count(&dev.includes) > 0) {
+        char flag[PATH_BUFFER_SIZE + 4];
+        for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.includes); i++) {
+            const char *directory = str_list_get(&dev.includes, i);
+            if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory) ||
+               !str_list_push(&include_flags, flag))
+                result = exit_build_failure;
+        }
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.defines); i++) {
+        if(!append_option(ctx.test.options.defines, &ctx.test.options.define_count,
+                          PROJECT_MAX_OPTS, str_list_get(&dev.defines, i), "[test].defines"))
+            result = exit_build_failure;
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.flags); i++) {
+        if(!append_option(ctx.test.options.flags, &ctx.test.options.flag_count, PROJECT_MAX_OPTS,
+                          str_list_get(&dev.flags, i), "[test].flags"))
+            result = exit_build_failure;
+    }
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.links); i++) {
+        const char *library = str_list_get(&dev.links, i);
+        if(ctx.target.link_count >= PROJECT_MAX_LINK ||
+           !fs_format_path(ctx.target.link[ctx.target.link_count], PROJECT_LINK_NAME_MAX, "%s",
+                           library)) {
+            fprintf(stderr, "molto: a development dependency's '%s' does not fit the link line\n",
+                    library);
+            result = exit_build_failure;
+        } else {
+            ctx.target.link_count++;
+        }
+    }
 
     /* Library objects = every src object except the app's main object. */
     str_list lib_objects;
@@ -834,6 +1178,31 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             continue;
         if(!str_list_push(&lib_objects, object))
             result = exit_build_failure;
+    }
+
+    /* A development dependency's own sources are compiled in their own pass,
+       against their own options, exactly as a runtime one's are — and their
+       objects join the test link rather than the project's. */
+    if(result == exit_ok && str_list_count(&dev.sources) > 0) {
+        project_options dev_options;
+        memset(&dev_options, 0, sizeof dev_options);
+        str_list dev_include_flags;
+        str_list_init(&dev_include_flags);
+        project_target dev_target = ctx.target;
+        memset(&dev_target.options, 0, sizeof dev_target.options);
+        dev_target.link_count = 0;
+
+        bool dev_cpp = false;
+        bool dev_compiled = false;
+        if(!collect_dep_options(&dev, &dev_options, &dev_include_flags))
+            result = exit_build_failure;
+        else
+            result = compile_sources(root, profile, &settings, &dev_include_flags, &dev_target,
+                                     NULL, &dev_options, &ctx.env, &chain, db, &dev.sources,
+                                     &lib_objects, &dev_cpp, &dev_compiled);
+        any_cpp = any_cpp || dev_cpp;
+        any_compiled = any_compiled || dev_compiled;
+        str_list_free(&dev_include_flags);
     }
 
     str_list test_sources;
@@ -849,9 +1218,9 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     bool tests_cpp = false;
     bool tests_compiled = false;
     if(result == exit_ok && str_list_count(&test_sources) > 0)
-        result = compile_sources(root, profile, &settings, include_flag, &ctx.target, profile_opts,
-                                 &ctx.test.options, &ctx.env, &chain, db, &test_sources,
-                                 &test_objects, &tests_cpp, &tests_compiled);
+        result = compile_sources(root, profile, &settings, &include_flags, &ctx.target,
+                                 profile_opts, &ctx.test.options, &ctx.env, &chain, db,
+                                 &test_sources, &test_objects, &tests_cpp, &tests_compiled);
 
     if(result == exit_ok) {
         const test_link_context context = {
@@ -883,10 +1252,12 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             wsdb_prune(db, test_binaries_out, prefix);
     }
 
+    prepared_deps_free(&dev);
     str_list_free(&test_objects);
     str_list_free(&test_sources);
     str_list_free(&lib_objects);
     str_list_free(&objects);
+    str_list_free(&include_flags);
     warn_if_not_saved(db);
     return result;
 }

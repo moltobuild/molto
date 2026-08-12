@@ -16,9 +16,15 @@
  * created 0600 and deleted afterwards.
  */
 
-/* Largest answer read back. The registry's JSON replies are a few hundred
-   bytes; a recipe echoed in `metadata` is the only thing that grows. */
-#define REGISTRY_BODY_MAX 16384
+/* Largest answer read back. Most replies are a few hundred bytes, but a
+   release listing carries one whole recipe per target it was published for
+   (RFC-0010), so the ceiling is set by the biggest of those rather than by the
+   typical case. The buffer it feeds is static, so this is BSS and not stack. */
+#define REGISTRY_BODY_MAX 65536
+
+/* The official registry: where a dependency resolves when neither the manifest
+   nor a stored credential names one. */
+#define REGISTRY_DEFAULT_URL "https://molto-registry.joseb-twelve.workers.dev"
 
 typedef struct {
     long status; /* HTTP status, or 0 when curl never got one */
@@ -28,6 +34,12 @@ typedef struct {
 /* True if the request reached the registry and it answered `status`. A false
    here is a transport failure, never an HTTP error: a 404 is a true with a
    status of 404. */
+
+/* GET `path` — read the catalogue. Reads are public (RFC-0010), so no token is
+   sent and none is needed. A 404 is a true with a status of 404, as
+   everywhere else here; a false is a transport failure. */
+[[nodiscard]] bool registry_get(const char *base_url, const char *path, registry_response *out,
+                                char *err, size_t err_size);
 
 /* POST /v1/auth/token — exchange an email and password for a bearer token.
    Writes the token into `token`. */

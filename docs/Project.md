@@ -277,16 +277,84 @@ would produce a green build that used different options than you asked for.
 | entries in `[env]` | 32 |
 | `[env]` name / value length | 63 / 255 characters |
 
+## Dependencies
+
+Two tables, and the difference between them is what ends up in your binary.
+
+```toml
+[deps]
+sqlite = "3.53.4"                       # from a registry, at exactly this version
+http   = { path = "modules/http" }      # a directory you are working on
+
+[dev-deps]
+tinytest = { path = "modules/tinytest" } # only ever compiled into your tests
+```
+
+`[deps]` is linked into what you ship. `[dev-deps]` is for test frameworks,
+benchmark harnesses and fixtures — anything that exists only while you are
+working on the package.
+
+The separation is enforced, not documented. A development dependency's include
+directories are put on the command line that compiles `tests/` and on no other,
+so a file under `src/` that includes one **fails to compile**:
+
+```
+src/lib.c:1:10: fatal error: 'tinytest.h' file not found
+```
+
+That is the intended behaviour and it happens on the first build, not at link
+time and not in production. If you hit it, either the include belongs in a
+test, or the dependency belongs in `[deps]`.
+
+Three rules worth knowing:
+
+- **Versions are exact.** `"3.53.4"` means that version. `^`, `~`, `>=` and the
+  rest are not part of the format, and a manifest carrying one is refused. A
+  range would let a release nobody has read enter your build without a diff
+  ([RFC-0008](../rfcs/0008-dependency-resolution.md)).
+- **One version per package.** The two tables share one graph, because a test
+  binary links your `src/` objects together with your test objects — two
+  versions of one library there are duplicate symbols. Declaring `png` at
+  different versions in the two tables is an error, not two copies.
+- **Development dependencies are not transitive.** Only yours are resolved.
+  A library you depend on does not drag its test framework into your build.
+
+`molto add` and `molto remove` edit these tables for you:
+
+```sh
+molto add sqlite                      # the newest release, written as an exact version
+molto add sqlite@3.53.4               # that one
+molto add tinytest --dev --path ../tt # into [dev-deps]
+molto remove sqlite
+```
+
+Adding a name you already have is how you upgrade it — the same move as
+`npm install`. Without `@<version>` Molto asks the registry what the newest
+release is and **writes that number into the manifest**, so the choice is made
+once, in a diff you can read, and never again behind your back.
+
+They edit lines rather than rewriting the file, so your comments, alignment and
+key order survive — and re-adding a name at a new version replaces it where it
+already sits, keeping any comment beside it. Every edit is parsed before it is
+written: one that would leave a manifest Molto cannot read is refused and your
+file is untouched.
+
+Resolving writes `Molto.lock`, which records the whole graph — including the
+transitive packages your manifest never mentions — with a `scopes` array saying
+which builds reach each one. It is generated; commit it, and edit
+`Project.toml` instead.
+
 ## Not implemented yet
 
 These are specified in RFC-0003 but do nothing in the current binary:
 
 | Table / key | Behaviour today |
 |---|---|
-| `[deps]` | **Parsed by no one — silently ignored.** Declaring dependencies has no effect |
-| `[registries]` | Silently ignored |
 | `package.artifact` | **Hard error.** Every project links an executable; `static`/`shared` would need `ar`, `-shared` and `-fPIC`, so the key is refused rather than accepted and ignored |
-| `[features]`, `[dev-deps]`, `[build-deps]`, `[workspace]` | Not read |
+| `molto update` | Exits with code 5, and stays that way: `molto add <name>` is the upgrade, the way `npm install` is |
+| A dependency published as a prebuilt library | Refused with a message. Only `[artifacts] type = "source"` can be consumed |
+| `[features]`, `[build-deps]`, `[workspace]` | Not read |
+| `dep.recipe`, `artifact`, `optional`, `features`, `default_features` | Refused rather than ignored |
 | `target.triple`, per-OS tables | Not read |
 | `profile.lto`, `strip`, `sanitizers`, `warnings_as_errors` | Not read |
 
@@ -298,10 +366,15 @@ That is the opposite of `format.json` and `linter.json`, which refuse anything
 they do not understand ([`docs/Style.md`](Style.md#style-configuration-fails-closed)).
 The asymmetry is deliberate rather than an oversight: the tables above are
 specified by RFC-0003 and simply not implemented yet, so a manifest that
-declares `[deps]` is valid by design and rejecting it would refuse a correct
-file. A style key, by contrast, is either expressible for the backend or it is
-not. The cost is real — a typo costs you an afternoon — and the trade closes
-once the schema stops growing.
+declares one is valid by design and rejecting it would refuse a correct file.
+A style key, by contrast, is either expressible for the backend or it is not.
+The cost is real — a typo costs you an afternoon — and the trade closes once
+the schema stops growing.
+
+Inside `[deps]` and `[dev-deps]` the trade is already closed: those two tables
+**do** fail closed. An unknown key, two sources, a version range or a key that
+is specified but not implemented is an error naming the dependency, because a
+dependency read wrong is a dependency that silently is not there.
 
 ## Troubleshooting
 
@@ -315,6 +388,10 @@ once the schema stops growing.
 | `undefined reference` to `sqrt`, `pthread_create`, … | Library not linked | `link = ["m", "pthread"]` |
 | `unknown compiler '…'` | `compiler` names a binary, not a vendor | Use `gcc`/`clang`/`msvc`, or drop the key |
 | `artifact '…' is not supported yet` | `package.artifact` declared | Remove it |
+| `fatal error: '…' file not found` for a dependency that is declared | It is in `[dev-deps]`, and the file including it is under `src/` | Move the dependency to `[deps]`, or the include into a test |
+| `is a version range, and versions are exact` | `^`, `~` or `>=` in a version | Write the one version you mean |
+| `is required twice and not as the same thing` | Two dependents disagree about a package | Change one of the two the message names |
+| `brings no recipe.toml at the root of its source` | A `path`/`git` dependency does not describe itself | Add a `recipe.toml` with `[artifacts]` beside its sources |
 | A key seems to do nothing | Typo, or the key is not implemented | Check the reference and the table above |
 | `not inside a molto workspace` | No `Project.toml` in this directory or its ancestors | `molto init` |
 | `invalid package name` from `molto init` | The directory name is not `snake_case` (`my-app`, `MyApp`) | Write the manifest by hand with a valid `name` |
