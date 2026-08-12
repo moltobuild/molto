@@ -447,6 +447,16 @@ Four things this recipe settles that the tables alone leave open:
   and its `main()`. Without the list the consumer links two of them, and the
   first thing anyone learns about this recipe is a duplicate symbol.
 
+The `sha256` above is worth a note, because getting it wrong is easy and the
+mistake is invisible: sqlite.org publishes a **SHA3-256** on its download page,
+and both digests are sixty-four hex characters, so one reads exactly like the
+other. They answer different questions and a recipe needs both, at different
+times. Upstream's digest verifies that the file the publisher downloaded is the
+file upstream released; the recipe's `sha256` verifies that every consumer
+fetches the bytes the publisher verified. A publisher checks the first by hand,
+once, and writes the second — which is why this RFC asks for one algorithm
+rather than for whichever one an origin happens to prefer.
+
 One thing it settles that is not in the recipe at all: the digest is **not** the
 hash sqlite.org prints on its download page. That page publishes SHA3-256 and
 this format carries SHA-256, so copying the published figure produces a recipe
