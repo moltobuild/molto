@@ -60,7 +60,11 @@ MOLTEST(translate_emits_the_modern_enum_and_not_the_legacy_boolean) {
        the backend is pinned, so there is no older release to humour. */
     EXPECT_NOT_NULL(strstr(text, "SortIncludes: CaseSensitive"));
     EXPECT_NULL(strstr(text, "SortIncludes: true"));
-    EXPECT_NOT_NULL(strstr(text, "ReflowComments: Always"));
+    /* ReflowComments goes the other way: the `Always` spelling arrived in
+       LLVM 20 and clang-format 19 rejects the whole configuration over it, so
+       the boolean every version reads is the one to write. */
+    EXPECT_NOT_NULL(strstr(text, "ReflowComments: true"));
+    EXPECT_NULL(strstr(text, "ReflowComments: Always"));
 }
 
 MOLTEST(translate_maps_each_brace_style_to_its_own_backend_value) {
