@@ -175,11 +175,21 @@ resolutions must not choose, while every existing lock file that already names
 it keeps working. A yanked artifact is still downloadable and is flagged with
 `x-molto-yanked` so a client can warn.
 
-*Current state:* the `yanked` flag exists in the catalogue, is served on every
-response, and nothing can set it. There is no endpoint. Until there is, a
-mistaken publish can only be superseded by a higher version, which is the
-correct advice anyway and a poor substitute for the case that matters — a
-version with a security flaw.
+Two endpoints write the flag, and they carry the same authorisation publishing
+does — withdrawing someone's version is as consequential as adding one:
+
+```
+POST /v1/{kind}/{name}/{version}/{target}/yank     204
+POST /v1/{kind}/{name}/{version}/{target}/unyank   204
+```
+
+They are separate paths rather than one path with a body, so that no client
+withdraws a version by getting a boolean the wrong way round. Both are
+idempotent: a retry after a lost answer is not a failure. A coordinate that was
+never published answers 404, which is the only case worth reporting.
+
+A yank writes one column. The storage key, the checksum, the size and the
+metadata are exactly what they were, because those are what a lock file pinned.
 
 ## Authentication
 
