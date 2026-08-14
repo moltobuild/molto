@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/util/semver.h>
+#include <molto/util/str_list.h>
 
 #include <string.h>
 
@@ -114,4 +115,64 @@ MOLTEST(unparseable_entries_are_skipped_not_fatal) {
 
     const char *const none[] = {"nope", "also-nope"};
     EXPECT_FALSE(semver_highest(none, 2, out, sizeof out));
+}
+
+/* --- ordering a whole list --- */
+
+static void push_all(str_list *list, const char *const *values, size_t count) {
+    str_list_init(list);
+    for (size_t i = 0; i < count; i++) {
+        ASSERT_TRUE(str_list_push(list, values[i]));
+    }
+}
+
+MOLTEST(sorting_puts_the_newest_first) {
+    const char *const versions[] = {"1.9.0", "1.10.0", "1.2.3", "2.0.0"};
+    str_list list;
+    push_all(&list, versions, 4);
+
+    EXPECT_EQ(4u, semver_sort_desc(&list));
+    EXPECT_STREQ("2.0.0", str_list_get(&list, 0));
+    EXPECT_STREQ("1.10.0", str_list_get(&list, 1));
+    EXPECT_STREQ("1.9.0", str_list_get(&list, 2));
+    EXPECT_STREQ("1.2.3", str_list_get(&list, 3));
+
+    str_list_free(&list);
+}
+
+/* A pre-release precedes the release it leads to, so it sorts after it here. */
+MOLTEST(sorting_places_a_prerelease_below_its_release) {
+    const char *const versions[] = {"2.0.0-rc.1", "2.0.0", "2.0.0-alpha"};
+    str_list list;
+    push_all(&list, versions, 3);
+
+    EXPECT_EQ(3u, semver_sort_desc(&list));
+    EXPECT_STREQ("2.0.0", str_list_get(&list, 0));
+    EXPECT_STREQ("2.0.0-rc.1", str_list_get(&list, 1));
+    EXPECT_STREQ("2.0.0-alpha", str_list_get(&list, 2));
+
+    str_list_free(&list);
+}
+
+/* What is not a version goes to the tail and is not counted: a caller reading
+   the count never has to ask whether an entry parses. */
+MOLTEST(sorting_keeps_what_is_not_a_version_out_of_the_count) {
+    const char *const versions[] = {"nightly", "1.0.0", "13.2.0-x86_64-linux", "1.4.0"};
+    str_list list;
+    push_all(&list, versions, 4);
+
+    EXPECT_EQ(2u, semver_sort_desc(&list));
+    EXPECT_STREQ("1.4.0", str_list_get(&list, 0));
+    EXPECT_STREQ("1.0.0", str_list_get(&list, 1));
+
+    str_list_free(&list);
+}
+
+MOLTEST(sorting_an_empty_list_counts_nothing) {
+    str_list list;
+    str_list_init(&list);
+
+    EXPECT_EQ(0u, semver_sort_desc(&list));
+
+    str_list_free(&list);
 }

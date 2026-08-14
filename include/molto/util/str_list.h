@@ -27,6 +27,10 @@ void str_list_init(str_list *list);
    entries does not depend on the order the filesystem happened to return. */
 void str_list_sort(str_list *list);
 
+/* Drop everything past `count`, freeing it. Shorter lists are left alone, so
+   the call means "at most this many" and not "exactly this many". */
+void str_list_truncate(str_list *list, size_t count);
+
 /* Free every element and reset the list to empty. */
 void str_list_free(str_list *list);
 

@@ -1,6 +1,8 @@
 #ifndef MOLTO_SEMVER_H
 #define MOLTO_SEMVER_H
 
+#include <molto/util/str_list.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -55,5 +57,16 @@ typedef struct {
    them parsed. */
 [[nodiscard]] bool semver_highest(const char *const *versions, size_t count, char *out,
                                   size_t out_size);
+
+/* Order `list` newest first, in place, and answer how many of the leading
+   entries are versions.
+
+   Unparseable entries are not dropped -- they are pushed to the tail and left
+   in the order they arrived -- so a caller that wants only the versions reads
+   the returned count and one that wants everything still has it.
+
+   `semver_highest` answers what to install; this answers what to try next,
+   which is what a search for a version that removes a conflict needs. */
+[[nodiscard]] size_t semver_sort_desc(str_list *list);
 
 #endif /* MOLTO_SEMVER_H */
