@@ -266,3 +266,64 @@ MOLTEST(no_dependencies_is_an_empty_graph) {
 
     dep_graph_free(graph);
 }
+
+/* A conflict is reported as data as well as as a message, so a caller can ask
+   the user about it instead of only printing it (RFC-0008). */
+MOLTEST(a_conflict_is_reported_as_the_two_claims_and_who_made_them) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s/png_old\" }\n", at.root);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s/png_new\" }\n", at.root);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    EXPECT_TRUE(make_package(&at, "png_old", NULL));
+    EXPECT_TRUE(make_package(&at, "png_new", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a", "b"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    dep_conflict conflict = {0};
+    const dep_resolve_options options = { .propose = true };
+    EXPECT_FALSE(dep_graph_resolve_with(&ctx, &options, &graph, &conflict, err, sizeof err));
+
+    EXPECT_STREQ("png", conflict.name);
+    EXPECT_STREQ("a", conflict.required_by);
+    EXPECT_STREQ("b", conflict.other_required_by);
+    /* A path dependency has no version, so it is identified by where it came
+       from — and there is nothing to propose, because a directory has no
+       releases to choose between. */
+    EXPECT_NOT_NULL(strstr(conflict.version, "png_old"));
+    EXPECT_NOT_NULL(strstr(conflict.other_version, "png_new"));
+    EXPECT_FALSE(conflict.has_proposal);
+
+    sandbox_close(&at);
+}
+
+/* Nothing set means nothing to ask about: a caller distinguishes a conflict
+   from an unreachable registry by whether the name is filled in. */
+MOLTEST(an_ordinary_failure_leaves_the_conflict_record_empty) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    snprintf(deps, sizeof deps, "[deps]\nmissing = { path = \"%s/nowhere\" }\n", at.root);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    dep_conflict conflict = {0};
+    const dep_resolve_options options = { .propose = true };
+    EXPECT_FALSE(dep_graph_resolve_with(&ctx, &options, &graph, &conflict, err, sizeof err));
+    EXPECT_EQ('\0', conflict.name[0]);
+
+    sandbox_close(&at);
+}

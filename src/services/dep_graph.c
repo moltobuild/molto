@@ -25,11 +25,34 @@
    with a message instead of with an allocator. */
 #define DEP_GRAPH_MAX_NODES 256
 
+/* A fetch the walk decided on and did not perform.
+ *
+ * RFC-0008 requires the whole graph to be walked over metadata before a byte
+ * is downloaded, so that a conflict is a question asked during resolution
+ * rather than an error discovered after paying for it. A registry dependency
+ * makes that possible: the recipe carries its own `[deps]`, so what a version
+ * needs is knowable without its sources.
+ *
+ * `node` is an index rather than a pointer because the array it points into is
+ * grown while the walk runs.
+ */
+typedef struct {
+    size_t node;
+    source_spec spec;
+    char name[DEP_NAME_MAX];
+    char version[DEP_VERSION_MAX];
+    char target[RECIPE_COORDINATE_MAX];
+} deferred_fetch;
+
 struct dep_graph {
     dep_node **nodes; /* owned, sorted by name once the walk is done */
     size_t count;
     size_t capacity;
     str_map *index; /* name -> dep_node*, borrowed; `nodes` owns them */
+    /* What to fetch once the graph is known to be conflict-free. */
+    deferred_fetch *fetches;
+    size_t fetch_count;
+    size_t fetch_capacity;
 };
 
 static bool set_error(char *err, size_t err_size, const char *format, ...)
@@ -95,6 +118,7 @@ void dep_graph_free(dep_graph *graph) {
     for(size_t i = 0; i < graph->count; i++)
         node_free(graph->nodes[i]);
     free((void *)graph->nodes);
+    free(graph->fetches);
     /* The map borrows the nodes the array owns, so it frees no values. */
     str_map_destroy(graph->index);
     free(graph);
@@ -189,8 +213,16 @@ typedef struct {
     char checksum[SOURCE_DIGEST_MAX];
     recipe_artifacts artifacts;
     project_deps deps;
+    /* Set for a registry dependency, whose bytes are not fetched during the
+       walk. `root` is empty until they are. */
+    bool deferred;
+    source_spec spec;
+    char target[RECIPE_COORDINATE_MAX];
 } visited;
 
+/* Everything a registry dependency contributes to the graph, and not one byte
+   of its sources: the recipe already says what it depends on, so the walk can
+   finish — and find its conflicts — before any of this is downloaded. */
 static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const credentials *creds,
                            visited *out, char *err, size_t err_size) {
     resolved_dep *resolved = calloc(1, sizeof *resolved);
@@ -210,24 +242,28 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
                        "%s %s is published as a prebuilt artifact, and molto cannot consume one "
                        "yet",
                        dep->name, dep->version);
-    if(ok)
-        ok = source_fetch(&resolved->source, dep->name, dep->version, resolved->coordinate.target,
-                          out->root, sizeof out->root, err, err_size);
     if(ok) {
-        /* Only now, with the source installed: the fetch replaces the whole
-           directory this writes into. */
+        /* Kept now rather than after the fetch: the releases tree is not the
+           directory a fetch replaces, so there is nothing to wait for. */
         if(resolved->body[0] != '\0')
             resolve_remember(dep->name, dep->version, resolved->body);
         snprintf(out->version, sizeof out->version, "%s", dep->version);
         snprintf(out->checksum, sizeof out->checksum, "%s", resolved->source.sha256);
+        snprintf(out->target, sizeof out->target, "%s", resolved->coordinate.target);
         out->artifacts = resolved->artifacts;
         out->deps = resolved->deps;
+        out->spec = resolved->source;
+        out->deferred = true;
     }
 
     free(resolved);
     return ok;
 }
 
+/* A source that carries its own recipe has to be fetched to be read: its
+   recipe *is* its bytes, so there is no metadata to walk ahead of them. This
+   is the one place the walk still downloads, and the reason a conflict between
+   two path or git dependencies is reported rather than searched. */
 static bool visit_carried(const project_dep *dep, visited *out, char *err, size_t err_size) {
     source_spec spec;
     if(!project_dep_to_source(dep, &spec, err, err_size))
@@ -272,7 +308,18 @@ static const char *identify(const char *version, const char *source) {
    this the user's decision, so the message's whole job is to say who asked for
    what. */
 static bool report_conflict(const dep_node *seen, const project_dep *dep, const char *source,
-                            const char *required_by, char *err, size_t err_size) {
+                            const char *required_by, dep_conflict *conflict, char *err,
+                            size_t err_size) {
+    if(conflict != NULL) {
+        snprintf(conflict->name, sizeof conflict->name, "%s", dep->name);
+        snprintf(conflict->version, sizeof conflict->version, "%s",
+                 identify(seen->version, seen->source));
+        snprintf(conflict->required_by, sizeof conflict->required_by, "%s", seen->required_by);
+        snprintf(conflict->other_version, sizeof conflict->other_version, "%s",
+                 identify(dep->version, source));
+        snprintf(conflict->other_required_by, sizeof conflict->other_required_by, "%s",
+                 required_by);
+    }
     return set_error(err, err_size,
                      "'%s' is required twice and not as the same thing: %s by %s, and %s by %s. "
                      "One package is one version in a build, so one of them has to change",
@@ -344,6 +391,46 @@ static bool enqueue_all(queue *q, const project_deps *deps, const char *required
     return true;
 }
 
+/* --- the fetches the walk put off --- */
+
+static bool defer_fetch(dep_graph *graph, size_t node, const char *name, const visited *found,
+                        char *err, size_t err_size) {
+    if(graph->fetch_count == graph->fetch_capacity) {
+        const size_t grown = graph->fetch_capacity == 0 ? 8 : graph->fetch_capacity * 2;
+        deferred_fetch *items = realloc(graph->fetches, grown * sizeof *items);
+        if(items == NULL)
+            return set_error(err, err_size, "out of memory resolving dependencies");
+        graph->fetches = items;
+        graph->fetch_capacity = grown;
+    }
+
+    deferred_fetch *entry = &graph->fetches[graph->fetch_count++];
+    entry->node = node;
+    entry->spec = found->spec;
+    snprintf(entry->name, sizeof entry->name, "%s", name);
+    snprintf(entry->version, sizeof entry->version, "%s", found->version);
+    snprintf(entry->target, sizeof entry->target, "%s", found->target);
+    return true;
+}
+
+/* Download what the resolution settled on.
+ *
+ * Runs after the whole graph is known and known to be conflict-free, which is
+ * the point of putting it off: nothing is on disk for a version the user is
+ * about to be asked to change. */
+static bool materialize(dep_graph *graph, char *err, size_t err_size) {
+    for(size_t i = 0; i < graph->fetch_count; i++) {
+        const deferred_fetch *entry = &graph->fetches[i];
+        dep_node *node = graph->nodes[entry->node];
+        char reason[512] = "";
+
+        if(!source_fetch(&entry->spec, entry->name, entry->version, entry->target, node->root,
+                         sizeof node->root, reason, sizeof reason))
+            return set_error(err, err_size, "dependency '%s': %s", entry->name, reason);
+    }
+    return true;
+}
+
 /* A node's own edges, sorted, so the lock file it ends up in has a stable
    diff whatever order the recipe listed them in. */
 static bool record_edges(dep_node *node, const project_deps *deps, char *err, size_t err_size) {
@@ -356,7 +443,8 @@ static bool record_edges(dep_node *node, const project_deps *deps, char *err, si
 }
 
 static bool visit_one(const project_ctx *ctx, const pending *entry, const credentials *creds,
-                      dep_graph *graph, queue *q, char *err, size_t err_size) {
+                      dep_graph *graph, queue *q, dep_conflict *conflict, char *err,
+                      size_t err_size) {
     const project_dep *dep = &entry->dep;
 
     char source[DEP_GRAPH_SOURCE_MAX];
@@ -375,7 +463,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     dep_node *seen = str_map_get(graph->index, dep->name);
     if(seen != NULL) {
         if(strcmp(seen->version, dep->version) != 0 || strcmp(seen->source, source) != 0)
-            return report_conflict(seen, dep, source, entry->required_by, err, err_size);
+            return report_conflict(seen, dep, source, entry->required_by, conflict, err, err_size);
         /* Required by both tables: one node, compiled once, reachable from both
            builds. Everything below it inherits the wider scope too, which is
            why this walks rather than just setting a flag. */
@@ -422,50 +510,235 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
          enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);
     if(ok)
         ok = graph_push(graph, node, err, err_size);
-    if(!ok)
+    if(ok && found->deferred)
+        ok = defer_fetch(graph, graph->count - 1, dep->name, found, err, err_size);
+    else if(!ok)
         node_free(node);
 
     free(found);
     return ok;
 }
 
-bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err, size_t err_size) {
-    *out = NULL;
+/* --- the walk, over metadata --- */
 
+static dep_graph *graph_create(char *err, size_t err_size) {
     dep_graph *graph = calloc(1, sizeof *graph);
-    if(graph == NULL)
-        return set_error(err, err_size, "out of memory resolving dependencies");
+    if(graph == NULL) {
+        (void)set_error(err, err_size, "out of memory resolving dependencies");
+        return NULL;
+    }
     /* The array owns the nodes; the index only points at them. */
     graph->index = str_map_create(NULL);
     if(graph->index == NULL) {
         free(graph);
-        return set_error(err, err_size, "out of memory resolving dependencies");
+        (void)set_error(err, err_size, "out of memory resolving dependencies");
+        return NULL;
     }
+    return graph;
+}
 
-    /* Reads need no token, so a machine that never ran `molto login` resolves
-       against the official registry like any other. */
-    credentials creds = {0};
-    (void)credentials_load(&creds, NULL, 0);
+/* The root package's tables, with a proposal applied.
+ *
+ * Only the root's, and only for a registry dependency: what a search varies is
+ * what the user could write down, and a version pinned anywhere else would be
+ * a resolution nobody could reproduce by editing their manifest. */
+static void apply_pin(project_deps *deps, const char *name, const char *version) {
+    if(name == NULL || name[0] == '\0')
+        return;
+    for(size_t i = 0; i < deps->count; i++) {
+        if(deps->items[i].resolution == dep_resolution_registry &&
+           strcmp(deps->items[i].name, name) == 0)
+            snprintf(deps->items[i].version, sizeof deps->items[i].version, "%s", version);
+    }
+}
+
+/* Walk both tables and produce a graph, downloading nothing that a registry
+   describes. `pin_name` moves one root dependency, for the search. */
+static bool walk(const project_ctx *ctx, const credentials *creds, const char *pin_name,
+                 const char *pin_version, dep_graph **out, dep_conflict *conflict, char *err,
+                 size_t err_size) {
+    *out = NULL;
+    dep_graph *graph = graph_create(err, err_size);
+    if(graph == NULL)
+        return false;
+
+    project_deps deps = ctx->deps;
+    project_deps dev_deps = ctx->dev_deps;
+    apply_pin(&deps, pin_name, pin_version);
+    apply_pin(&dev_deps, pin_name, pin_version);
 
     /* Runtime first, so a package required by both is created as a runtime one
        and then widened. Development dependencies are only ever taken from the
        root package: a dependency's own are read and ignored, which is what
        keeps a library's test framework out of its consumer's build. */
     queue q = {0};
-    bool ok = enqueue_all(&q, &ctx->deps, "", dep_scope_runtime, err, err_size);
+    bool ok = enqueue_all(&q, &deps, "", dep_scope_runtime, err, err_size);
     for(; ok && q.head < q.count; q.head++)
-        ok = visit_one(ctx, &q.items[q.head], &creds, graph, &q, err, err_size);
+        ok = visit_one(ctx, &q.items[q.head], creds, graph, &q, conflict, err, err_size);
 
     /* Only now, with every runtime package in the graph, are the development
        ones walked. Doing them in one pass would let a node be created under the
        narrower scope while its children were still queued, and widening it
        later would not reach them. */
-    ok = ok && enqueue_all(&q, &ctx->dev_deps, "", dep_scope_dev, err, err_size);
+    ok = ok && enqueue_all(&q, &dev_deps, "", dep_scope_dev, err, err_size);
     for(; ok && q.head < q.count; q.head++)
-        ok = visit_one(ctx, &q.items[q.head], &creds, graph, &q, err, err_size);
+        ok = visit_one(ctx, &q.items[q.head], creds, graph, &q, conflict, err, err_size);
     free(q.items);
 
     if(!ok) {
+        dep_graph_free(graph);
+        return false;
+    }
+    *out = graph;
+    return true;
+}
+
+/* --- the search for a way out --- */
+
+/* What the search is allowed to spend. The bounds are small on purpose: this
+   runs while somebody waits, every step of it is a request, and a search that
+   has to look at more than a handful of releases is one whose answer nobody
+   would trust anyway. */
+#define CONFLICT_MAX_PIVOTS 3
+#define CONFLICT_MAX_CANDIDATES 8
+
+/* The root dependency a name belongs to, so a proposal names something the
+   manifest actually declares. Answers which table it was found in. */
+static const project_dep *root_dep(const project_ctx *ctx, const char *name,
+                                   const char **table) {
+    for(size_t i = 0; i < ctx->deps.count; i++) {
+        if(strcmp(ctx->deps.items[i].name, name) == 0) {
+            *table = "deps";
+            return &ctx->deps.items[i];
+        }
+    }
+    for(size_t i = 0; i < ctx->dev_deps.count; i++) {
+        if(strcmp(ctx->dev_deps.items[i].name, name) == 0) {
+            *table = "dev-deps";
+            return &ctx->dev_deps.items[i];
+        }
+    }
+    return NULL;
+}
+
+/* Does moving `pivot` to `candidate` produce a graph with no conflict at all?
+   Answered by walking, which costs requests and no downloads. */
+static bool candidate_settles_it(const project_ctx *ctx, const credentials *creds,
+                                 const char *pivot, const char *candidate, const char *conflicting,
+                                 char *settles_on, size_t settles_size) {
+    dep_graph *trial = NULL;
+    char ignored[512] = "";
+    if(!walk(ctx, creds, pivot, candidate, &trial, NULL, ignored, sizeof ignored))
+        return false;
+
+    const dep_node *node = dep_graph_find(trial, conflicting);
+    const bool ok = node != NULL;
+    if(ok)
+        snprintf(settles_on, settles_size, "%s", node->version);
+    dep_graph_free(trial);
+    return ok;
+}
+
+/* Try every release of one root dependency, newest first, and stop at the
+   first that removes the conflict.
+
+   Never a downgrade: taking away a version somebody chose is not a proposal
+   they can accept without thinking, and RFC-0008 asks for the newest
+   combination that works. */
+static bool search_pivot(const project_ctx *ctx, const credentials *creds, const char *pivot,
+                         const dep_conflict *conflict, dep_conflict *out,
+                         const dep_resolve_options *options, size_t *frame) {
+    const char *table = NULL;
+    const project_dep *declared = root_dep(ctx, pivot, &table);
+    if(declared == NULL || declared->resolution != dep_resolution_registry)
+        return false;
+
+    str_list releases;
+    str_list_init(&releases);
+    char ignored[512] = "";
+    if(options->watch != NULL)
+        options->watch((*frame)++, options->watch_context);
+    if(!resolve_versions(registry_for(ctx, declared, creds), pivot, &releases, ignored,
+                         sizeof ignored)) {
+        str_list_free(&releases);
+        return false;
+    }
+
+    bool found = false;
+    size_t tried = 0;
+    for(size_t i = 0; i < str_list_count(&releases) && tried < CONFLICT_MAX_CANDIDATES && !found;
+        i++) {
+        const char *candidate = str_list_get(&releases, i);
+        if(strcmp(candidate, declared->version) == 0)
+            break; /* ordered newest first, so everything below is a downgrade */
+        tried++;
+        if(options->watch != NULL)
+            options->watch((*frame)++, options->watch_context);
+
+        char settles_on[DEP_VERSION_MAX] = "";
+        if(!candidate_settles_it(ctx, creds, pivot, candidate, conflict->name, settles_on,
+                                 sizeof settles_on))
+            continue;
+
+        found = true;
+        out->has_proposal = true;
+        snprintf(out->change_name, sizeof out->change_name, "%s", pivot);
+        snprintf(out->change_from, sizeof out->change_from, "%s", declared->version);
+        snprintf(out->change_to, sizeof out->change_to, "%s", candidate);
+        snprintf(out->change_table, sizeof out->change_table, "%s", table);
+        snprintf(out->settles_on, sizeof out->settles_on, "%s", settles_on);
+    }
+
+    str_list_free(&releases);
+    return found;
+}
+
+/* Look for a version the user can write into Project.toml that removes the
+   conflict. Not finding one is not an error: the message is the same minus the
+   proposal, and there is always something the user can do by hand. */
+static void search_proposal(const project_ctx *ctx, const credentials *creds,
+                            dep_conflict *conflict, const dep_resolve_options *options) {
+    /* Only what the manifest declares can be varied, so the pivots are the
+       package itself and the two dependents that disagreed about it. */
+    const char *pivots[CONFLICT_MAX_PIVOTS] = {conflict->name, conflict->required_by,
+                                               conflict->other_required_by};
+    size_t frame = 0;
+
+    for(size_t i = 0; i < CONFLICT_MAX_PIVOTS; i++) {
+        if(pivots[i] == NULL || pivots[i][0] == '\0')
+            continue;
+        bool repeated = false;
+        for(size_t seen = 0; seen < i; seen++)
+            repeated = repeated || strcmp(pivots[seen], pivots[i]) == 0;
+        if(repeated)
+            continue;
+        if(search_pivot(ctx, creds, pivots[i], conflict, conflict, options, &frame))
+            return;
+    }
+}
+
+bool dep_graph_resolve_with(const project_ctx *ctx, const dep_resolve_options *options,
+                            dep_graph **out, dep_conflict *conflict, char *err, size_t err_size) {
+    static const dep_resolve_options none = {0};
+    const dep_resolve_options *opts = options == NULL ? &none : options;
+    *out = NULL;
+
+    /* Reads need no token, so a machine that never ran `molto login` resolves
+       against the official registry like any other. */
+    credentials creds = {0};
+    (void)credentials_load(&creds, NULL, 0);
+
+    dep_graph *graph = NULL;
+    if(!walk(ctx, &creds, NULL, NULL, &graph, conflict, err, err_size)) {
+        if(opts->propose && conflict != NULL && conflict->name[0] != '\0')
+            search_proposal(ctx, &creds, conflict, opts);
+        return false;
+    }
+
+    /* Only now, with every version settled and nothing in conflict, are the
+       sources brought down. Before the sort, because the deferred fetches name
+       nodes by their position in the array. */
+    if(!materialize(graph, err, err_size)) {
         dep_graph_free(graph);
         return false;
     }
@@ -473,4 +746,8 @@ bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err, size_
     qsort((void *)graph->nodes, graph->count, sizeof *graph->nodes, by_name);
     *out = graph;
     return true;
+}
+
+bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err, size_t err_size) {
+    return dep_graph_resolve_with(ctx, NULL, out, NULL, err, err_size);
 }
