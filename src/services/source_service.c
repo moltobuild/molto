@@ -203,15 +203,21 @@ static bool is_safe_segment(const char *segment) {
     return strchr(segment, '/') == NULL;
 }
 
-bool source_cache_path(const char *name, const char *version, const char *target, char *out,
-                       size_t size) {
-    if(!is_safe_segment(name) || !is_safe_segment(version) || !is_safe_segment(target))
+bool source_cache_area_path(const char *area, const char *name, const char *version,
+                            const char *target, char *out, size_t size) {
+    if(!is_safe_segment(area) || !is_safe_segment(name) || !is_safe_segment(version) ||
+       !is_safe_segment(target))
         return false;
 
     char root[SOURCE_PATH_MAX];
     if(!cache_root(root, sizeof root))
         return false;
-    return fs_format_path(out, size, "%s/sources/%s/%s/%s", root, name, version, target);
+    return fs_format_path(out, size, "%s/%s/%s/%s/%s", root, area, name, version, target);
+}
+
+bool source_cache_path(const char *name, const char *version, const char *target, char *out,
+                       size_t size) {
+    return source_cache_area_path(SOURCE_CACHE_SOURCES, name, version, target, out, size);
 }
 
 /* The commit id a reference names, asked of the remote rather than of a clone:

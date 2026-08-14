@@ -1,8 +1,12 @@
 #include <moltest.h>
 
 #include <molto/services/resolve_service.h>
+#include <molto/services/fs_service.h>
+#include <molto/util/semver.h>
+#include <molto/util/str_list.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Everything a resolution can get wrong, against canned bodies.
@@ -189,4 +193,82 @@ MOLTEST(resolve_reports_a_registry_it_cannot_reach) {
     char err[512] = "";
     EXPECT_FALSE(resolve_version("http://127.0.0.1:1", "sqlite", "3.53.4", &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "registry"));
+}
+
+/* --- the catalogue listing --- */
+
+#define LISTING(releases)                                                                          \
+    "{\"kind\":\"package\",\"name\":\"png\",\"releases\":[" releases "]}"
+
+static size_t versions_of(const char *body, str_list *out) {
+    char err[256] = "";
+    str_list_init(out);
+    return resolve_read_versions(body, out, err, sizeof err) ? str_list_count(out) : 0;
+}
+
+MOLTEST(a_listing_yields_every_version_it_names) {
+    str_list versions;
+    ASSERT_EQ(3u, versions_of(LISTING("{\"version\":\"1.5.30\"},{\"version\":\"1.6.40\"},"
+                                      "{\"version\":\"1.6.39\"}"),
+                              &versions));
+
+    EXPECT_STREQ("1.5.30", str_list_get(&versions, 0));
+    str_list_free(&versions);
+}
+
+/* Order is the client's job: the registry serves versions as opaque strings in
+   publication order, so the newest one is decided here. */
+MOLTEST(a_listing_orders_newest_first_once_sorted) {
+    str_list versions;
+    ASSERT_EQ(3u, versions_of(LISTING("{\"version\":\"1.5.30\"},{\"version\":\"1.6.40\"},"
+                                      "{\"version\":\"1.6.39\"}"),
+                              &versions));
+
+    EXPECT_EQ(3u, semver_sort_desc(&versions));
+    EXPECT_STREQ("1.6.40", str_list_get(&versions, 0));
+    EXPECT_STREQ("1.6.39", str_list_get(&versions, 1));
+    EXPECT_STREQ("1.5.30", str_list_get(&versions, 2));
+    str_list_free(&versions);
+}
+
+MOLTEST(a_body_that_is_not_a_listing_is_refused_with_a_reason) {
+    str_list versions;
+    str_list_init(&versions);
+    char err[256] = "";
+
+    EXPECT_FALSE(resolve_read_versions("{\"kind\":\"package\"}", &versions, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "releases"));
+
+    EXPECT_FALSE(resolve_read_versions("not json", &versions, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "JSON"));
+    str_list_free(&versions);
+}
+
+/* --- remembering an answer without fetching one --- */
+
+MOLTEST(a_release_is_remembered_for_a_coordinate_nothing_fetched) {
+    /* The whole point of the releases tree: a metadata walk learns what a
+       version depends on without downloading it, and must be able to keep
+       that. */
+    char root[64] = "/tmp/molto_release_XXXXXX";
+    ASSERT_NOT_NULL(mkdtemp(root));
+    char cache[128] = "";
+    snprintf(cache, sizeof cache, "%s/cache", root);
+    ASSERT_EQ(0, setenv("MOLTO_CACHE", cache, 1));
+
+    EXPECT_NULL(resolve_release_body("png", "1.6.40"));
+
+    resolve_remember("png", "1.6.40", ENVELOPE(SOURCE_TARGET));
+    char *body = resolve_release_body("png", "1.6.40");
+    ASSERT_NOT_NULL(body);
+    EXPECT_NOT_NULL(strstr(body, "sqlite-amalgamation-3530400"));
+    free(body);
+
+    /* Not under the sources, which a fetch replaces wholesale. */
+    char sources[512] = "";
+    ASSERT_TRUE(source_cache_path("png", "1.6.40", "any", sources, sizeof sources));
+    EXPECT_FALSE(fs_path_exists(sources));
+
+    (void)unsetenv("MOLTO_CACHE");
+    (void)fs_remove_tree(root);
 }

@@ -63,6 +63,25 @@ typedef struct {
 [[nodiscard]] bool resolve_latest_version(const char *base_url, const char *name, char *out,
                                           size_t out_size, char *err, size_t err_size);
 
+/* Every version published under `name`, newest first.
+ *
+ * `resolve_latest_version` answers what to install; this answers what else
+ * there is, which is what a search for a version that removes a conflict needs
+ * (RFC-0008). Entries the comparator cannot order are dropped rather than
+ * returned last: a caller here is choosing what to propose to a person, and
+ * proposing something it could not order would be proposing a guess.
+ *
+ * One request, and the whole answer: `GET /v1/packages/{name}` lists every
+ * release. */
+[[nodiscard]] bool resolve_versions(const char *base_url, const char *name, str_list *out,
+                                    char *err, size_t err_size);
+
+/* The same, from a listing body already in hand. Split out for the reason
+   `resolve_read_release` is: deciding which release is newest is worth testing
+   without a server. */
+[[nodiscard]] bool resolve_read_versions(const char *body, str_list *out, char *err,
+                                         size_t err_size);
+
 /* Answer from what the registry said last time, without asking again.
  *
  * Sound because a published coordinate is immutable (RFC-0010) and a manifest
@@ -74,6 +93,11 @@ typedef struct {
  * False when nothing is remembered, which is not an error: the caller asks.
  */
 [[nodiscard]] bool resolve_remembered(const char *name, const char *version, resolved_dep *out);
+
+/* The remembered answer itself, on the heap for the caller to free, or NULL
+   when nothing is remembered. For a walk that reads the recipe rather than the
+   resolution — the deps of a version it may never fetch. */
+[[nodiscard]] char *resolve_release_body(const char *name, const char *version);
 
 /* Keep the registry's answer beside the source it describes, so the next build
    can skip the request. Called after the fetch, because the fetch replaces the
