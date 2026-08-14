@@ -50,6 +50,14 @@ void str_list_sort(str_list *list) {
         qsort((void *)list->items, list->count, sizeof(char *), compare_items);
 }
 
+void str_list_truncate(str_list *list, size_t count) {
+    while(list->count > count) {
+        list->count--;
+        free(list->items[list->count]);
+        list->items[list->count] = NULL;
+    }
+}
+
 void str_list_free(str_list *list) {
     for(size_t i = 0; i < list->count; i++)
         free(list->items[i]);

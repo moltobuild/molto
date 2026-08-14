@@ -101,6 +101,60 @@ typedef struct dep_graph dep_graph;
 [[nodiscard]] bool dep_graph_resolve(const project_ctx *ctx, dep_graph **out, char *err,
                                      size_t err_size);
 
+/*
+ * A name two dependents wanted at two versions, and the way out if there is
+ * one.
+ *
+ * There is no interval to intersect here and no highest version to take:
+ * exact versions either agree or they do not (RFC-0008). What replaces the
+ * arithmetic is a search and then a question, and this struct is what the
+ * question is asked from.
+ */
+typedef struct {
+    /* The package in conflict. Empty when there is no conflict, which is how a
+       caller tells one apart from an unreachable registry. */
+    char name[DEP_NAME_MAX];
+    /* The two claims, and who made each. `required_by` is "" when the root
+       package named it directly. */
+    char version[DEP_VERSION_MAX];
+    char required_by[DEP_NAME_MAX];
+    char other_version[DEP_VERSION_MAX];
+    char other_required_by[DEP_NAME_MAX];
+
+    /* Filled by the search when it found a change the user can write down. */
+    bool has_proposal;
+    /* The root dependency to move, and where to. */
+    char change_name[DEP_NAME_MAX];
+    char change_from[DEP_VERSION_MAX];
+    char change_to[DEP_VERSION_MAX];
+    /* Which table it is declared in: "deps" or "dev-deps". */
+    char change_table[16];
+    /* The version the conflicting package settles on once it is applied. */
+    char settles_on[DEP_VERSION_MAX];
+} dep_conflict;
+
+/* How much noise the resolution is allowed to make, and how hard it tries. */
+typedef struct {
+    /* Search for a version that removes a conflict, instead of only reporting
+       it. Costs requests, never downloads. */
+    bool propose;
+    /* Drawn once per registry request, so a search that takes a while says so.
+       NULL draws nothing, which is what a test and a pipe both want. */
+    void (*watch)(size_t frame, void *context);
+    void *watch_context;
+} dep_resolve_options;
+
+/* As `dep_graph_resolve`, with a say in how hard it tries and how loudly.
+ *
+ * `conflict` may be NULL. When it is not and the resolution failed, a
+ * non-empty `conflict->name` means the failure was a conflict rather than a
+ * broken registry — and `has_proposal` says whether there is something to
+ * offer the user. `err` is filled either way, so a caller that only prints
+ * needs no extra branch. */
+[[nodiscard]] bool dep_graph_resolve_with(const project_ctx *ctx,
+                                          const dep_resolve_options *options, dep_graph **out,
+                                          dep_conflict *conflict, char *err, size_t err_size);
+
 /* Nodes, sorted by name. The order is the lock file's, and it is sorted rather
    than resolution-ordered so the diff of a lock file is worth reading. */
 [[nodiscard]] size_t dep_graph_count(const dep_graph *graph);

@@ -186,7 +186,7 @@ bool resolve_read_release(const char *body, const char *name, const char *versio
 /* --- the newest release --- */
 
 /* The versions in a catalogue listing: { kind, name, releases: [ {version} ] }. */
-static bool read_versions(const char *body, str_list *out, char *err, size_t err_size) {
+bool resolve_read_versions(const char *body, str_list *out, char *err, size_t err_size) {
     json_document *doc = json_parse(body);
     if(doc == NULL)
         return set_error(err, err_size, "the registry's answer was not JSON");
@@ -206,8 +206,9 @@ static bool read_versions(const char *body, str_list *out, char *err, size_t err
     return ok;
 }
 
-bool resolve_latest_version(const char *base_url, const char *name, char *out, size_t out_size,
-                            char *err, size_t err_size) {
+/* The catalogue listing for one name, whatever it holds. */
+static bool fetch_listing(const char *base_url, const char *name, str_list *out, char *err,
+                          size_t err_size) {
     char path[RESOLVE_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "/v1/packages/%s", name))
         return set_error(err, err_size, "the registry path for %s is too long", name);
@@ -224,36 +225,75 @@ bool resolve_latest_version(const char *base_url, const char *name, char *out, s
                          name, detail);
     }
 
+    if(!resolve_read_versions(response.body, out, err, err_size))
+        return false;
+    if(str_list_count(out) == 0)
+        return set_error(err, err_size, "'%s' is in the registry with no releases", name);
+    return true;
+}
+
+bool resolve_versions(const char *base_url, const char *name, str_list *out, char *err,
+                      size_t err_size) {
+    if(!fetch_listing(base_url, name, out, err, err_size))
+        return false;
+
+    /* Ordered here rather than by the registry, which serves versions as
+       opaque strings in publication order (RFC-0010). What cannot be ordered
+       is dropped: this list is what a proposal is chosen from. */
+    const size_t ordered = semver_sort_desc(out);
+    if(ordered == 0)
+        return set_error(err, err_size, "'%s' has no release with a version molto can order",
+                         name);
+    str_list_truncate(out, ordered);
+    return true;
+}
+
+bool resolve_latest_version(const char *base_url, const char *name, char *out, size_t out_size,
+                            char *err, size_t err_size) {
     str_list versions;
     str_list_init(&versions);
-    bool ok = read_versions(response.body, &versions, err, err_size);
-    if(ok && str_list_count(&versions) == 0)
-        ok = set_error(err, err_size, "'%s' is in the registry with no releases", name);
-    if(ok && !semver_highest((const char *const *)versions.items, str_list_count(&versions), out,
-                             out_size))
-        ok = set_error(err, err_size, "'%s' has no release with a version molto can order", name);
+
+    bool ok = resolve_versions(base_url, name, &versions, err, err_size);
+    if(ok) {
+        const char *newest = str_list_get(&versions, 0);
+        ok = snprintf(out, out_size, "%s", newest) > 0 && strlen(newest) < out_size;
+        if(!ok)
+            (void)set_error(err, err_size, "'%s' has a version too long to record", name);
+    }
     str_list_free(&versions);
     return ok;
 }
 
 /* --- remembering an answer --- */
 
-/* Beside the source it describes, under the name the fetch never writes. */
+/* In the releases tree, which no fetch writes into and no fetch replaces. */
 static bool release_path(const char *name, const char *version, char *out, size_t size) {
+    char directory[RESOLVE_PATH_MAX];
+    return source_cache_area_path(SOURCE_CACHE_RELEASES, name, version, ANY_TARGET, directory,
+                                  sizeof directory) &&
+           fs_format_path(out, size, "%s/%s", directory, RELEASE_FILE);
+}
+
+/* Where releases were kept before they had a tree of their own: beside the
+   sources. Read but never written, so a cache filled by an older molto keeps
+   answering instead of being silently refetched. */
+static bool legacy_release_path(const char *name, const char *version, char *out, size_t size) {
     char directory[RESOLVE_PATH_MAX];
     return source_cache_path(name, version, ANY_TARGET, directory, sizeof directory) &&
            fs_format_path(out, size, "%s/%s", directory, RELEASE_FILE);
 }
 
-bool resolve_remembered(const char *name, const char *version, resolved_dep *out) {
-    if(!source_is_cached(name, version, ANY_TARGET))
-        return false;
-
+char *resolve_release_body(const char *name, const char *version) {
     char path[RESOLVE_PATH_MAX];
-    if(!release_path(name, version, path, sizeof path) || !fs_path_exists(path))
-        return false;
+    if(release_path(name, version, path, sizeof path) && fs_path_exists(path))
+        return fs_read_file(path);
+    if(legacy_release_path(name, version, path, sizeof path) && fs_path_exists(path))
+        return fs_read_file(path);
+    return NULL;
+}
 
-    char *body = fs_read_file(path);
+bool resolve_remembered(const char *name, const char *version, resolved_dep *out) {
+    char *body = resolve_release_body(name, version);
     if(body == NULL)
         return false;
 
@@ -267,7 +307,14 @@ bool resolve_remembered(const char *name, const char *version, resolved_dep *out
 
 void resolve_remember(const char *name, const char *version, const char *body) {
     char path[RESOLVE_PATH_MAX];
-    if(release_path(name, version, path, sizeof path))
+    char directory[RESOLVE_PATH_MAX];
+    if(!release_path(name, version, path, sizeof path))
+        return;
+    /* The directory is made here rather than assumed: the whole point of this
+       tree is that it holds answers about coordinates nothing has fetched. */
+    if(source_cache_area_path(SOURCE_CACHE_RELEASES, name, version, ANY_TARGET, directory,
+                              sizeof directory) &&
+       fs_make_dirs(directory))
         (void)fs_write_file(path, body);
 }
 

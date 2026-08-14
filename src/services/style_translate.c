@@ -174,8 +174,13 @@ bool style_translate_format_text(const style_config *config, const resolved_tool
                      config->style.sort_includes ? "CaseSensitive" : "Never") &&
               append(out, out_size, &used, "SpaceBeforeParens: %s\n",
                      config->style.space_before_paren ? "ControlStatements" : "Never") &&
+              /* `true`/`false` rather than `Always`/`Never`: the enum spelling
+                 is clang-format 20 and later, and clang-format 19 refuses the
+                 whole file over it — which leaves `molto fmt` reporting that it
+                 formatted nothing rather than that it could not. The boolean is
+                 read by every version, and 20 maps it onto the enum itself. */
               append(out, out_size, &used, "ReflowComments: %s\n",
-                     config->style.column_limit_comments ? "Always" : "Never");
+                     config->style.column_limit_comments ? "true" : "false");
     if(!ok)
         set_err(err, err_size, "format.json: the translated configuration is too long");
     return ok;

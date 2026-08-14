@@ -1,5 +1,8 @@
 #include <molto/util/semver.h>
 
+#include <molto/util/str_list.h>
+
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -197,4 +200,36 @@ bool semver_highest(const char *const *versions, size_t count, char *out, size_t
     if(best_text == NULL)
         return false;
     return snprintf(out, out_size, "%s", best_text) > 0 && strlen(best_text) < out_size;
+}
+
+/* --- ordering a whole list --- */
+
+/* Newest first among versions, and everything that is not a version after all
+   of them. Two unparseable entries compare equal, which keeps qsort from
+   reordering them against each other. */
+static int compare_newest_first(const void *left, const void *right) {
+    const char *a_text = *(const char *const *)left;
+    const char *b_text = *(const char *const *)right;
+    semver a;
+    semver b;
+    const bool a_is_version = semver_parse(a_text, &a);
+    const bool b_is_version = semver_parse(b_text, &b);
+
+    if(!a_is_version || !b_is_version)
+        return (a_is_version ? 0 : 1) - (b_is_version ? 0 : 1);
+    return -semver_compare(&a, &b);
+}
+
+size_t semver_sort_desc(str_list *list) {
+    if(list->count > 1)
+        qsort((void *)list->items, list->count, sizeof(char *), compare_newest_first);
+
+    size_t versions = 0;
+    while(versions < list->count) {
+        semver parsed;
+        if(!semver_parse(list->items[versions], &parsed))
+            break;
+        versions++;
+    }
+    return versions;
 }

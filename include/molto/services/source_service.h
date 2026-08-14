@@ -106,6 +106,22 @@ typedef struct {
 [[nodiscard]] bool source_cache_path(const char *name, const char *version, const char *target,
                                      char *out, size_t size);
 
+/* The two things the cache holds for a coordinate, kept in separate trees. */
+#define SOURCE_CACHE_SOURCES "sources"
+#define SOURCE_CACHE_RELEASES "releases"
+
+/* The same path, under `area` rather than under the sources.
+ *
+ * There are two areas because the second outlives the first. A walk over
+ * metadata learns what a version depends on without fetching a byte of it
+ * (RFC-0008), so what the registry said has to be storable for a coordinate
+ * whose sources are not on disk — and it must not live inside the directory a
+ * later fetch replaces wholesale.
+ *
+ * Same refusals as `source_cache_path`, and for the same reason. */
+[[nodiscard]] bool source_cache_area_path(const char *area, const char *name, const char *version,
+                                          const char *target, char *out, size_t size);
+
 /* The version segment a source of its own caches under: what makes two fetches
    of the same dependency the same fetch.
 

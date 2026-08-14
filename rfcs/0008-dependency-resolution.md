@@ -473,29 +473,37 @@ What is implemented:
   `path`, with the digest verified, `strip_prefix` applied, and the result
   installed atomically into a cache addressed by coordinate.
 
-What is not:
+Since then: the compile line consumes what was resolved (`deps_service`), the
+comparator exists (`util/semver`, which also orders a whole list newest first),
+`Molto.lock` is written and verified (`project/lockfile`), a recipe's own
+`[deps]` is walked into a transitive graph (`services/dep_graph`), and
+`molto add` and `molto remove` edit the manifest in place.
 
-- **No lock file**, so nothing is reproducible across machines yet.
-- **No conflict search**, because there is no graph: only direct dependencies
-  are read, and a recipe's own `[deps]` is not walked.
-- **No semver comparator.** Versions are validated and compared for equality;
-  nothing orders them, which is what `molto update` would need.
-- **Nothing consumes the result.** `[artifacts]` is read into the same option
-  type the manifest uses, and no build puts it on a compile line yet.
-- `molto add`, `molto remove` and `molto update` still exit with code 5 as
-  RFC-0002 requires, which is the correct behaviour for an unimplemented
-  command and not a placeholder to be replaced by a partial one.
+The conflict search described above is implemented as well:
 
-Molto also has no progress reporting of any kind, which the conflict search
-needs. pickup already has it — a four-frame spinner drawn on stderr only when
-stderr is a terminal, and wiped before the real output is printed — and it is a
-self-contained utility to port rather than to reinvent.
+- **The walk downloads nothing a registry describes.** A registry dependency is
+  resolved to its recipe and its fetch is deferred; sources are brought down
+  only once the whole graph is settled and free of conflicts. A dependency that
+  carries its own recipe (`path`, `git`, `archive`) is still fetched during the
+  walk, because its recipe *is* its bytes — and that is why a conflict between
+  two of those is reported without a proposal.
+- **The search** (`dep_graph_resolve_with` with `propose`) varies one root
+  dependency at a time — the conflicting package, or either dependent that
+  disagreed about it — over at most eight of its newer releases, re-walking the
+  metadata graph for each and stopping at the first that settles it. It never
+  proposes a downgrade.
+- **The question** (`services/conflict_prompt`) prints the message this RFC
+  fixes and, on a terminal, writes the accepted version into `Project.toml`
+  through the same line-level editor `molto add` uses. Without a terminal it
+  prints and the build exits with code 3.
+- **The spinner** was ported from pickup into `util/progress`: four frames on
+  stderr, only when stderr is a terminal, wiped before anything else is
+  printed. It is a spinner rather than a bar because the number of questions
+  the search will ask is not known until it stops asking.
 
-The order the remaining work has to happen in is fixed by dependencies between
-the pieces: putting a resolved dependency on a compile line (which needs
-nothing that is not already here), then the semver comparator, then the lock
-file, then walking a recipe's own `[deps]` into a graph, then the conflict
-search and its prompt.
+What is still missing: `molto update` is not coming — `molto add <name>` is the
+upgrade — and there is no progress on downloads or compilation, which would
+need `process_service` to gain a way to poll a running child.
 
 ## Non-Goals
 

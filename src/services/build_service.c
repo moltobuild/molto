@@ -6,6 +6,7 @@
 #include <molto/exit_code.h>
 #include <molto/project/lockfile.h>
 #include <molto/project/project_ctx.h>
+#include <molto/services/conflict_prompt.h>
 #include <molto/services/deps_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
@@ -13,6 +14,7 @@
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/services/toolchain_service.h>
+#include <molto/util/progress.h>
 #include <molto/util/str_list.h>
 #include <molto/util/task_pool.h>
 #include <molto/workspace/wsdb.h>
@@ -700,6 +702,68 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
  * record, and creating one would put a file in every project that has never
  * needed one — molto's own repository included.
  */
+/* What the spinner says while the registry is being asked. */
+#define RESOLVE_LABEL "asking the registry"
+
+/* On stderr, next to the diagnostics it is interleaved with, and only when a
+   person is there to see it. */
+static void watch_registry(size_t frame, void *context) {
+    progress_line *line = context;
+    if(!progress_is_interactive(stderr))
+        return;
+    spinner_wait(stderr, RESOLVE_LABEL, frame);
+    line->drawn = true;
+}
+
+/* Resolve, and when two exact versions disagree, look for a way out and ask.
+ *
+ * At most one retry. Accepting a proposal rewrites `Project.toml`, so the
+ * manifest is reloaded and resolved again — and if that resolution conflicts
+ * too, it is reported rather than turned into another question: a manifest
+ * that can conflict twice is one the user should look at rather than be walked
+ * through one prompt at a time.
+ */
+[[nodiscard]] static bool resolve_or_ask(const char *root, project_ctx *ctx, dep_graph **out,
+                                         char *err, size_t err_size) {
+    progress_line line = {0};
+    const dep_resolve_options options = {
+        .propose = true, .watch = watch_registry, .watch_context = &line};
+
+    for(int attempt = 0; attempt < 2; attempt++) {
+        dep_conflict conflict = {0};
+        const bool resolved =
+            dep_graph_resolve_with(ctx, &options, out, &conflict, err, err_size);
+        /* Before anything else is printed: half a spinner in front of a
+           message reads as part of the message. */
+        progress_line_clear(stderr, &line);
+        if(resolved)
+            return true;
+
+        /* An empty name means the resolution failed for an ordinary reason —
+           an unreachable registry, a recipe that does not parse — and those
+           are the caller's to report. */
+        if(conflict.name[0] == '\0' || attempt > 0)
+            return false;
+        if(!conflict_prompt_apply(root, &conflict)) {
+            /* The conflict and the proposal are already on stderr; this is the
+               one line the caller prints. */
+            snprintf(err, err_size,
+                     "'%s' is required at two versions and nothing chose between them",
+                     conflict.name);
+            return false;
+        }
+
+        /* The manifest on disk is no longer the one in hand. */
+        project_ctx reloaded;
+        if(load_project(root, &reloaded) != exit_ok) {
+            snprintf(err, err_size, "Project.toml could not be read back after the edit");
+            return false;
+        }
+        *ctx = reloaded;
+    }
+    return false;
+}
+
 [[nodiscard]] static bool prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
                                            prepared_deps *dev_out, char *err, size_t err_size) {
     if(ctx->deps.count == 0 && ctx->dev_deps.count == 0)
@@ -714,7 +778,7 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
         lockfile_read(root, &lock, lock_err, sizeof lock_err) && lockfile_matches(&lock, ctx);
 
     dep_graph *graph = NULL;
-    if(!dep_graph_resolve(ctx, &graph, err, err_size)) {
+    if(!resolve_or_ask(root, ctx, &graph, err, err_size)) {
         if(lock.packages != NULL)
             lockfile_free(&lock);
         return false;
