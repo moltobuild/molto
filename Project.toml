@@ -11,7 +11,11 @@
 
 [package]
 name = "molto"
-version = "0.5.0"
+version = "0.6.0"
+description = "A package manager and build system for C and C++"
+repository = "https://github.com/black-redoc/molto"
+# license: this repository ships no LICENSE file yet, and the key states a
+# licence rather than granting one. It goes in when the file does.
 
 [target]
 std = "c2x"
