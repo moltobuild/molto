@@ -63,7 +63,8 @@ Two rules make the walk safe and reproducible:
 - **The result is sorted lexicographically by full path.** Readdir order is a
   filesystem detail and differs between machines. Since the object list becomes
   the link line, an unsorted walk would produce link lines that differ across
-  machines for identical inputs, and reproducible builds are a stated goal.
+  machines for identical inputs, and reproducible builds are a stated goal —
+  see *Reproducibility* below for what that does and does not promise.
 
 `[test].sources` (RFC-0003) extends the test set with extra directories or
 individual files, for suites whose sources live outside `tests/`. A directory is
@@ -71,6 +72,36 @@ walked; a file is taken as it is; a relative path is anchored at the workspace
 root. **An entry that does not exist is a manifest error**, not a warning: the
 manifest asserted that a path is part of the project, and a build that quietly
 compiles less than it was told to is worse than one that stops.
+
+## Reproducibility
+
+Reproducibility is invoked twice above as a reason — for the sorted walk, and
+for the object list that becomes the link line — so it is worth stating what it
+covers, because there are two different promises under the word and Molto makes
+only one of them.
+
+**The same tree, manifest and resolved toolchain produce the same command
+lines, in the same order, and the same link line.** Everything that decides a
+command is either in the tree, in the manifest, or in the WSDB's record of the
+toolchain (RFC-0004); the walk is sorted; and no part of the composition
+consults the clock, the environment, the current directory, or the order a
+filesystem hands back its entries.
+
+**Byte-identical objects across machines are not guaranteed**, and three things
+break them, none of which is Molto's to fix by default. `__DATE__` and
+`__TIME__` bake the clock into the object. `__FILE__` and the debug information
+bake in the path of the source, which differs between checkouts — Molto does
+not emit `-ffile-prefix-map` or `-fdebug-prefix-map`, and does not set
+`SOURCE_DATE_EPOCH`. And the compiler may embed a build id or a path into its
+own installation, which is its business and not the caller's.
+
+The distinction is not pedantry, because the two promises serve different
+things. The first is what makes an incremental build correct and a shared
+object cache possible: both ask "would this compile the same way", never "did
+this produce the same bytes". The second is what auditing a released binary
+needs, and it is a much larger commitment — it constrains which flags Molto is
+allowed to pass at all. That is a decision for when there is something to
+audit.
 
 ## The build graph
 
@@ -177,9 +208,9 @@ The global cache does not exist. `~/.molto/` currently holds one file,
 
 Objects are linked with the compiler driver, not with `ld` directly, so the
 driver supplies the C or C++ runtime and the startup files. The driver is the
-C++ one when **any** translation unit in the target is C++, and the C one
-otherwise; if C++ is needed and none was resolved, the build stops and says so
-rather than linking with a driver that will fail obscurely.
+C++ one when **any** translation unit going into the binary is C++, and the C
+one otherwise; if C++ is needed and none was resolved, the build stops and says
+so rather than linking with a driver that will fail obscurely.
 
 The line is composed in this order:
 
@@ -273,6 +304,38 @@ The mechanics matter less than two invariants:
 The pool is created and destroyed per batch, and there is no `-j`. Both are
 worth fixing and neither changes the contract above.
 
+## Diagnostics
+
+**The build asks the compiler for no warnings.** `-Wall`, `-Wextra` and
+`-Wpedantic` reach a compile line only when a manifest put them in
+`[target].flags` or a profile's; Molto adds none of its own, and no profile
+turns any on.
+
+`molto lint` is where the opinion lives. Its `molto` preset passes exactly
+those three (RFC-0005), over the same sources, through the same discovery walk.
+The split is deliberate: a build's job is to produce the binary the manifest
+describes, and a build that fails on a warning nobody asked for makes the
+manifest a lie about what it builds. A warning is a review, it belongs to the
+command whose whole purpose is reviewing, and keeping it there is what lets the
+`lint` preset tighten over time without breaking builds that never asked.
+
+The consequence worth stating: `build` and `lint` do not issue the same command
+line, so a project that never runs `lint` is not seeing what `lint` would say.
+
+### The order of what a build prints
+
+**Diagnostics are not ordered.** Units compile concurrently and each compiler
+writes to the build's stderr as it goes, so the output of two units that fail
+at once can interleave line by line — and does, on a machine with enough cores
+to run them together. Nor is the first diagnostic printed necessarily the first
+unit that failed.
+
+This is a defect and not a decision. The fix is already written elsewhere:
+`lint` and `fmt` capture each task's output whole and print it once the task is
+done, which is what keeps their output legible under the same pool. The build
+launches its compilers without capturing. Doing there what those two already do
+would order diagnostics by unit, at the cost of a buffer.
+
 ## Implementation Status
 
 Implemented: discovery with its sort and symlink rule, `[test].sources`, the
@@ -294,6 +357,9 @@ Not implemented, each waiting on something other than this RFC:
 - **Output verification.** Objects and binaries are checked with `stat`, not
   hashed; an object corrupted in place is considered fresh. Inputs are hashed,
   which is where correctness is actually at risk.
+- **Ordered diagnostics.** Compilers write straight to the build's stderr from
+  the pool, so concurrent failures interleave. `lint` and `fmt` already capture
+  per task and the build does not.
 
 ## Non-Goals
 
@@ -320,6 +386,13 @@ whose stated non-goal is being a compiler has no business attempting either
   a real limit.
 - Alternative linkers (`-fuse-ld=lld`, `mold`) as a first-class setting instead
   of a raw flag.
+- **Subtracting a flag**, rather than only adding one — Kbuild's
+  `CFLAGS_REMOVE_<object>`, for the file that cannot tolerate something it
+  inherits. The three array keys are additive and nothing removes anything
+  today. The position is reserved here rather than left open because the
+  cascade has a precedence, and introducing subtraction later without a place
+  already kept for it would change that precedence for every manifest already
+  written.
 
 ## Related RFCs
 
