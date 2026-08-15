@@ -427,6 +427,30 @@ MOLTEST(lint_analyses_a_source_again_once_it_changes) {
     fixture_teardown(&fixture);
 }
 
+MOLTEST(lint_analyses_a_source_again_once_the_env_changes) {
+    /* The tools run in the project's [env], so a recorded diagnostic answers
+       for one environment and not another. */
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+
+    ASSERT_TRUE(write_file(fixture.root, "Project.toml",
+                           "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                           "\n[target]\nstd = \"c17\"\ndefines = [\"FOO=1\"]\n"
+                           "\n[env]\nCPATH = \"/opt/include\"\n"));
+
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
 MOLTEST(lint_analyses_everything_again_when_asked_to_refresh) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));

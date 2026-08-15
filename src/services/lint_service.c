@@ -314,6 +314,13 @@ static char *fingerprint_for(const lint_setup *setup, const str_list *compiler_a
         for(size_t i = 0; ok && i < str_list_count(linter_argv); i++)
             ok = str_list_push(&parts, str_list_get(linter_argv, i));
     }
+    /* The tools run in the project's [env], so a diagnostic recorded under one
+       environment does not answer for another. Pushed only when there is one,
+       which leaves the fingerprint of a project without [env] exactly as it was
+       and its recorded analyses still valid. */
+    char environment[PROJECT_ENV_FINGERPRINT_MAX];
+    if(ok && project_env_fingerprint(&setup->ctx.env, environment, sizeof environment) > 0)
+        ok = str_list_push(&parts, environment);
 
     char *joined = ok ? join_parts(&parts) : NULL;
     str_list_free(&parts);

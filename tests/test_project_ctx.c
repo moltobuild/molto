@@ -276,6 +276,62 @@ MOLTEST(project_without_env_has_none) {
     EXPECT_EQ(0, ctx.env.count);
 }
 
+MOLTEST(project_sorts_the_env_table_by_name) {
+    /* Canonical here, once, so the order two lines were written in never
+       reaches a build fingerprint or the key of the shared object cache. */
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n"
+                              "[env]\nZED = \"z\"\nALPHA = \"a\"\n",
+                              &ctx, err, sizeof err));
+
+    ASSERT_EQ(2, ctx.env.count);
+    EXPECT_STREQ("ALPHA", ctx.env.names[0]);
+    EXPECT_STREQ("a", ctx.env.values[0]);
+    EXPECT_STREQ("ZED", ctx.env.names[1]);
+}
+
+MOLTEST(project_refuses_more_than_thirty_two_env_entries) {
+    char manifest[4096];
+    int pos = snprintf(manifest, sizeof manifest, "[package]\nname = \"app\"\n[env]\n");
+    for(int i = 0; i < PROJECT_MAX_ENV + 1; i++)
+        pos += snprintf(manifest + pos, sizeof manifest - (size_t)pos, "VAR_%d = \"v\"\n", i);
+
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "more than 32"));
+}
+
+/* The next two assert the promise — a limit is an error, never a silent
+   truncation — without asserting which layer keeps it. TOML_KEY_MAX and
+   TOML_VALUE_MAX happen to be the same 64 and 256 as PROJECT_ENV_NAME_MAX and
+   PROJECT_ENV_VALUE_MAX, so today the parser refuses these before read_env
+   measures them. That coincidence is not the contract; the refusal is. */
+MOLTEST(project_refuses_an_env_name_that_does_not_fit) {
+    char manifest[512];
+    char name[PROJECT_ENV_NAME_MAX + 1];
+    memset(name, 'N', sizeof name - 1);
+    name[sizeof name - 1] = '\0';
+    snprintf(manifest, sizeof manifest, "[package]\nname = \"app\"\n[env]\n%s = \"v\"\n", name);
+
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+}
+
+MOLTEST(project_refuses_an_env_value_that_does_not_fit) {
+    char manifest[1024];
+    char value[PROJECT_ENV_VALUE_MAX + 1];
+    memset(value, 'v', sizeof value - 1);
+    value[sizeof value - 1] = '\0';
+    snprintf(manifest, sizeof manifest, "[package]\nname = \"app\"\n[env]\nVAR = \"%s\"\n", value);
+
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
+}
+
 MOLTEST(project_hands_the_package_identity_to_the_compiler) {
     char err[256] = "";
     project_ctx ctx;

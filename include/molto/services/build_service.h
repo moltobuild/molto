@@ -25,6 +25,20 @@
    the process service; neither of those needs to know about the other. */
 size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t capacity);
 
+/* Enough room for what project_env_fingerprint can write. */
+#define PROJECT_ENV_FINGERPRINT_MAX                                                                \
+    (PROJECT_MAX_ENV * (PROJECT_ENV_NAME_MAX + PROJECT_ENV_VALUE_MAX + 1) + 1)
+
+/* The [env] table as the one string that answers "would this run in the same
+   environment": "NAME=value" per entry, in the order read_env sorted them,
+   separated by a byte no manifest can produce.
+
+   Returns the length written, and 0 with an empty `out` when there is nothing
+   to say. That case is not an edge to tidy up later — it is what keeps a
+   project without [env] fingerprinting byte for byte as it always did, and so
+   keeps every workspace database and cached object already on disk valid. */
+size_t project_env_fingerprint(const project_env *env, char *out, size_t size);
+
 /* Build the project's test executables: compiles `root/src` and then compiles
    and links each source under `root/tests` into its own executable at
    `root/build/<profile>/tests/<name>`, linked against the project's objects

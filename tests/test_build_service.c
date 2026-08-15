@@ -477,3 +477,148 @@ MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+MOLTEST(build_recompiles_when_the_env_changes) {
+    /* [env] reaches the compiler and the linker, so it is part of what an
+       object and a binary were built from. It used to reach neither
+       fingerprint, which left the build mixing objects from two environments
+       and no way to notice. */
+    char root[] = "/tmp/molto_env_stamp_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char manifest[512];
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    char manifest_path[512];
+    snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"one\"\n");
+    EXPECT_TRUE(fs_write_file(manifest_path, manifest));
+
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+
+    char object[512];
+    char binary[512];
+    snprintf(object, sizeof object, "%s/build/debug/obj/src/main.c.o", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/flavoured", root);
+    ASSERT_TRUE(fs_path_exists(object));
+    int64_t compiled_at = mtime_of(object);
+    int64_t linked_at = mtime_of(binary);
+
+    /* Same manifest, same fingerprint: the string has to be stable across runs
+       or nothing would ever be up to date. */
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_TRUE(mtime_of(object) == compiled_at);
+    EXPECT_TRUE(mtime_of(binary) == linked_at);
+
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"two\"\n");
+    EXPECT_TRUE(fs_write_file(manifest_path, manifest));
+
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_TRUE(mtime_of(object) != compiled_at);
+    EXPECT_TRUE(mtime_of(binary) != linked_at);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
+    /* The order two variables were written in is not something the build ran
+       differently, and a rebuild over it would also split the shared object
+       cache between two projects declaring the same thing. */
+    char root[] = "/tmp/molto_env_order_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    char manifest_path[512];
+    snprintf(manifest_path, sizeof manifest_path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
+                                             "[env]\nZED = \"z\"\nALPHA = \"a\"\n"));
+
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+
+    char object[512];
+    snprintf(object, sizeof object, "%s/build/debug/obj/src/main.c.o", root);
+    ASSERT_TRUE(fs_path_exists(object));
+    int64_t compiled_at = mtime_of(object);
+
+    EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
+                                             "[env]\nALPHA = \"a\"\nZED = \"z\"\n"));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_TRUE(mtime_of(object) == compiled_at);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(project_env_to_vars_maps_the_table_it_is_given) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n"
+                              "[env]\nALPHA = \"a\"\nBETA = \"b\"\n",
+                              &ctx, err, sizeof err));
+
+    process_env_var vars[PROJECT_MAX_ENV];
+    ASSERT_EQ(2, project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV));
+    EXPECT_STREQ("ALPHA", vars[0].name);
+    EXPECT_STREQ("a", vars[0].value);
+    EXPECT_STREQ("BETA", vars[1].name);
+    EXPECT_STREQ("b", vars[1].value);
+
+    /* No table at all, and a caller with less room than there is to say. */
+    EXPECT_EQ(0, project_env_to_vars(NULL, vars, PROJECT_MAX_ENV));
+    EXPECT_EQ(1, project_env_to_vars(&ctx.env, vars, 1));
+}
+
+MOLTEST(env_fingerprint_says_nothing_when_there_is_no_env) {
+    /* The whole compatibility story rests on this: no [env], nothing appended,
+       so every workspace database and cached object already on disk still
+       matches the command that made it. */
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n", &ctx, err, sizeof err));
+
+    char out[PROJECT_ENV_FINGERPRINT_MAX];
+    EXPECT_EQ(0, project_env_fingerprint(&ctx.env, out, sizeof out));
+    EXPECT_STREQ("", out);
+
+    EXPECT_EQ(0, project_env_fingerprint(NULL, out, sizeof out));
+    EXPECT_STREQ("", out);
+}
+
+MOLTEST(env_fingerprint_separates_two_environments) {
+    char err[256] = "";
+    project_ctx one;
+    project_ctx two;
+    char first[PROJECT_ENV_FINGERPRINT_MAX];
+    char second[PROJECT_ENV_FINGERPRINT_MAX];
+
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n[env]\nA = \"1\"\n",
+                              &one, err, sizeof err));
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n[env]\nA = \"2\"\n",
+                              &two, err, sizeof err));
+    EXPECT_TRUE(project_env_fingerprint(&one.env, first, sizeof first) > 0);
+    EXPECT_TRUE(project_env_fingerprint(&two.env, second, sizeof second) > 0);
+    EXPECT_STRNE(first, second);
+
+    /* The same environment, written in either order, is one environment. */
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n[env]\nA = \"1\"\nB = \"2\"\n",
+                              &one, err, sizeof err));
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n[env]\nB = \"2\"\nA = \"1\"\n",
+                              &two, err, sizeof err));
+    EXPECT_TRUE(project_env_fingerprint(&one.env, first, sizeof first) > 0);
+    EXPECT_TRUE(project_env_fingerprint(&two.env, second, sizeof second) > 0);
+    EXPECT_STREQ(first, second);
+}

@@ -34,13 +34,28 @@
    lives inside the source cache, so its content is fixed by its coordinate. */
 [[nodiscard]] bool object_cache_covers(const char *source);
 
+/* Ends the argv part of a command, and begins the environment it runs in.
+
+   Everything after this byte is not an argument, and is taken exactly as it
+   stands rather than split into tokens. It has to be: an environment value may
+   contain spaces, and may contain something that reads as an output argument.
+   Splitting `X=a -o b` would drop the `b` and let it key the same as `X=a -o c`
+   — two different environments answering to one cached object, which is the
+   wrong build taking it.
+
+   A byte the TOML parser cannot put in a name or a value, so nothing a manifest
+   says can be mistaken for it. */
+#define OBJECT_CACHE_ENV_MARK "\x1f"
+
 /* Where the shared object for compiling `source` with `command` lives.
 
-   `command` is the full compile command. The parts of it that name where the
-   output goes are excluded from the key, because they are what differs between
-   two projects compiling the very same thing; everything else — the compiler,
-   the standard, the optimisation level, every define and include — is what
-   makes two objects interchangeable, and stays in.
+   `command` is the full compile command, optionally followed by
+   OBJECT_CACHE_ENV_MARK and the environment it will run in. The parts of it
+   that name where the output goes are excluded from the key, because they are
+   what differs between two projects compiling the very same thing; everything
+   else — the compiler, the standard, the optimisation level, every define and
+   include, and the environment — is what makes two objects interchangeable, and
+   stays in.
 
    False when `source` is not covered, or when the path would not fit. */
 [[nodiscard]] bool object_cache_path(const char *source, const char *command, char *out,

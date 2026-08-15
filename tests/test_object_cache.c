@@ -108,6 +108,84 @@ MOLTEST(object_cache_names_the_coordinate_it_holds) {
     sandbox_close(&at);
 }
 
+MOLTEST(object_cache_hashes_the_environment_as_it_stands) {
+    /* The reason the environment is marked off instead of appended: molto
+       composes the argv and knows it has no spaces, but it does not compose an
+       environment value. Split on spaces, "X=a -o b" and "X=a -o c" both lose
+       the token after the "-o" and key alike — one cached object answering for
+       two different environments, taken by the wrong build. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char source[PATH_MAX_LEN];
+    ASSERT_TRUE(dep_source(&at, source, sizeof source));
+
+    char first[PATH_MAX_LEN] = "";
+    char second[PATH_MAX_LEN] = "";
+    ASSERT_TRUE(object_cache_path(source, "clang -c s.c -o /a/x.o" OBJECT_CACHE_ENV_MARK "X=a -o b",
+                                  first, sizeof first));
+    ASSERT_TRUE(object_cache_path(source, "clang -c s.c -o /a/x.o" OBJECT_CACHE_ENV_MARK "X=a -o c",
+                                  second, sizeof second));
+    EXPECT_STRNE(first, second);
+
+    sandbox_close(&at);
+}
+
+MOLTEST(object_cache_still_ignores_the_output_arguments_before_the_mark) {
+    /* Marking the environment off must not cost the thing the cache is for:
+       two projects with the same environment, writing to different places,
+       still share one object. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char source[PATH_MAX_LEN];
+    ASSERT_TRUE(dep_source(&at, source, sizeof source));
+
+    char first[PATH_MAX_LEN] = "";
+    char second[PATH_MAX_LEN] = "";
+    ASSERT_TRUE(object_cache_path(source,
+                                  "clang -c s.c -O0 -o /a/x.o -MF /a/x.o.d" OBJECT_CACHE_ENV_MARK
+                                  "CPATH=/opt/include",
+                                  first, sizeof first));
+    ASSERT_TRUE(object_cache_path(source,
+                                  "clang -c s.c -O0 -o /b/y.o -MF /b/y.o.d" OBJECT_CACHE_ENV_MARK
+                                  "CPATH=/opt/include",
+                                  second, sizeof second));
+    EXPECT_STREQ(first, second);
+
+    /* And a different environment is a different object. */
+    char third[PATH_MAX_LEN] = "";
+    ASSERT_TRUE(object_cache_path(source,
+                                  "clang -c s.c -O0 -o /a/x.o -MF /a/x.o.d" OBJECT_CACHE_ENV_MARK
+                                  "CPATH=/usr/include",
+                                  third, sizeof third));
+    EXPECT_STRNE(first, third);
+
+    sandbox_close(&at);
+}
+
+MOLTEST(object_cache_keeps_the_key_it_had_before_environments_existed) {
+    /* The key of a command that says nothing about its environment must not
+       move, or every object every project already had cached is orphaned by an
+       upgrade. The digest below was taken from the binary that predates the
+       environment being part of the key; it is a fact about released behaviour,
+       not a number this test is free to choose. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char source[PATH_MAX_LEN];
+    char path[PATH_MAX_LEN] = "";
+    ASSERT_TRUE(dep_source(&at, source, sizeof source));
+    ASSERT_TRUE(object_cache_path(source, "clang -c s.c -O0 -std=c17 -o /a/x.o -MF /a/x.o.d", path,
+                                  sizeof path));
+
+    const char *digest = strrchr(path, '-');
+    ASSERT_NOT_NULL(digest);
+    EXPECT_STREQ("-3433222e0598b6fe.o", digest);
+
+    sandbox_close(&at);
+}
+
 MOLTEST(object_cache_has_no_path_for_something_it_does_not_cover) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));

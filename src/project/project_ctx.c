@@ -175,6 +175,12 @@ static bool valid_compiler(const char *name) {
         str_list_free(&names);
         return set_error(err, err_size, "could not read the [env] table");
     }
+    /* Sorted here, once, rather than by whoever needs it: the order these were
+       written in would otherwise reach the build fingerprints, and through them
+       the key of a cache shared between projects. Two manifests that name the
+       same variables would stop recognising each other's objects over the order
+       of two lines. */
+    str_list_sort(&names);
 
     bool ok = true;
     size_t total = str_list_count(&names);

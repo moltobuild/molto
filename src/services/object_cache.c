@@ -39,16 +39,24 @@ static const char *output_arg_at(const char *token, size_t length) {
     return NULL;
 }
 
-/* Hash `command`, skipping each output argument and the value after it.
+/* Hash `command`, skipping each output argument and the value after it, and
+   then taking everything from OBJECT_CACHE_ENV_MARK onwards verbatim.
 
-   The command is a space-joined argv and no path molto composes contains a
-   space, so splitting on spaces recovers the tokens it was built from. */
+   The argv is a space-joined one and no path molto composes contains a space,
+   so splitting on spaces recovers the tokens it was built from. That reasoning
+   stops at the mark: what follows is an environment, whose values molto did not
+   compose and may well contain spaces, so it is hashed as it stands.
+
+   The mark is also a delimiter for the argv part, not only its terminator. It
+   is written flush against the last token, and a scan that only knew about
+   spaces would swallow the whole environment into that token. */
 static uint64_t hash_command(const char *command) {
     uint64_t hash = FNV_OFFSET;
     bool skip_value = false;
+    const char *token = command;
 
-    for(const char *token = command; *token != '\0';) {
-        const size_t length = strcspn(token, " ");
+    while(*token != '\0' && *token != OBJECT_CACHE_ENV_MARK[0]) {
+        const size_t length = strcspn(token, " " OBJECT_CACHE_ENV_MARK);
         if(skip_value) {
             skip_value = false;
         } else if(output_arg_at(token, length) != NULL) {
@@ -61,6 +69,8 @@ static uint64_t hash_command(const char *command) {
         while(*token == ' ')
             token++;
     }
+    if(*token != '\0')
+        hash_text(token, strlen(token), &hash);
     return hash;
 }
 

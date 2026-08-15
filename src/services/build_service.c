@@ -159,6 +159,56 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t
     return count;
 }
 
+size_t project_env_fingerprint(const project_env *env, char *out, size_t size) {
+    if(size == 0)
+        return 0;
+    out[0] = '\0';
+    if(env == NULL || env->count == 0)
+        return 0;
+
+    size_t used = 0;
+    for(size_t i = 0; i < env->count; i++) {
+        int written = snprintf(out + used, size - used, "%s%s=%s",
+                               i > 0 ? OBJECT_CACHE_ENV_MARK : "", env->names[i], env->values[i]);
+        if(written < 0 || (size_t)written >= size - used) {
+            /* The caller sized the buffer from the same limits read_env
+               enforces, so a short write means those two have drifted apart.
+               Saying nothing would quietly fingerprint an environment as if it
+               were empty; saying half of it would be worse. */
+            out[0] = '\0';
+            return 0;
+        }
+        used += (size_t)written;
+    }
+    return used;
+}
+
+/* The fingerprint of a command: the argv it will run, and after the mark the
+   environment it will run in. Heap string, caller frees; NULL on failure.
+
+   The two are one string because two consumers ask the same question of it —
+   the workspace database compares it, the shared object cache hashes it — and
+   one string is what stops their answers from disagreeing. Nothing is appended
+   when there is no [env], which is what leaves the databases and cache entries
+   already on disk valid. */
+static char *command_fingerprint(const str_list *argv, const project_env *env) {
+    char environment[PROJECT_ENV_FINGERPRINT_MAX];
+    size_t env_length = project_env_fingerprint(env, environment, sizeof environment);
+    char *command = join_args(argv);
+    if(command == NULL || env_length == 0)
+        return command;
+
+    size_t length = strlen(command);
+    size_t total = length + strlen(OBJECT_CACHE_ENV_MARK) + env_length + 1;
+    char *joined = realloc(command, total);
+    if(joined == NULL) {
+        free(command);
+        return NULL;
+    }
+    snprintf(joined + length, total - length, OBJECT_CACHE_ENV_MARK "%s", environment);
+    return joined;
+}
+
 /* Run a command held in a str_list argv (adds the NULL terminator), exporting
    the project's [env] variables to the child. */
 static int run_str_argv(const str_list *argv, const project_env *env) {
@@ -242,7 +292,7 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
 /* Build the current compile command for a unit as a heap string, for the
    fingerprint comparison (caller frees). NULL on allocation failure. */
 static char *compile_command_string(const char *root, const compile_unit *unit, const char *object,
-                                    const manifest_profile *settings,
+                                    const manifest_profile *settings, const project_env *env,
                                     const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if(!depfile_path_for(object, depfile, sizeof depfile))
@@ -251,7 +301,7 @@ static char *compile_command_string(const char *root, const compile_unit *unit, 
     str_list_init(&argv);
     char *command = NULL;
     if(build_compile_argv(&argv, root, unit, object, settings, depfile, chain))
-        command = join_args(&argv);
+        command = command_fingerprint(&argv, env);
     str_list_free(&argv);
     return command;
 }
@@ -455,7 +505,7 @@ static int compile_units(const char *root, build_profile profile, const manifest
             free(needs);
             return exit_build_failure;
         }
-        char *command = compile_command_string(root, &units[i], object, settings, chain);
+        char *command = compile_command_string(root, &units[i], object, settings, env, chain);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
 
         /* A stale object that another project already compiled the same way is
@@ -531,7 +581,8 @@ static int compile_units(const char *root, build_profile profile, const manifest
             discard_depfile(task->object);
             continue;
         }
-        char *command = compile_command_string(root, task->unit, task->object, settings, chain);
+        char *command =
+            compile_command_string(root, task->unit, task->object, settings, env, chain);
         if(command == NULL || !wsdb_absorb_object(db, source, task->object, command))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", source);
         if(command != NULL)
@@ -593,7 +644,12 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
         str_list_free(&argv);
         return false;
     }
-    char *command = join_args(&argv);
+    /* The environment belongs in the link fingerprint for the same reason it
+       belongs in the compile one: it reaches the linker, so a different
+       LIBRARY_PATH is a different binary. Relying on `force` to catch that
+       would be correct only by accident — it is true when something was
+       recompiled, and every object could have come from the shared cache. */
+    char *command = command_fingerprint(&argv, env);
 
     bool ok = true;
     if(force || command == NULL || !wsdb_binary_fresh(db, binary, command) ||
