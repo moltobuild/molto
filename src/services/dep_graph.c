@@ -217,7 +217,8 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    what it depends on in turn. Read through the same doc_view the registry's
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
-                                project_deps *deps, char *err, size_t err_size) {
+                                project_deps *deps, manifest_about *about, char *err,
+                                size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
@@ -239,7 +240,8 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
 
     const doc_view view = doc_from_toml(doc);
     const bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
-                    project_deps_read_doc(view, deps, err, err_size);
+                    project_deps_read_doc(view, deps, err, err_size) &&
+                    manifest_read_about(view, "about", about, err, err_size);
     toml_free(doc);
     return ok;
 }
@@ -255,6 +257,7 @@ typedef struct {
     char checksum[SOURCE_DIGEST_MAX];
     recipe_artifacts artifacts;
     project_deps deps;
+    manifest_about about;
     /* Set for a registry dependency, whose bytes are not fetched during the
        walk. `root` is empty until they are. */
     bool deferred;
@@ -294,6 +297,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         snprintf(out->target, sizeof out->target, "%s", resolved->coordinate.target);
         out->artifacts = resolved->artifacts;
         out->deps = resolved->deps;
+        out->about = resolved->about;
         out->spec = resolved->source;
         out->deferred = true;
     }
@@ -327,7 +331,8 @@ static bool visit_carried(const project_dep *dep, visited *out, char *err, size_
         snprintf(out->checksum, sizeof out->checksum, "%s", spec.sha256);
     }
 
-    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->deps, err, err_size);
+    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->deps, &out->about, err,
+                               err_size);
 }
 
 /* --- the walk --- */
@@ -547,6 +552,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     snprintf(node->source, sizeof node->source, "%s", source);
     node->scope = entry->scope;
     node->artifacts = found->artifacts;
+    node->about = found->about;
 
     ok = record_edges(node, &found->deps, err, err_size) &&
          enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);

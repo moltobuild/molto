@@ -77,6 +77,12 @@ typedef struct {
     /* The names it depends on, sorted, for the lock's `dependencies`. */
     str_list dependencies;
     recipe_artifacts artifacts;
+    /* What its recipe says about itself: the licence above all (RFC-0009
+       `[about]`). Carried here because the walk already parses that recipe to
+       learn what to compile, so a report that has to name the licence of every
+       package in a build needs no second pass and no network. Empty
+       throughout when the recipe stated nothing, which is allowed. */
+    manifest_about about;
 } dep_node;
 
 typedef struct dep_graph dep_graph;

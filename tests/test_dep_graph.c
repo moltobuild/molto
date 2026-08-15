@@ -447,3 +447,43 @@ MOLTEST(a_closure_over_a_cycle_terminates) {
     dep_graph_free(graph);
     sandbox_close(&at);
 }
+
+/* What a recipe says about itself (RFC-0009 `[about]`) reaches the graph, and
+   reaches it for free: the walk already parses that recipe to learn what to
+   compile, so there is no extra fetch and no second reader. It is what turns a
+   resolved graph into something that can name the licence of every component
+   it links. */
+MOLTEST(a_node_carries_what_its_recipe_says_about_itself) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "png",
+                             "[about]\n"
+                             "description = \"The PNG reference library\"\n"
+                             "license = \"libpng-2.0\"\n"
+                             "homepage = \"http://www.libpng.org\"\n"));
+    EXPECT_TRUE(make_package(&at, "quiet", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"png", "quiet"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    const dep_node *png = dep_graph_find(graph, "png");
+    ASSERT_NOT_NULL(png);
+    EXPECT_STREQ("libpng-2.0", png->about.license);
+    EXPECT_STREQ("The PNG reference library", png->about.description);
+    EXPECT_STREQ("http://www.libpng.org", png->about.homepage);
+
+    /* A recipe with no [about] is not an error: it simply says nothing, and
+       what reads the graph has to be able to tell that apart from a licence. */
+    const dep_node *quiet = dep_graph_find(graph, "quiet");
+    ASSERT_NOT_NULL(quiet);
+    EXPECT_STREQ("", quiet->about.license);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}

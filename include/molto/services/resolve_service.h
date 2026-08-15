@@ -38,6 +38,10 @@ typedef struct {
        and because a second request to learn it would ask the registry the
        question it already answered. */
     project_deps deps;
+    /* What the recipe says about itself, for the same reason: the answer is
+       here now, and asking again later would be a request for something the
+       registry has already sent. */
+    manifest_about about;
     /* Binary form only, and empty for a source recipe, which has no bytes in
        the registry at all. */
     char download_url[SOURCE_URL_MAX];

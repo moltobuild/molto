@@ -157,6 +157,10 @@ static bool read_artifact(json_value artifact, const char *name, const char *ver
        would be a request per edge. */
     if(!project_deps_read_doc(recipe, &out->deps, err, err_size))
         return false;
+    /* And the same for what the package says about itself, which the catalogue
+       serves inside the very same recipe (RFC-0009). */
+    if(!manifest_read_about(recipe, "about", &out->about, err, err_size))
+        return false;
 
     if(out->coordinate.form == recipe_form_source)
         return source_read(recipe, &out->source, err, err_size);
