@@ -110,6 +110,9 @@ typedef struct {
     char project_name[128];
     char version[64];
     artifact_kind artifact;
+    /* The rest of `[package]`: what the package says about itself rather than
+       what it needs to build. Nothing here reaches a compile line. */
+    manifest_about about;
     project_target target;
     project_test test;
     project_env env;

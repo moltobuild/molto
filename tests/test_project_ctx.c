@@ -88,6 +88,62 @@ MOLTEST(project_rejects_invalid_manifests) {
     EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
 }
 
+MOLTEST(project_reads_the_publishing_metadata) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\n"
+                              "name = \"demo_app\"\n"
+                              "version = \"1.2.3\"\n"
+                              "description = \"A demo\"\n"
+                              "license = \"MIT OR Apache-2.0\"\n"
+                              "homepage = \"https://example.dev\"\n"
+                              "repository = \"https://github.com/example/demo\"\n"
+                              "authors = [\"Ada\"]\n",
+                              &ctx, err, sizeof err));
+
+    EXPECT_STREQ("A demo", ctx.about.description);
+    EXPECT_STREQ("MIT OR Apache-2.0", ctx.about.license);
+    EXPECT_STREQ("https://example.dev", ctx.about.homepage);
+    EXPECT_STREQ("https://github.com/example/demo", ctx.about.repository);
+    ASSERT_EQ(1, ctx.about.author_count);
+    EXPECT_STREQ("Ada", ctx.about.authors[0]);
+
+    /* None of it is required, and a manifest without it is not diminished. */
+    ASSERT_TRUE(project_parse("[package]\nname = \"demo_app\"\n", &ctx, err, sizeof err));
+    EXPECT_STREQ("", ctx.about.license);
+    EXPECT_EQ(0, ctx.about.author_count);
+}
+
+MOLTEST(project_refuses_an_unknown_package_key) {
+    /* [package] fails closed, unlike [target] and [profile.*]. The reason is
+       who reads it: these keys leave the machine, and a `licence` dropped in
+       silence publishes a package that claims no licence at all. */
+    char err[256] = "";
+    project_ctx ctx;
+
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nlicence = \"MIT\"\n", &ctx, err,
+                               sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "licence"));
+
+    /* artifact keeps its own message rather than being reported as unknown: it
+       is a key this manifest format defines and this version refuses. */
+    err[0] = '\0';
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"static\"\n", &ctx, err,
+                               sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "not supported yet"));
+
+    /* Every key it does define still passes. */
+    EXPECT_TRUE(project_parse("[package]\n"
+                              "name = \"x\"\n"
+                              "version = \"1.0.0\"\n"
+                              "description = \"d\"\n"
+                              "license = \"MIT\"\n"
+                              "homepage = \"h\"\n"
+                              "repository = \"r\"\n"
+                              "authors = [\"a\"]\n",
+                              &ctx, err, sizeof err));
+}
+
 MOLTEST(project_reads_target_table) {
     char err[256] = "";
     project_ctx ctx;

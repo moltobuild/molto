@@ -34,6 +34,50 @@ static void seed_defaults(project_ctx *ctx) {
     ctx->profile.custom = (manifest_profile){.opt_level = 2, .debug_info = true};
 }
 
+/*
+ * Every key `[package]` defines, and the one table in the manifest that fails
+ * closed on the rest.
+ *
+ * Everywhere else — `[target]`, `[profile.*]`, `[test]` — an unknown key is
+ * dropped in silence, and the cost of a typo is a setting that did not take
+ * effect on the machine that typed it. These keys are different: they leave the
+ * machine. A `licence` misspelled once publishes a package that claims no
+ * licence at all, to everyone who ever resolves it, and nothing about the build
+ * looks wrong. So this table is read the way `[deps]` is (RFC-0008).
+ */
+static const char *const PACKAGE_KEYS[] = {
+    "name", "version", "artifact", "description", "license", "homepage", "repository", "authors",
+};
+
+static bool is_package_key(const char *key) {
+    for(size_t i = 0; i < sizeof PACKAGE_KEYS / sizeof PACKAGE_KEYS[0]; i++) {
+        if(strcmp(PACKAGE_KEYS[i], key) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Classified before anything is read, so the reason a manifest was refused is
+   the key that is wrong and not whatever failed later because of it. */
+[[nodiscard]] static bool check_package_keys(const toml_document *doc, char *err, size_t err_size) {
+    str_list keys;
+    str_list_init(&keys);
+    if(!doc_table_members(doc_from_toml(doc), "package", &keys)) {
+        str_list_free(&keys);
+        return set_error(err, err_size, "could not read the [package] table");
+    }
+
+    bool ok = true;
+    for(size_t i = 0; ok && i < str_list_count(&keys); i++) {
+        const char *key = str_list_get(&keys, i);
+        if(!is_package_key(key))
+            ok = set_error(err, err_size, "[package]: unknown key '%s'", key);
+    }
+
+    str_list_free(&keys);
+    return ok;
+}
+
 static bool map_test_mode(const char *name, test_mode *out) {
     if(strcmp(name, "per_file") == 0) {
         *out = test_mode_per_file;
@@ -173,6 +217,11 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     if(doc == NULL)
         return false;
 
+    if(!check_package_keys(doc, err, err_size)) {
+        toml_free(doc);
+        return false;
+    }
+
     const toml_field schema[] = {
         TOML_STR(project_ctx, "package", "name", project_name),
         TOML_STR(project_ctx, "package", "version", version),
@@ -266,6 +315,11 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
          read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
          read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size);
 
+    /* The rest of `[package]`. Read with the same code a recipe's `[about]` is
+       read with, because RFC-0009 requires the two to say the same thing and
+       two readers of one format drift. */
+    ok = ok && manifest_read_about(doc_from_toml(doc), "package", &out->about, err, err_size);
+
     /* Dependencies, and the registries one may name. Checked together after
        both are read, because a manifest may declare them in either order.
 
@@ -304,6 +358,8 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
     fprintf(stream, "project_name = %s\n", ctx->project_name);
     fprintf(stream, "version      = %s\n", ctx->version);
     fprintf(stream, "artifact     = %s\n", artifact_names[ctx->artifact]);
+    fprintf(stream, "license      = %s\n",
+            ctx->about.license[0] != '\0' ? ctx->about.license : "(none stated)");
     fprintf(stream, "target.compiler = %s\n",
             ctx->target.compiler[0] != '\0' ? ctx->target.compiler : "(auto)");
     fprintf(stream, "target.std      = %s\n",

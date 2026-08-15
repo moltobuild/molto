@@ -2,7 +2,11 @@
 
 #include <molto/project/project_ctx.h>
 #include <molto/services/manifest_service.h>
+#include <molto/util/doc.h>
+#include <molto/util/json.h>
+#include <molto/util/toml.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -120,4 +124,167 @@ MOLTEST(manifest_declares_the_project_include_directory) {
     EXPECT_STREQ("include", ctx.target.options.include[0]);
 
     free(toml);
+}
+
+/* --- the publishing metadata (RFC-0003 [package], RFC-0009 [about]) --- */
+
+static bool read_about_toml(const char *text, const char *table, manifest_about *out, char *err,
+                            size_t err_size) {
+    toml_document *doc = toml_parse(text, err, err_size);
+    if (doc == NULL)
+        return false;
+    bool ok = manifest_read_about(doc_from_toml(doc), table, out, err, err_size);
+    toml_free(doc);
+    return ok;
+}
+
+MOLTEST(manifest_reads_about_from_either_table) {
+    /* One reader, two names. A manifest writes this under [package] and a
+       recipe under [about] (RFC-0009), and the two must agree about what the
+       keys mean — which they cannot do if each has its own reader. */
+    static const char *const TABLES[] = { "package", "about" };
+
+    for (size_t i = 0; i < sizeof TABLES / sizeof TABLES[0]; i++) {
+        char text[512];
+        snprintf(text, sizeof text,
+                 "[%s]\n"
+                 "name = \"http\"\n"
+                 "version = \"0.2.0\"\n"
+                 "description = \"A small HTTP client\"\n"
+                 "license = \"MIT\"\n"
+                 "homepage = \"https://example.dev/http\"\n"
+                 "repository = \"https://github.com/example/http\"\n"
+                 "authors = [\"Ada <ada@example.dev>\", \"Grace\"]\n",
+                 TABLES[i]);
+
+        manifest_about about;
+        char err[256] = "";
+        ASSERT_TRUE(read_about_toml(text, TABLES[i], &about, err, sizeof err));
+        EXPECT_STREQ("A small HTTP client", about.description);
+        EXPECT_STREQ("MIT", about.license);
+        EXPECT_STREQ("https://example.dev/http", about.homepage);
+        EXPECT_STREQ("https://github.com/example/http", about.repository);
+        ASSERT_EQ(2, about.author_count);
+        EXPECT_STREQ("Ada <ada@example.dev>", about.authors[0]);
+        EXPECT_STREQ("Grace", about.authors[1]);
+    }
+}
+
+MOLTEST(manifest_reads_about_from_a_registry_answer) {
+    /* The same recipe arrives as TOML from disk and as JSON inside a registry's
+       answer (RFC-0010). doc_view is what keeps that one document rather than
+       two, and this is the half that never has a local file to diff against. */
+    json_document *doc = json_parse("{\"name\":\"http\",\"about\":{"
+                                    "\"description\":\"A small HTTP client\","
+                                    "\"license\":\"MIT\",\"authors\":[\"Ada\"]}}");
+    ASSERT_NOT_NULL(doc);
+
+    manifest_about about;
+    char err[256] = "";
+    ASSERT_TRUE(
+        manifest_read_about(doc_from_json(json_root(doc)), "about", &about, err, sizeof err));
+    EXPECT_STREQ("A small HTTP client", about.description);
+    EXPECT_STREQ("MIT", about.license);
+    ASSERT_EQ(1, about.author_count);
+    EXPECT_STREQ("Ada", about.authors[0]);
+
+    json_free(doc);
+}
+
+MOLTEST(manifest_about_is_entirely_optional) {
+    manifest_about about;
+    char err[256] = "";
+
+    ASSERT_TRUE(read_about_toml("[package]\nname = \"http\"\n", "package", &about, err,
+                                sizeof err));
+    EXPECT_STREQ("", about.description);
+    EXPECT_STREQ("", about.license);
+    EXPECT_STREQ("", about.homepage);
+    EXPECT_STREQ("", about.repository);
+    EXPECT_EQ(0, about.author_count);
+
+    /* A table that is not there at all says nothing about itself, which is
+       allowed: a recipe published before these keys existed has no [about]. */
+    ASSERT_TRUE(read_about_toml("[artifacts]\ntype = \"source\"\n", "about", &about, err,
+                                sizeof err));
+    EXPECT_STREQ("", about.license);
+}
+
+MOLTEST(manifest_about_refuses_a_value_that_does_not_fit) {
+    /* Truncating would record a description nobody wrote. The manifest's rule
+       everywhere else is that a limit is an error, and this is no different. */
+    char long_value[MANIFEST_DESCRIPTION_MAX + 8];
+    memset(long_value, 'x', sizeof long_value - 1);
+    long_value[sizeof long_value - 1] = '\0';
+
+    char text[sizeof long_value + 64];
+    snprintf(text, sizeof text, "[package]\ndescription = \"%s\"\n", long_value);
+
+    manifest_about about;
+    char err[256] = "";
+    EXPECT_FALSE(read_about_toml(text, "package", &about, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "description"));
+}
+
+MOLTEST(manifest_about_refuses_a_value_of_the_wrong_type) {
+    /* Declared and not a string is not the same as absent: the first is a
+       mistake worth naming, the second is the default. */
+    manifest_about about;
+    char err[256] = "";
+    EXPECT_FALSE(read_about_toml("[package]\ndescription = 5\n", "package", &about, err,
+                                 sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "description"));
+}
+
+MOLTEST(manifest_about_refuses_more_authors_than_it_holds) {
+    char list[MANIFEST_MAX_AUTHORS * 8 + 16] = "";
+    for (size_t i = 0; i <= MANIFEST_MAX_AUTHORS; i++)
+        snprintf(list + strlen(list), sizeof list - strlen(list), "%s\"a\"", i == 0 ? "" : ", ");
+
+    char text[sizeof list + 64];
+    snprintf(text, sizeof text, "[package]\nauthors = [%s]\n", list);
+
+    manifest_about about;
+    char err[256] = "";
+    EXPECT_FALSE(read_about_toml(text, "package", &about, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "authors"));
+}
+
+MOLTEST(manifest_accepts_an_spdx_expression) {
+    static const char *const good[] = {
+        "MIT",
+        "Apache-2.0",
+        "GPL-3.0-or-later",
+        "GPL-2.0+",
+        "MIT OR Apache-2.0",
+        "Apache-2.0 WITH LLVM-exception",
+        "(MIT OR BSD-3-Clause) AND ISC",
+        "blessing", /* what sqlite publishes */
+    };
+
+    for (size_t i = 0; i < sizeof good / sizeof good[0]; i++)
+        EXPECT_TRUE(manifest_is_valid_license(good[i]));
+}
+
+MOLTEST(manifest_rejects_a_license_that_is_not_an_expression) {
+    /* Syntax only. The SPDX identifier list is deliberately not embedded — it
+       would be a list that expires — so what is caught here is the shape: a
+       dangling operator, an unbalanced paren, two identifiers with nothing
+       joining them. */
+    static const char *const bad[] = {
+        "", "MIT OR", "OR MIT", "MIT AND AND ISC", "(MIT", "MIT)", "()", "MIT Apache-2.0",
+        "MIT/Apache-2.0",
+    };
+
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++)
+        EXPECT_FALSE(manifest_is_valid_license(bad[i]));
+    EXPECT_FALSE(manifest_is_valid_license(NULL));
+}
+
+MOLTEST(manifest_about_refuses_a_malformed_license) {
+    manifest_about about;
+    char err[256] = "";
+    EXPECT_FALSE(read_about_toml("[package]\nlicense = \"MIT OR\"\n", "package", &about, err,
+                                 sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "license"));
 }
