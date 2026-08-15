@@ -13,22 +13,44 @@
  *
  * This is the step between the manifest and the compiler: every dependency is
  * resolved (a registry answers, or the manifest already said where the bytes
- * are), fetched into the shared cache, and reduced to the four things a
- * compile line and a link line need.
+ * are), fetched into the shared cache, and reduced to what a compile line and a
+ * link line need.
  *
- * The result is flat on purpose. A build does not care which dependency
- * contributed which `-I`; it needs the union, in order. Keeping per-dependency
- * structure here would also mean an array of `recipe_artifacts`, which at
- * thirty-two entries is half a megabyte of struct for information nothing
- * downstream asks for.
+ * The result comes out in two shapes because two different questions are being
+ * asked. What the *consumer* compiles and links against is a union: it does not
+ * care which dependency contributed which `-I`, only that all of them are
+ * there. What each *dependency* compiles against is its own, and used to be
+ * that same union — which meant one package's defines reached another
+ * package's preprocessor, and no recipe could ask for a flag without every
+ * other source in the build getting it too.
  *
  * Paths come out absolute — sources and include directories both — because a
  * dependency lives in the cache and not under the project root, and the build
  * anchors a relative path at the root.
  */
 
+/* One dependency, and the command line its own sources compile with: the
+   interface of every package it reaches, then its own, then what its recipe
+   kept private.
+ *
+ * The lists are str_lists rather than a `recipe_artifacts` per package, which
+ * is what makes keeping this structure affordable: a recipe_artifacts is
+ * fifteen kilobytes of fixed-size arrays, and thirty-two of them is half a
+ * megabyte to hold what a handful of strings holds. */
 typedef struct {
+    char name[DEP_NAME_MAX];
     str_list sources;  /* .c files the consumer compiles as its own */
+    str_list includes; /* -I directories, absolute */
+    str_list defines;  /* -D */
+    str_list flags;    /* passed verbatim */
+} prepared_unit;
+
+typedef struct {
+    /* One per dependency that ships sources, in graph order. */
+    prepared_unit *units;
+    size_t unit_count;
+    /* The interface of all of them together: what the consumer's own sources
+       compile against, and what its link line carries. */
     str_list includes; /* -I directories */
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */
@@ -60,7 +82,11 @@ void prepared_deps_free(prepared_deps *out);
    `[dev-deps]`. Their include directories never reach the command line that
    compiles `src/`, which is what makes the separation real rather than
    documented — a source that includes one fails to compile, on the first
-   build, with "no such file" (RFC-0008). */
+   build, with "no such file" (RFC-0008).
+
+   A development dependency's own unit still sees whatever it reaches, runtime
+   packages included: what brought a package into the graph says nothing about
+   which headers its sources include. */
 [[nodiscard]] bool deps_prepare_dev(const dep_graph *graph, prepared_deps *out, char *err,
                                     size_t err_size);
 

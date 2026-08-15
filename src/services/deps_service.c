@@ -6,6 +6,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define DEPS_PATH_MAX 1024
@@ -24,7 +25,8 @@ static bool set_error(char *err, size_t err_size, const char *format, ...) {
 }
 
 void prepared_deps_init(prepared_deps *out) {
-    str_list_init(&out->sources);
+    out->units = NULL;
+    out->unit_count = 0;
     str_list_init(&out->includes);
     str_list_init(&out->defines);
     str_list_init(&out->flags);
@@ -32,11 +34,38 @@ void prepared_deps_init(prepared_deps *out) {
 }
 
 void prepared_deps_free(prepared_deps *out) {
-    str_list_free(&out->sources);
+    for(size_t i = 0; i < out->unit_count; i++) {
+        str_list_free(&out->units[i].sources);
+        str_list_free(&out->units[i].includes);
+        str_list_free(&out->units[i].defines);
+        str_list_free(&out->units[i].flags);
+    }
+    free(out->units);
+    out->units = NULL;
+    out->unit_count = 0;
     str_list_free(&out->includes);
     str_list_free(&out->defines);
     str_list_free(&out->flags);
     str_list_free(&out->links);
+}
+
+/* Room for one more dependency, initialised and named. Grown one at a time:
+   a graph is bounded at a few dozen packages, and doubling would be arithmetic
+   in exchange for nothing measurable. */
+static prepared_unit *unit_open(prepared_deps *out, const char *name, char *err, size_t err_size) {
+    prepared_unit *grown = realloc(out->units, (out->unit_count + 1) * sizeof *grown);
+    if(grown == NULL) {
+        (void)set_error(err, err_size, "out of memory collecting dependencies");
+        return NULL;
+    }
+    out->units = grown;
+    prepared_unit *unit = &out->units[out->unit_count++];
+    snprintf(unit->name, sizeof unit->name, "%s", name);
+    str_list_init(&unit->sources);
+    str_list_init(&unit->includes);
+    str_list_init(&unit->defines);
+    str_list_init(&unit->flags);
+    return unit;
 }
 
 /* --- collecting what a dependency contributes --- */
@@ -107,8 +136,58 @@ static bool collect_sources(const recipe_artifacts *artifacts, const char *root,
     return ok;
 }
 
-static bool collect(const recipe_artifacts *artifacts, const char *root, prepared_deps *out,
-                    char *err, size_t err_size) {
+/* One package's options onto three lists: its include directories anchored at
+   its own root — never at the root of whoever is compiling — and its defines
+   and flags as the recipe wrote them. */
+static bool push_options(const project_options *options, const char *root, str_list *includes,
+                         str_list *defines, str_list *flags, char *err, size_t err_size) {
+    for(size_t i = 0; i < options->include_count; i++) {
+        if(!push_rooted(includes, root, options->include[i], err, err_size))
+            return false;
+    }
+    return push_all(defines, options->defines, options->define_count, err, err_size) &&
+           push_all(flags, options->flags, options->flag_count, err, err_size);
+}
+
+/* What one package's own sources are compiled against.
+ *
+ * Nearest last: the interface of everything it reaches, then its own
+ * interface, then its private table. A compiler reading a repeated flag takes
+ * the last one, so the most specific statement about a package has to be the
+ * one it sees last — and the most specific statement about a package is the
+ * one the package itself made.
+ *
+ * A sibling it does not reach contributes nothing. That is the whole point:
+ * two dependencies that know nothing of each other no longer share a
+ * preprocessor. */
+static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_unit *unit,
+                         char *err, size_t err_size) {
+    str_list reached;
+    str_list_init(&reached);
+    if(!dep_graph_closure(graph, node->name, &reached)) {
+        str_list_free(&reached);
+        return set_error(err, err_size, "out of memory collecting dependencies");
+    }
+
+    bool ok = true;
+    for(size_t i = 0; ok && i < str_list_count(&reached); i++) {
+        const dep_node *other = dep_graph_find(graph, str_list_get(&reached, i));
+        if(other != NULL)
+            ok = push_options(&other->artifacts.options, other->root, &unit->includes,
+                              &unit->defines, &unit->flags, err, err_size);
+    }
+    str_list_free(&reached);
+
+    return ok &&
+           push_options(&node->artifacts.options, node->root, &unit->includes, &unit->defines,
+                        &unit->flags, err, err_size) &&
+           push_options(&node->artifacts.private_options, node->root, &unit->includes,
+                        &unit->defines, &unit->flags, err, err_size);
+}
+
+static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps *out, char *err,
+                    size_t err_size) {
+    const recipe_artifacts *artifacts = &node->artifacts;
     /* Only a source drop contributes translation units. A static or shared
        artifact is already built, and molto cannot consume one yet. */
     if(artifacts->type != recipe_artifact_source)
@@ -116,22 +195,19 @@ static bool collect(const recipe_artifacts *artifacts, const char *root, prepare
                          "this dependency is published as a built library, and molto can only "
                          "consume [artifacts] type = \"source\" yet");
 
-    if(!collect_sources(artifacts, root, &out->sources, err, err_size))
+    /* The interface, which the consumer compiles and links against. The
+       private table is deliberately absent: it never leaves the package. */
+    if(!push_options(&artifacts->options, node->root, &out->includes, &out->defines, &out->flags,
+                     err, err_size))
         return false;
-
-    for(size_t i = 0; i < artifacts->options.include_count; i++) {
-        const char *directory = artifacts->options.include[i];
-        if(!push_rooted(&out->includes, root, directory, err, err_size))
-            return false;
-    }
     for(size_t i = 0; i < artifacts->link_count; i++) {
         if(!str_list_push(&out->links, artifacts->link[i]))
             return set_error(err, err_size, "out of memory collecting dependencies");
     }
-    return push_all(&out->defines, artifacts->options.defines, artifacts->options.define_count, err,
-                    err_size) &&
-           push_all(&out->flags, artifacts->options.flags, artifacts->options.flag_count, err,
-                    err_size);
+
+    prepared_unit *unit = unit_open(out, node->name, err, err_size);
+    return unit != NULL && collect_sources(artifacts, node->root, &unit->sources, err, err_size) &&
+           collect_unit(graph, node, unit, err, err_size);
 }
 
 /* --- the whole graph --- */
@@ -147,7 +223,7 @@ static bool collect_scope(const dep_graph *graph, unsigned wanted, unsigned with
         if((node->scope & wanted) == 0 || (node->scope & without) != 0)
             continue;
         char reason[512] = "";
-        if(!collect(&node->artifacts, node->root, out, reason, sizeof reason))
+        if(!collect(graph, node, out, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
     }
     return true;

@@ -647,28 +647,104 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     return true;
 }
 
-/* What a dependency is compiled with: its own defines and flags, and its own
+/* What one dependency is compiled with: its own defines and flags, and its own
    include directories as pre-composed "-I" flags. Deliberately not the
-   project's: see the call site. */
-[[nodiscard]] static bool collect_dep_options(const prepared_deps *deps, project_options *options,
-                                              str_list *include_flags) {
-    for(size_t i = 0; i < str_list_count(&deps->defines); i++) {
+   project's, and no longer every other dependency's either: see the call
+   site. */
+[[nodiscard]] static bool collect_unit_options(const prepared_unit *unit, project_options *options,
+                                               str_list *include_flags) {
+    for(size_t i = 0; i < str_list_count(&unit->defines); i++) {
         if(!append_option(options->defines, &options->define_count, PROJECT_MAX_OPTS,
-                          str_list_get(&deps->defines, i), "a dependency's defines"))
+                          str_list_get(&unit->defines, i), "a dependency's defines"))
             return false;
     }
-    for(size_t i = 0; i < str_list_count(&deps->flags); i++) {
+    for(size_t i = 0; i < str_list_count(&unit->flags); i++) {
         if(!append_option(options->flags, &options->flag_count, PROJECT_MAX_OPTS,
-                          str_list_get(&deps->flags, i), "a dependency's flags"))
+                          str_list_get(&unit->flags, i), "a dependency's flags"))
             return false;
     }
     char flag[PATH_BUFFER_SIZE + 4];
-    for(size_t i = 0; i < str_list_count(&deps->includes); i++) {
-        const char *directory = str_list_get(&deps->includes, i);
+    for(size_t i = 0; i < str_list_count(&unit->includes); i++) {
+        const char *directory = str_list_get(&unit->includes, i);
         if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
             return fs_report_long_path(directory);
         if(!str_list_push(include_flags, flag))
             return false;
+    }
+    return true;
+}
+
+/*
+ * The pass that compiles dependencies: every source of every dependency, each
+ * with the command line its own package asked for.
+ *
+ * It is one pass and not one per package on purpose. A pass is a thread pool
+ * and a barrier at the end of it, so a pass per dependency would compile them
+ * one package at a time — the flags become per unit, the parallelism stays
+ * whole-build.
+ *
+ * Everything here borrows the `prepared_deps` it was built from, which must
+ * outlive it, and nothing borrows the pass's own arrays, which is why growing
+ * them is not allowed once the units point into them.
+ */
+typedef struct {
+    compile_unit *units;
+    size_t count;
+    project_options *options; /* one per dependency */
+    str_list *include_flags;  /* one per dependency */
+    size_t package_count;     /* how many of the two above are initialised */
+    project_target target;    /* the language standard, and nothing else */
+} dep_pass;
+
+static void dep_pass_free(dep_pass *pass) {
+    for(size_t i = 0; i < pass->package_count; i++)
+        str_list_free(&pass->include_flags[i]);
+    free(pass->include_flags);
+    free(pass->options);
+    free(pass->units);
+    memset(pass, 0, sizeof *pass);
+}
+
+[[nodiscard]] static bool dep_pass_build(dep_pass *pass, const prepared_deps *deps,
+                                         const project_target *base) {
+    memset(pass, 0, sizeof *pass);
+    /* A dependency is compiled against the language standard and its own
+       recipe: the consumer's defines would reach code that never asked for
+       them, and the consumer's src/ on the include path is where a
+       dependency's `#include "config.h"` finds the application's. It is also
+       what makes one dependency compile identically in every project, which is
+       what lets one object be shared. */
+    pass->target = *base;
+    memset(&pass->target.options, 0, sizeof pass->target.options);
+    pass->target.link_count = 0;
+
+    size_t total = 0;
+    for(size_t i = 0; i < deps->unit_count; i++)
+        total += str_list_count(&deps->units[i].sources);
+    if(total == 0)
+        return true;
+
+    pass->options = calloc(deps->unit_count, sizeof *pass->options);
+    pass->include_flags = calloc(deps->unit_count, sizeof *pass->include_flags);
+    pass->units = calloc(total, sizeof *pass->units);
+    if(pass->options == NULL || pass->include_flags == NULL || pass->units == NULL)
+        return false;
+    pass->package_count = deps->unit_count;
+
+    for(size_t i = 0; i < deps->unit_count; i++) {
+        const prepared_unit *unit = &deps->units[i];
+        str_list_init(&pass->include_flags[i]);
+        if(!collect_unit_options(unit, &pass->options[i], &pass->include_flags[i]))
+            return false;
+        for(size_t j = 0; j < str_list_count(&unit->sources); j++) {
+            pass->units[pass->count++] = (compile_unit){
+                .source = str_list_get(&unit->sources, j),
+                .target = &pass->target,
+                .profile_opts = NULL,
+                .extra_opts = &pass->options[i],
+                .include_flags = &pass->include_flags[i],
+            };
+        }
     }
     return true;
 }
@@ -874,36 +950,24 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
         return exit_build_failure;
     }
 
-    /* The dependencies' own compile settings, kept apart from the project's.
-       They are what a dependency is compiled with, and merging the two would
-       hand it the consumer's defines and put the consumer's src/ on its
-       include path — where a dependency's `#include "config.h"` would find
-       the application's. It also makes the same dependency compile
-       identically in every project, which is what lets one object be shared. */
-    project_options dep_options;
-    memset(&dep_options, 0, sizeof dep_options);
-    str_list dep_include_flags;
-    str_list_init(&dep_include_flags);
-
-    bool merged = collect_dep_options(&deps, &dep_options, &dep_include_flags) &&
-                  merge_deps(ctx_out, &deps) &&
-                  compose_include_flags(src_dir, &deps.includes, include_flags_out);
-    str_list dep_sources;
-    str_list_init(&dep_sources);
-    for(size_t i = 0; merged && i < str_list_count(&deps.sources); i++)
-        merged = str_list_push(&dep_sources, str_list_get(&deps.sources, i));
-    prepared_deps_free(&deps);
+    /* The interface of the dependencies folds into `[target]`; what each of
+       them compiles itself with becomes a pass of its own units. `deps` has to
+       outlive that pass, because the units point into it. */
+    dep_pass pass = {0};
+    const bool merged = merge_deps(ctx_out, &deps) &&
+                        compose_include_flags(src_dir, &deps.includes, include_flags_out) &&
+                        dep_pass_build(&pass, &deps, &ctx_out->target);
     if(!merged) {
+        dep_pass_free(&pass);
+        prepared_deps_free(&deps);
         str_list_free(&sources);
-        str_list_free(&dep_sources);
-        str_list_free(&dep_include_flags);
         return exit_dependency_failure;
     }
     if(str_list_count(&sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
+        dep_pass_free(&pass);
+        prepared_deps_free(&deps);
         str_list_free(&sources);
-        str_list_free(&dep_sources);
-        str_list_free(&dep_include_flags);
         return exit_build_failure;
     }
 
@@ -913,41 +977,33 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     bool needs_cpp = false;
     for(size_t i = 0; i < str_list_count(&sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&sources, i));
-    for(size_t i = 0; i < str_list_count(&dep_sources); i++)
-        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&dep_sources, i));
+    for(size_t i = 0; i < pass.count; i++)
+        needs_cpp = needs_cpp || source_is_cpp(pass.units[i].source);
     result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
     if(result != exit_ok) {
+        dep_pass_free(&pass);
+        prepared_deps_free(&deps);
         str_list_free(&sources);
-        str_list_free(&dep_sources);
-        str_list_free(&dep_include_flags);
         return result;
     }
 
     *any_cpp_out = false;
     *any_compiled_out = false;
 
-    /* Dependencies first, and in their own pass: the target they are compiled
-       against carries the language standard and nothing of the project's, so
-       what reaches the compiler is the same in every project that depends on
-       them — which is what makes one compiled object worth sharing. */
-    if(str_list_count(&dep_sources) > 0) {
-        project_target dep_target = ctx_out->target;
-        memset(&dep_target.options, 0, sizeof dep_target.options);
-        dep_target.link_count = 0;
+    /* Dependencies first, and in one pass of their own: each is compiled
+       against the language standard and its own recipe, so what reaches the
+       compiler is the same in every project that depends on it — which is what
+       makes one compiled object worth sharing. */
+    if(pass.count > 0) {
         bool dep_cpp = false;
         bool dep_compiled = false;
-        compile_unit *units =
-            units_from(&dep_sources, &dep_target, NULL, &dep_options, &dep_include_flags);
-        result = units == NULL ? exit_build_failure
-                               : compile_units(root, profile, &settings, &ctx_out->env, chain_out,
-                                               db, units, str_list_count(&dep_sources), objects_out,
-                                               &dep_cpp, &dep_compiled);
-        free(units);
+        result = compile_units(root, profile, &settings, &ctx_out->env, chain_out, db, pass.units,
+                               pass.count, objects_out, &dep_cpp, &dep_compiled);
         *any_cpp_out = *any_cpp_out || dep_cpp;
         *any_compiled_out = *any_compiled_out || dep_compiled;
     }
-    str_list_free(&dep_sources);
-    str_list_free(&dep_include_flags);
+    dep_pass_free(&pass);
+    prepared_deps_free(&deps);
 
     if(result == exit_ok) {
         bool project_cpp = false;
@@ -1273,32 +1329,20 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     }
 
     /* A development dependency's own sources are compiled in their own pass,
-       against their own options, exactly as a runtime one's are — and their
+       each against its own options, exactly as a runtime one's are — and their
        objects join the test link rather than the project's. */
-    if(result == exit_ok && str_list_count(&dev.sources) > 0) {
-        project_options dev_options;
-        memset(&dev_options, 0, sizeof dev_options);
-        str_list dev_include_flags;
-        str_list_init(&dev_include_flags);
-        project_target dev_target = ctx.target;
-        memset(&dev_target.options, 0, sizeof dev_target.options);
-        dev_target.link_count = 0;
-
+    if(result == exit_ok && dev.unit_count > 0) {
+        dep_pass pass = {0};
         bool dev_cpp = false;
         bool dev_compiled = false;
-        compile_unit *units = NULL;
-        if(!collect_dep_options(&dev, &dev_options, &dev_include_flags) ||
-           (units = units_from(&dev.sources, &dev_target, NULL, &dev_options,
-                               &dev_include_flags)) == NULL)
+        if(!dep_pass_build(&pass, &dev, &ctx.target))
             result = exit_build_failure;
-        else
-            result =
-                compile_units(root, profile, &settings, &ctx.env, &chain, db, units,
-                              str_list_count(&dev.sources), &lib_objects, &dev_cpp, &dev_compiled);
-        free(units);
+        else if(pass.count > 0)
+            result = compile_units(root, profile, &settings, &ctx.env, &chain, db, pass.units,
+                                   pass.count, &lib_objects, &dev_cpp, &dev_compiled);
+        dep_pass_free(&pass);
         any_cpp = any_cpp || dev_cpp;
         any_compiled = any_compiled || dev_compiled;
-        str_list_free(&dev_include_flags);
     }
 
     str_list test_sources;

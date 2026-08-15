@@ -86,10 +86,14 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     prepared_deps_init(&deps);
     ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
 
+    /* One unit, because one package ships sources. */
+    ASSERT_EQ(1u, deps.unit_count);
+    EXPECT_STREQ("yyjson", deps.units[0].name);
+
     /* Only what the recipe named: tool.c brings its own main() and would fail
        the link. */
-    ASSERT_EQ(1u, deps.sources.count);
-    EXPECT_NOT_NULL(strstr(deps.sources.items[0], "yyjson.c"));
+    ASSERT_EQ(1u, deps.units[0].sources.count);
+    EXPECT_NOT_NULL(strstr(deps.units[0].sources.items[0], "yyjson.c"));
 
     /* Absolute, because the source is not under the project root. */
     ASSERT_EQ(1u, deps.includes.count);
@@ -123,8 +127,9 @@ MOLTEST(deps_prepare_takes_every_source_when_the_recipe_names_none) {
     ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
 
     /* Discovered, then filtered: exclude is what keeps the second main() out. */
-    ASSERT_EQ(1u, deps.sources.count);
-    EXPECT_NOT_NULL(strstr(deps.sources.items[0], "yyjson.c"));
+    ASSERT_EQ(1u, deps.unit_count);
+    ASSERT_EQ(1u, deps.units[0].sources.count);
+    EXPECT_NOT_NULL(strstr(deps.units[0].sources.items[0], "yyjson.c"));
 
     prepared_deps_free(&deps);
     sandbox_close(&at);
@@ -207,7 +212,7 @@ MOLTEST(deps_prepare_does_nothing_and_touches_nothing_without_deps) {
     prepared_deps deps;
     prepared_deps_init(&deps);
     ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
-    EXPECT_EQ(0u, deps.sources.count);
+    EXPECT_EQ(0u, deps.unit_count);
     EXPECT_EQ(0u, deps.includes.count);
     prepared_deps_free(&deps);
 }
@@ -224,6 +229,165 @@ MOLTEST(deps_prepare_names_the_dependency_that_failed) {
     prepared_deps_init(&deps);
     EXPECT_FALSE(deps_prepare(&ctx, &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "yyjson"));
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
+/* --- what each dependency compiles against --- */
+
+/* A package on disk under its own name: a recipe, and one source for it to
+   name. Sibling directories in one sandbox are how a graph is built here. */
+static bool make_named_package(const sandbox *at, const char *name, const char *recipe) {
+    char dir[PATH_MAX_LEN];
+    char file[PATH_MAX_LEN];
+    if (!fs_format_path(dir, sizeof dir, "%s/%s", at->root, name) || !fs_make_dirs(dir))
+        return false;
+    if (!fs_format_path(file, sizeof file, "%s/recipe.toml", dir) || !fs_write_file(file, recipe))
+        return false;
+    if (!fs_format_path(file, sizeof file, "%s/%s.c", dir, name))
+        return false;
+    return fs_write_file(file, "int answer(void) { return 1; }\n");
+}
+
+/* A manifest depending on the named sibling packages by path. */
+static bool parse_with_deps(const sandbox *at, const char *const *names, size_t count,
+                            project_ctx *out, char *err, size_t err_size) {
+    char manifest[PATH_MAX_LEN * 4];
+    int used = snprintf(manifest, sizeof manifest,
+                        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n[deps]\n");
+    for (size_t i = 0; i < count; i++) {
+        used += snprintf(manifest + used, sizeof manifest - (size_t)used,
+                         "%s = { path = \"%s/%s\" }\n", names[i], at->root, names[i]);
+    }
+    return project_parse(manifest, out, err, err_size);
+}
+
+static const prepared_unit *unit_named(const prepared_deps *deps, const char *name) {
+    for (size_t i = 0; i < deps->unit_count; i++) {
+        if (strcmp(deps->units[i].name, name) == 0)
+            return &deps->units[i];
+    }
+    return NULL;
+}
+
+/* True when any entry of `list` contains `text`. Substring rather than equality
+   because an include directory comes out absolute, rooted in the sandbox. */
+static bool mentions(const str_list *list, const char *text) {
+    for (size_t i = 0; i < str_list_count(list); i++) {
+        if (strstr(str_list_get(list, i), text) != NULL)
+            return true;
+    }
+    return false;
+}
+
+/* The defect this whole thing exists to fix. Two dependencies that know nothing
+   of each other used to share one set of flags, so a define one of them needed
+   internally reached the other's preprocessor — and a warning one of them chose
+   to silence was silenced for everybody. */
+MOLTEST(one_dependency_does_not_compile_with_another_s_flags) {
+    static const char *const alpha = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                     "name = \"alpha\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                     "[artifacts]\ntype = \"source\"\n"
+                                     "include = [\".\"]\ndefines = [\"ALPHA_API=1\"]\n"
+                                     "[artifacts.private]\nflags = [\"-Wno-alpha\"]\n"
+                                     "defines = [\"ALPHA_INTERNAL\"]\n";
+    static const char *const beta = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"beta\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\n"
+                                    "include = [\".\"]\ndefines = [\"BETA_API=1\"]\n"
+                                    "[artifacts.private]\nflags = [\"-Wno-beta\"]\n";
+
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_named_package(&at, "alpha", alpha));
+    ASSERT_TRUE(make_named_package(&at, "beta", beta));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"alpha", "beta"};
+    ASSERT_TRUE(parse_with_deps(&at, names, 2, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+    ASSERT_EQ(2u, deps.unit_count);
+
+    const prepared_unit *a = unit_named(&deps, "alpha");
+    const prepared_unit *b = unit_named(&deps, "beta");
+    ASSERT_NOT_NULL(a);
+    ASSERT_NOT_NULL(b);
+
+    /* Each compiles with its own private flag and not with its sibling's. */
+    EXPECT_TRUE(mentions(&a->flags, "-Wno-alpha"));
+    EXPECT_FALSE(mentions(&a->flags, "-Wno-beta"));
+    EXPECT_TRUE(mentions(&b->flags, "-Wno-beta"));
+    EXPECT_FALSE(mentions(&b->flags, "-Wno-alpha"));
+
+    /* And with its own defines, interface and private alike — but not with the
+       interface of a package it never named. */
+    EXPECT_TRUE(mentions(&a->defines, "ALPHA_API=1"));
+    EXPECT_TRUE(mentions(&a->defines, "ALPHA_INTERNAL"));
+    EXPECT_FALSE(mentions(&a->defines, "BETA_API=1"));
+    EXPECT_FALSE(mentions(&b->defines, "ALPHA_API=1"));
+    EXPECT_FALSE(mentions(&b->defines, "ALPHA_INTERNAL"));
+
+    /* The consumer sees both interfaces and neither private table. */
+    EXPECT_TRUE(mentions(&deps.defines, "ALPHA_API=1"));
+    EXPECT_TRUE(mentions(&deps.defines, "BETA_API=1"));
+    EXPECT_FALSE(mentions(&deps.defines, "ALPHA_INTERNAL"));
+    EXPECT_FALSE(mentions(&deps.flags, "-Wno-alpha"));
+    EXPECT_FALSE(mentions(&deps.flags, "-Wno-beta"));
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
+/* Isolation cannot mean isolation from what a package actually depends on: its
+   sources include its dependency's headers, so that dependency's interface has
+   to be on its command line. */
+MOLTEST(a_dependency_compiles_against_what_it_reaches) {
+    static const char *const inner = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                     "name = \"inner\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                     "[artifacts]\ntype = \"source\"\n"
+                                     "include = [\".\"]\ndefines = [\"INNER_API=1\"]\n"
+                                     "[artifacts.private]\ndefines = [\"INNER_INTERNAL\"]\n";
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_named_package(&at, "inner", inner));
+
+    char outer[PATH_MAX_LEN * 2];
+    snprintf(outer, sizeof outer,
+             "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+             "name = \"outer\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+             "[artifacts]\ntype = \"source\"\ninclude = [\".\"]\n"
+             "[deps]\ninner = { path = \"%s/inner\" }\n",
+             at.root);
+    ASSERT_TRUE(make_named_package(&at, "outer", outer));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"outer"};
+    ASSERT_TRUE(parse_with_deps(&at, names, 1, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+
+    const prepared_unit *out = unit_named(&deps, "outer");
+    const prepared_unit *in = unit_named(&deps, "inner");
+    ASSERT_NOT_NULL(out);
+    ASSERT_NOT_NULL(in);
+
+    /* Down the edge: outer compiles against inner's interface. */
+    EXPECT_TRUE(mentions(&out->defines, "INNER_API=1"));
+    EXPECT_TRUE(mentions(&out->includes, "/inner"));
+    /* And not against what inner kept to itself. */
+    EXPECT_FALSE(mentions(&out->defines, "INNER_INTERNAL"));
+
+    /* Never up it: inner was resolved before outer existed as far as its own
+       sources are concerned. */
+    EXPECT_FALSE(mentions(&in->includes, "/outer"));
 
     prepared_deps_free(&deps);
     sandbox_close(&at);
