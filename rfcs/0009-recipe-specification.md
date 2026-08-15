@@ -165,6 +165,8 @@ ends up on a compile or link line of the project that depends on it.
 | Key | Type | Description |
 |---|---|---|
 | `type` | string | `source`, `static` or `shared` (default `static`) |
+| `std` | string | The C standard its own sources compile with; absent means the consumer's |
+| `cpp_std` | string | The same for C++, decided independently of `std` |
 | `sources` | array[string] | The sources a consumer compiles; absent means all of them |
 | `exclude` | array[string] | Sources to drop, applied after `sources` |
 | `include` | array[string] | Directories added as `-I`, relative to the artifact root |
@@ -192,8 +194,35 @@ caller that inherits them has inherited a mistake. Without somewhere to put the
 second kind, every one of them is everybody's — including the sources of
 unrelated dependencies that were never told about this package at all.
 
+`std` and `cpp_std` are what a package says about the language it was written
+in. Without them a library written against C99 is compiled as C23 by whoever
+asked for C23, and its author has no way to say otherwise — the one thing a
+package could not decide about itself once flags were scoped. They are declared
+per language and inherited per language: a C library with a single C++ shim
+names `std` and lets `cpp_std` be the consumer's.
+
+Unlike a define, a standard does **not** travel to whoever depends on the
+package. A define can change what a header declares, so a caller that does not
+share it is compiling against a different type; a standard is about how a
+source is parsed, and every translation unit is parsed on its own.
+
+Both values are **checked against the standards Molto knows**, which
+`[target].std` in a manifest is not, and the asymmetry is the point: a
+misspelled standard in a manifest fails in the build of the person who typed
+it, while a misspelled one in a published recipe fails in the build of everyone
+who depends on them, under a compiler option none of them wrote. Each key is
+checked against its own language, so a `c++20` written under `std` is caught
+too — a real standard, and still the wrong answer to that key.
+
+One known limit: the standard a recipe names does not take part in resolving
+the toolchain. A recipe asking for a standard the resolved compiler does not
+implement fails when its sources are compiled, not when the compiler is chosen.
+
 There is no private `link`, because a `-l` names a library the final binary is
 linked against and there is no line it could be private to. There is no private
+`std` either, for the opposite reason: a standard never leaves the sources it
+applies to, so there would be nothing for a private one to distinguish itself
+from. There is no private
 `sources` or `exclude` either: a package has one set of sources, and `sources`
 and `exclude` already cut it from both directions (`sources` fails closed,
 `exclude` fails open, and `exclude` is applied second so a list can be narrowed
@@ -575,12 +604,6 @@ package should be one, and should publish as `kind = "package"` with a real
 - **Per-target overrides**, so one recipe can describe a build that differs on
   Windows without becoming three recipes.
 - **Feature selection**, once RFC-0003's `[features]` is un-reserved.
-- **`[artifacts].std` and `.cpp_std`** — the language standard a package's own
-  sources are compiled with. Today they inherit the consumer's, so a library
-  written against C99 is compiled as C23 by a project that asked for C23, and a
-  recipe has no way to say otherwise. The key is reserved here rather than left
-  open because it belongs beside the flags that are already scoped, and because
-  a package that needs it will need it retroactively.
 - **Signing.** A recipe's integrity currently rests on the registry's checksum;
   a signature would let it rest on the publisher instead.
 

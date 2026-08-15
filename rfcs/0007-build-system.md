@@ -255,7 +255,8 @@ line:
 
 | | the project's sources | a dependency's sources |
 |---|---|---|
-| `-std`, `-O`, `-g` | from the manifest and the profile | the same |
+| `-O`, `-g` | from the manifest and the profile | the same |
+| `-std` | `[target].std` / `.cpp_std` | its recipe's, or the consumer's when it names none |
 | target scope | `[target]` and every dependency's interface | empty |
 | profile scope | the selected profile | empty |
 | unit scope | `[test].options`, for a test | that package's own options |
@@ -270,9 +271,12 @@ compiled object worth putting in a shared cache at all.
 
 What "that package's own options" contains is specified by RFC-0008: its private
 table, its own interface, and the interface of every package it reaches — never
-a sibling's. All of them are in one pass regardless, because a pass is a thread
-pool and a barrier, and there is no reason for two dependencies to wait on each
-other.
+a sibling's. The standard is the one setting a dependency can take from the
+consumer and override, per language, by naming its own (RFC-0009); everything
+else is either the consumer's or the package's, with nothing to arbitrate.
+
+All of them are in one pass regardless, because a pass is a thread pool and a
+barrier, and there is no reason for two dependencies to wait on each other.
 
 ## Linking
 
