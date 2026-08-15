@@ -291,11 +291,17 @@ included**: a recipe may not name a range any more than a manifest may
 
 ### `[about]`
 
-Optional for every kind. `description`, `license`, `homepage`, `repository`.
-Purely informational, served in the catalogue so a search result can say what
-something is. RFC-0003 reserves the equivalent keys for `[package]` in a
-manifest; when it un-reserves them, the two **MUST** agree, since publishing a
-Molto package derives one from the other.
+Optional for every kind. `description`, `license`, `homepage`, `repository`,
+`authors`. Purely informational, served in the catalogue so a search result can
+say what something is — and read by whatever has to name the licence of every
+package in a build.
+
+RFC-0003 specifies the same five keys under `[package]` in a manifest, and the
+two **MUST** agree, since publishing a Molto package derives one from the other.
+One reader answers for both tables, parameterised by the table's name, so the
+two cannot come to disagree about what a key means. `license` is checked for
+shape as an SPDX expression and not against the identifier list; RFC-0003 gives
+the reason.
 
 ## Canonical recipes
 

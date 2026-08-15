@@ -41,6 +41,11 @@ contract.
 [package]
 name = "my_app"
 version = "0.1.0"
+# description = ""      # one line, for a catalogue
+# license = "MIT"       # an SPDX expression: MIT OR Apache-2.0
+# homepage = ""
+# repository = ""
+# authors = []
 
 [target]
 std = "c17"            # C standard passed as -std=
@@ -227,6 +232,26 @@ Status is what the current binary does, not what RFC-0003 specifies.
 | `name` | string | implemented | Required, `snake_case`, must start with a lowercase letter |
 | `version` | string | implemented | Free-form string; defaults to `0.0.0` |
 | `artifact` | string | **rejected** | Declaring it is a hard error — see below |
+| `description` | string | implemented | One line saying what the package is |
+| `license` | string | implemented | An SPDX expression: `MIT`, `MIT OR Apache-2.0`, `Apache-2.0 WITH LLVM-exception` |
+| `homepage` | string | implemented | URL |
+| `repository` | string | implemented | URL |
+| `authors` | array | implemented | At most 8 entries |
+
+The last five are optional, and none of them reaches a compile line. They are
+what a catalogue search shows, and what a report has to read to name the licence
+of everything a build links.
+
+**`[package]` is the one table in this manifest that fails closed**: an unknown
+key in it is an error naming the key, where `[target]` and `[profile.*]` would
+drop it in silence. The reason is who reads these keys. A misspelling in
+`[target]` costs a setting on your own machine and the build is there to notice;
+a `licence` dropped in silence publishes a package that claims no licence at
+all, to everyone who resolves it, and nothing about the build looks wrong.
+
+`license` is checked for shape, not against the SPDX identifier list — a list
+embedded in the binary is a list that expires. `MIT OR`, `(MIT` and
+`MIT Apache-2.0` are refused; a misspelled but well-formed identifier is not.
 
 ### `[target]`
 
@@ -276,6 +301,9 @@ would produce a green build that used different options than you asked for.
 | entries in `link` / length of one | 32 / 63 characters |
 | entries in `[env]` | 32 |
 | `[env]` name / value length | 63 / 255 characters |
+| `description` / `homepage` / `repository` length | 255 characters |
+| `license` length | 63 characters |
+| entries in `authors` / length of one | 8 / 127 characters |
 
 ## Dependencies
 

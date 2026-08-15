@@ -80,19 +80,56 @@ debug_info = true
 
 ## `[package]`
 
-| Key        | Type   | Required | Description                                                                 |
-|------------|--------|----------|-----------------------------------------------------------------------------|
-| `name`     | string | yes      | Package identifier, `snake_case`                                            |
-| `version`  | string | yes      | Semantic version                                                            |
-| `artifact` | string | no       | `source`, `static`, or `shared` (default `static`, see `spec.md` section 9) |
-
-Publishing metadata (`description`, `license`, `authors`, `repository`, …) is
-**reserved** for a future revision (see Reserved Sections).
+| Key          | Type          | Required | Description                                                                 |
+|--------------|---------------|----------|-----------------------------------------------------------------------------|
+| `name`       | string        | yes      | Package identifier, `snake_case`                                            |
+| `version`    | string        | yes      | Semantic version                                                            |
+| `artifact`   | string        | no       | `source`, `static`, or `shared` (default `static`, see `spec.md` section 9) |
+| `description`| string        | no       | One line saying what the package is                                         |
+| `license`    | string        | no       | An SPDX licence expression, e.g. `MIT OR Apache-2.0`                        |
+| `homepage`   | string        | no       | URL of the project's page                                                   |
+| `repository` | string        | no       | URL of the source repository                                                |
+| `authors`    | array[string] | no       | At most 8 entries                                                           |
 
 **Current state:** `artifact` is **rejected** when declared. No kind changes
 what gets built yet — every project links an executable, and `static`/`shared`
 would require `ar`, `-shared` and `-fPIC` — so accepting the key and ignoring
 it would misreport what Molto did. It is refused until it means something.
+
+### The publishing metadata
+
+The last five keys were reserved by earlier revisions of this RFC and are
+specified here. None of them is required, none reaches a compile line, and each
+is empty when it is not stated. They exist because a resolved dependency graph
+that cannot name the licence of what it links is not a bill of materials.
+
+`license` is checked for **shape** — identifiers joined by `AND`, `OR` and
+`WITH`, parentheses balanced, `+` allowed as a suffix — and not against the SPDX
+identifier list. Embedding that list would mean shipping a list that expires,
+and refusing a licence published after the binary was built is worse than
+accepting one that is misspelled. What the check does catch is what a typo looks
+like: a dangling operator, an unclosed paren, two identifiers with nothing
+joining them.
+
+RFC-0009 specifies the same five keys for a recipe, under `[about]`, and
+requires the two to agree. They are read by one reader — `manifest_read_about`,
+parameterised by the name of the table — because two readers of one format
+drift, and the copy that only ever sees registry answers has no local file
+anyone can diff against.
+
+**`[package]` fails closed.** An unknown key in it is an error naming the key,
+which is how `[deps]`, `[dev-deps]`, `format.json` and `linter.json` behave and
+*not* how the rest of this manifest behaves. The asymmetry is deliberate, and the
+reason is who reads these keys: everywhere else, a misspelling costs a setting
+that did not take effect on the machine that typed it, and the build is there to
+notice. A `licence` dropped in silence publishes a package that claims no licence
+at all, to everyone who ever resolves it, and nothing about the build looks
+wrong.
+
+**Not yet:** `molto publish` does not check that a manifest's `[package]` and its
+recipe's `[about]` agree, although this RFC and RFC-0009 both require it. The
+publish path reads a recipe alone today and can run without a project around it,
+so the check needs its own design.
 
 ## `[target]`
 
@@ -293,7 +330,6 @@ yet, so the format can grow without breaking:
   it. `[dev-deps]`, once reserved here alongside it, is specified in RFC-0008:
   same syntax as `[deps]`, resolved only for the root package, and never linked
   into the package's own binary.
-- `[package]` publishing metadata (`description`, `license`, `authors`, …).
 - `[workspace]` — multi-package workspaces (`members`).
 - A manifest schema/version key for forward compatibility.
 
@@ -303,5 +339,5 @@ yet, so the format can grow without breaking:
 - [RFC-0002: CLI Specification](0002-cli-specification.md)
 - [RFC-0007: Build System](0007-build-system.md) — what `[target]`, `[test]` and `[profile.*]` produce on a command line
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the algorithm behind `[deps]` and `[registries]`
-- [RFC-0009: Recipe Specification](0009-recipe-specification.md) — reuses the `[deps]` syntax, and mirrors the reserved publishing metadata
+- [RFC-0009: Recipe Specification](0009-recipe-specification.md) — reuses the `[deps]` syntax, and spells the publishing metadata `[about]`
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — how a named registry is reached
