@@ -32,12 +32,12 @@ static const char *const SQLITE_JSON =
     "\"link\":[\"m\",\"dl\",\"pthread\"],"
     "\"defines\":[\"SQLITE_THREADSAFE=1\",\"SQLITE_ENABLE_FTS5\",\"SQLITE_ENABLE_RTREE\"]}}";
 
-/* Runs `check` against the same recipe read from TOML and from JSON. */
-static void for_both_encodings(void (*check)(doc_view)) {
+/* Runs `check` against one recipe written in both encodings. */
+static void for_both(const char *toml_text, const char *json_text, void (*check)(doc_view)) {
     char err[256] = "";
-    toml_document *as_toml = toml_parse(SQLITE_TOML, err, sizeof err);
+    toml_document *as_toml = toml_parse(toml_text, err, sizeof err);
     ASSERT_NOT_NULL(as_toml);
-    json_document *as_json = json_parse(SQLITE_JSON);
+    json_document *as_json = json_parse(json_text);
     ASSERT_NOT_NULL(as_json);
 
     check(doc_from_toml(as_toml));
@@ -45,6 +45,11 @@ static void for_both_encodings(void (*check)(doc_view)) {
 
     toml_free(as_toml);
     json_free(as_json);
+}
+
+/* Runs `check` against the same recipe read from TOML and from JSON. */
+static void for_both_encodings(void (*check)(doc_view)) {
+    for_both(SQLITE_TOML, SQLITE_JSON, check);
 }
 
 static void check_coordinate(doc_view doc) {
@@ -239,4 +244,88 @@ MOLTEST(recipe_applies_exclude_after_sources) {
                                   &artifacts, err, sizeof err));
     EXPECT_TRUE(recipe_artifacts_wants(&artifacts, "a.c"));
     EXPECT_FALSE(recipe_artifacts_wants(&artifacts, "b.c"));
+}
+
+/* --- what a package keeps to itself --- */
+
+/* A library needs flags to build that its callers must not inherit: an
+   internal include directory, a define naming its own config header, a warning
+   it has decided to live with. The two tables are what tells them apart. */
+static const char *const SCOPED_TOML = "schema = 1\n"
+                                       "form = \"source\"\n"
+                                       "kind = \"package\"\n"
+                                       "name = \"zlib\"\n"
+                                       "version = \"1.3.1\"\n"
+                                       "target = \"any\"\n"
+                                       "\n"
+                                       "[artifacts]\n"
+                                       "type = \"source\"\n"
+                                       "include = [\".\"]\n"
+                                       "defines = [\"ZLIB_CONST=1\"]\n"
+                                       "\n"
+                                       "[artifacts.private]\n"
+                                       "include = [\"internal\"]\n"
+                                       "defines = [\"HAVE_UNISTD_H\"]\n"
+                                       "flags = [\"-fno-strict-aliasing\", \"-Wno-implicit-fallthrough\"]\n";
+
+static const char *const SCOPED_JSON =
+    "{\"schema\":1,\"form\":\"source\",\"kind\":\"package\",\"name\":\"zlib\","
+    "\"version\":\"1.3.1\",\"target\":\"any\","
+    "\"artifacts\":{\"type\":\"source\",\"include\":[\".\"],\"defines\":[\"ZLIB_CONST=1\"],"
+    "\"private\":{\"include\":[\"internal\"],\"defines\":[\"HAVE_UNISTD_H\"],"
+    "\"flags\":[\"-fno-strict-aliasing\",\"-Wno-implicit-fallthrough\"]}}}";
+
+static void check_scoped(doc_view doc) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(recipe_read_artifacts(doc, &artifacts, err, sizeof err));
+
+    /* The interface: what every consumer compiles with. */
+    ASSERT_EQ(1u, artifacts.options.include_count);
+    EXPECT_STREQ(".", artifacts.options.include[0]);
+    ASSERT_EQ(1u, artifacts.options.define_count);
+    EXPECT_STREQ("ZLIB_CONST=1", artifacts.options.defines[0]);
+    EXPECT_EQ(0u, artifacts.options.flag_count);
+
+    /* And what stays behind. The two never mix: a caller reading `options`
+       cannot pick up a flag the package meant for itself. */
+    ASSERT_EQ(1u, artifacts.private_options.include_count);
+    EXPECT_STREQ("internal", artifacts.private_options.include[0]);
+    ASSERT_EQ(1u, artifacts.private_options.define_count);
+    EXPECT_STREQ("HAVE_UNISTD_H", artifacts.private_options.defines[0]);
+    ASSERT_EQ(2u, artifacts.private_options.flag_count);
+    EXPECT_STREQ("-fno-strict-aliasing", artifacts.private_options.flags[0]);
+}
+
+MOLTEST(a_recipe_keeps_its_private_options_out_of_its_interface) {
+    for_both(SCOPED_TOML, SCOPED_JSON, check_scoped);
+}
+
+/* A recipe that only ever needed to silence one warning declares nothing
+   directly under `[artifacts]`. Asking whether that table exists would skip the
+   whole read and lose the one thing the recipe was written to say. */
+MOLTEST(a_recipe_whose_only_statement_is_private_is_still_read) {
+    static const char *const private_only = "schema = 1\nform = \"source\"\n" MINIMUM
+                                            "[artifacts.private]\nflags = [\"-Wno-unused\"]\n";
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(read_artifacts_of(private_only, &artifacts, err, sizeof err));
+
+    ASSERT_EQ(1u, artifacts.private_options.flag_count);
+    EXPECT_STREQ("-Wno-unused", artifacts.private_options.flags[0]);
+    /* And the absent table still means what it always meant. */
+    EXPECT_EQ(recipe_artifact_static, artifacts.type);
+}
+
+/* Nothing private is the ordinary case, and it has to read as empty rather
+   than as whatever the interface said. */
+MOLTEST(a_recipe_without_the_private_table_keeps_nothing_back) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(read_artifacts_of(SQLITE_TOML, &artifacts, err, sizeof err));
+
+    EXPECT_EQ(3u, artifacts.options.define_count);
+    EXPECT_EQ(0u, artifacts.private_options.define_count);
+    EXPECT_EQ(0u, artifacts.private_options.include_count);
+    EXPECT_EQ(0u, artifacts.private_options.flag_count);
 }

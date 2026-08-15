@@ -6,6 +6,11 @@
 
 #define ARTIFACTS_SECTION "artifacts"
 
+/* What a package compiles itself with and nobody else sees. A dotted path in
+   both encodings: a TOML `[artifacts.private]` header and a JSON object nested
+   inside `artifacts` read back the same way. */
+#define ARTIFACTS_PRIVATE_SECTION "artifacts.private"
+
 /* The document's own top level, where a recipe's coordinate lives. */
 #define ROOT_SECTION ""
 
@@ -109,12 +114,28 @@ static bool read_type(doc_view doc, recipe_artifact_type *out, char *err, size_t
     return set_error(err, err_size, "[artifacts].type '%s' is not source, static or shared", name);
 }
 
+/* The three option lists a table carries. `[artifacts]` and
+   `[artifacts.private]` hold the same ones: what separates them is who they
+   reach, not what they can say. */
+static bool read_options(doc_view doc, const char *table, project_options *out, char *err,
+                         size_t err_size) {
+    return doc_read_strings(doc, table, "defines", out->defines[0], PROJECT_MAX_OPTS,
+                            PROJECT_OPT_LEN, &out->define_count, err, err_size) &&
+           doc_read_strings(doc, table, "include", out->include[0], PROJECT_MAX_OPTS,
+                            PROJECT_OPT_LEN, &out->include_count, err, err_size) &&
+           doc_read_strings(doc, table, "flags", out->flags[0], PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
+                            &out->flag_count, err, err_size);
+}
+
 bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_t err_size) {
     memset(out, 0, sizeof *out);
     /* RFC-0009's default, seeded before reading so an absent key keeps it. */
     out->type = recipe_artifact_static;
 
-    if(!doc_has_table(doc, ARTIFACTS_SECTION))
+    /* Either table on its own is enough. A recipe whose only statement is a
+       private flag declares nothing directly under `[artifacts]`, and asking
+       about that table alone would skip the whole read in silence. */
+    if(!doc_has_table(doc, ARTIFACTS_SECTION) && !doc_has_table(doc, ARTIFACTS_PRIVATE_SECTION))
         return true;
 
     return read_type(doc, &out->type, err, err_size) &&
@@ -124,15 +145,8 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
                             RECIPE_SOURCE_MAX, &out->exclude_count, err, err_size) &&
            doc_read_strings(doc, ARTIFACTS_SECTION, "link", out->link[0], PROJECT_MAX_LINK,
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
-           doc_read_strings(doc, ARTIFACTS_SECTION, "defines", out->options.defines[0],
-                            PROJECT_MAX_OPTS, PROJECT_OPT_LEN, &out->options.define_count, err,
-                            err_size) &&
-           doc_read_strings(doc, ARTIFACTS_SECTION, "include", out->options.include[0],
-                            PROJECT_MAX_OPTS, PROJECT_OPT_LEN, &out->options.include_count, err,
-                            err_size) &&
-           doc_read_strings(doc, ARTIFACTS_SECTION, "flags", out->options.flags[0],
-                            PROJECT_MAX_OPTS, PROJECT_OPT_LEN, &out->options.flag_count, err,
-                            err_size);
+           read_options(doc, ARTIFACTS_SECTION, &out->options, err, err_size) &&
+           read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size);
 }
 
 static bool listed_in(const char list[][RECIPE_SOURCE_MAX], size_t count, const char *name) {

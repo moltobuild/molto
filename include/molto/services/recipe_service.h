@@ -48,12 +48,27 @@ typedef enum {
 } recipe_artifact_type;
 
 /*
- * What the consumer gets: the join with RFC-0007.
+ * What the consumer gets and what the package keeps: the join with RFC-0007.
  *
- * `options` is the manifest's own option type rather than one of this file's,
- * so compile_flags_push_options puts a recipe's defines, includes and flags on
- * a compile line with the code that already exists — and a recipe and a
- * manifest cannot come to disagree about what `-I` means.
+ * `options` is the interface. Its defines are ABI, its include directories are
+ * where the headers are, and both reach the command line of everything that
+ * depends on this package — because a define that changes a struct inside a
+ * header is not a preference, and a consumer compiled without it is compiled
+ * against a different type.
+ *
+ * `private_options` is the same three lists applied only while this package's
+ * own sources compile. It is where `-fno-strict-aliasing`, a `-Wno-…` and an
+ * internal `-I` belong: what a library needs in order to build, and what no
+ * caller should have to adopt to use it. Without the split, every one of those
+ * is everybody's.
+ *
+ * `link` has no private counterpart. A `-l` is a library the final binary is
+ * linked against, and there is no line it could be private to.
+ *
+ * Both are the manifest's own option type rather than one of this file's, so
+ * compile_flags_push_options puts either on a compile line with the code that
+ * already exists — and a recipe and a manifest cannot come to disagree about
+ * what `-I` means.
  *
  * `sources` and `exclude` are both here because a source drop is not a library:
  * an upstream archive holds what upstream ships, which is usually more than the
@@ -72,7 +87,8 @@ typedef struct {
     size_t exclude_count;
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
     size_t link_count;
-    project_options options; /* defines -> -D, include -> -I, flags verbatim */
+    project_options options;         /* defines -> -D, include -> -I, flags verbatim */
+    project_options private_options; /* the same three, and only for its own sources */
 } recipe_artifacts;
 
 /* Read the top-level coordinate. Refuses a schema newer than this reader
@@ -82,9 +98,10 @@ typedef struct {
 [[nodiscard]] bool recipe_read_coordinate(doc_view doc, recipe_coordinate *out, char *err,
                                           size_t err_size);
 
-/* Read `[artifacts]`. An absent table is not an error — a binary recipe
-   describes itself with `[package]` instead — and yields the defaults. Every
-   list overflows into an error rather than a truncation: a file dropped from
+/* Read `[artifacts]` and `[artifacts.private]`. An absent table is not an error
+   — a binary recipe describes itself with `[package]` instead — and yields the
+   defaults; declaring only the private one is enough to be read. Every list
+   overflows into an error rather than a truncation: a file dropped from
    `sources` is a link that fails much later and for no visible reason. */
 [[nodiscard]] bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err,
                                          size_t err_size);
