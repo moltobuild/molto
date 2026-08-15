@@ -161,6 +161,24 @@ typedef struct {
 [[nodiscard]] const dep_node *dep_graph_at(const dep_graph *graph, size_t index);
 [[nodiscard]] const dep_node *dep_graph_find(const dep_graph *graph, const char *name);
 
+/* The packages `name` reaches through its dependencies, itself excluded,
+   appended to `out` (caller-initialised).
+ *
+ * Breadth-first, once each, and stable: every node's `dependencies` list is
+ * sorted, so one graph answers in one order on every machine. That matters
+ * because this order reaches a compile line, and a line that differs between
+ * machines invalidates an object for no reason (RFC-0007, Reproducibility).
+ *
+ * Cycles terminate here rather than being assumed away. Resolution closes them
+ * by visiting a name once, but that is a property of how the graph was built,
+ * and a walk over a graph already in hand should not have to trust it.
+ *
+ * Names already in `out` count as seen, so several closures can be accumulated
+ * into one list without repeating anything. A name the graph does not carry
+ * reaches nothing, which is an empty answer and not an error; false means an
+ * allocation failed. */
+[[nodiscard]] bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out);
+
 void dep_graph_free(dep_graph *graph);
 
 #endif /* MOLTO_DEP_GRAPH_H */

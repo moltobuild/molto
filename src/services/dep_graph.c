@@ -112,6 +112,48 @@ const dep_node *dep_graph_find(const dep_graph *graph, const char *name) {
     return str_map_get(graph->index, name);
 }
 
+static bool listed(const str_list *list, const char *value) {
+    for(size_t i = 0; i < str_list_count(list); i++) {
+        if(strcmp(str_list_get(list, i), value) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Append what `node` depends on and `out` has not seen, never `root` itself:
+   a cycle back to the package being asked about is not part of its closure. */
+static bool push_unseen(const dep_node *node, const char *root, str_list *out) {
+    for(size_t i = 0; i < str_list_count(&node->dependencies); i++) {
+        const char *name = str_list_get(&node->dependencies, i);
+        if(strcmp(name, root) == 0 || listed(out, name))
+            continue;
+        if(!str_list_push(out, name))
+            return false;
+    }
+    return true;
+}
+
+bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out) {
+    const dep_node *root = dep_graph_find(graph, name);
+    if(root == NULL)
+        return true;
+
+    /* `out` is the answer and the queue at once: everything below the cursor
+       has been expanded, everything above it is waiting. A name is pushed once,
+       which is what makes a cycle stop here instead of recursing. */
+    const size_t base = str_list_count(out);
+    if(!push_unseen(root, name, out))
+        return false;
+    for(size_t cursor = base; cursor < str_list_count(out); cursor++) {
+        const dep_node *reached = dep_graph_find(graph, str_list_get(out, cursor));
+        /* A name the graph does not carry cannot be expanded, and a partial
+           graph is a resolution failure someone else already reported. */
+        if(reached != NULL && !push_unseen(reached, name, out))
+            return false;
+    }
+    return true;
+}
+
 void dep_graph_free(dep_graph *graph) {
     if(graph == NULL)
         return;
@@ -604,8 +646,7 @@ static bool walk(const project_ctx *ctx, const credentials *creds, const char *p
 
 /* The root dependency a name belongs to, so a proposal names something the
    manifest actually declares. Answers which table it was found in. */
-static const project_dep *root_dep(const project_ctx *ctx, const char *name,
-                                   const char **table) {
+static const project_dep *root_dep(const project_ctx *ctx, const char *name, const char **table) {
     for(size_t i = 0; i < ctx->deps.count; i++) {
         if(strcmp(ctx->deps.items[i].name, name) == 0) {
             *table = "deps";

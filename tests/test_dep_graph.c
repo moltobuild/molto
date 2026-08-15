@@ -327,3 +327,123 @@ MOLTEST(an_ordinary_failure_leaves_the_conflict_record_empty) {
 
     sandbox_close(&at);
 }
+
+/* --- what one package reaches --- */
+
+/* The closure is what a dependency is allowed to see: its own dependencies and
+   theirs, so the headers it includes are on its command line and nothing else
+   is (RFC-0008). */
+MOLTEST(a_package_reaches_what_its_dependencies_reach) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "c", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    dep_on(&at, "b", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "c", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    str_list reached;
+    str_list_init(&reached);
+    ASSERT_TRUE(dep_graph_closure(graph, "a", &reached));
+    /* Breadth-first from `a`, and `a` is not in its own closure. */
+    ASSERT_EQ(2u, str_list_count(&reached));
+    EXPECT_STREQ("b", str_list_get(&reached, 0));
+    EXPECT_STREQ("c", str_list_get(&reached, 1));
+    str_list_free(&reached);
+
+    /* A leaf reaches nothing, which is what keeps a sibling's flags off its
+       command line. */
+    str_list leaf;
+    str_list_init(&leaf);
+    ASSERT_TRUE(dep_graph_closure(graph, "c", &leaf));
+    EXPECT_EQ(0u, str_list_count(&leaf));
+    str_list_free(&leaf);
+
+    /* A name nobody resolved reaches nothing, and that is not a failure. */
+    str_list absent;
+    str_list_init(&absent);
+    EXPECT_TRUE(dep_graph_closure(graph, "nowhere", &absent));
+    EXPECT_EQ(0u, str_list_count(&absent));
+    str_list_free(&absent);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* Two dependents on one package see it once each, and neither sees the other:
+   the closure is per package, not the union the build used to hand out. */
+MOLTEST(a_closure_leaves_out_the_siblings) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "shared", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "b", deps));
+    EXPECT_TRUE(make_package(&at, "shared", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a", "b"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    str_list reached;
+    str_list_init(&reached);
+    ASSERT_TRUE(dep_graph_closure(graph, "a", &reached));
+    ASSERT_EQ(1u, str_list_count(&reached));
+    EXPECT_STREQ("shared", str_list_get(&reached, 0));
+
+    /* Accumulated into the same list, `b` adds nothing: it reaches the one
+       package `a` already put there. */
+    ASSERT_TRUE(dep_graph_closure(graph, "b", &reached));
+    EXPECT_EQ(1u, str_list_count(&reached));
+    str_list_free(&reached);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* The walk that built the graph closes cycles by visiting a name once. This one
+   walks a graph already built, so it closes them itself — and a package is
+   never in its own closure, however it loops back. */
+MOLTEST(a_closure_over_a_cycle_terminates) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "b", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    dep_on(&at, "a", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    str_list reached;
+    str_list_init(&reached);
+    ASSERT_TRUE(dep_graph_closure(graph, "a", &reached));
+    ASSERT_EQ(1u, str_list_count(&reached));
+    EXPECT_STREQ("b", str_list_get(&reached, 0));
+    str_list_free(&reached);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
