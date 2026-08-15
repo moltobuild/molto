@@ -235,6 +235,32 @@ the proposal. There is always an action available to the user — change a versi
 they declared, or stop depending on one of the two packages — and the message's
 job is to make clear which versions are in play and who asked for each.
 
+## What a dependency compiles against
+
+The graph decides what is fetched. It also decides what each package sees, and
+that is a narrower thing than the graph as a whole.
+
+A package's sources are compiled against the interface of every package it
+**reaches** — its own dependencies, and theirs, transitively — then its own
+interface, then its private table (RFC-0009). Nearest last, so the most specific
+statement is the one the compiler reads last. The consumer's own sources are
+compiled against the interface of the whole graph, and against no package's
+private table.
+
+What is *not* on that line is the point: **a sibling contributes nothing**. Two
+dependencies that never named each other do not share a preprocessor, so a
+define one of them needs internally cannot change how the other parses its
+headers, and a warning one of them silences stays silenced only there.
+
+This is a rule about flags and not about symbols. Every `type = "source"`
+dependency still lands in one binary and one link line, so reaching a package's
+*headers* is scoped while reaching its *symbols* is not. Scoping symbols needs a
+target model, which RFC-0007 does not have yet.
+
+The composition is derived from the graph on every build rather than recorded:
+the lock file pins bytes, not flags (see *The lock file*), and a recipe is part
+of the bytes it pins.
+
 ## `[dev-deps]`: what ships and what does not
 
 RFC-0003 reserves `[dev-deps]`. This RFC un-reserves it, because "does this

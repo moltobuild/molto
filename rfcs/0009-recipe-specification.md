@@ -172,6 +172,38 @@ ends up on a compile or link line of the project that depends on it.
 | `defines` | array[string] | Defines added as `-D` |
 | `flags` | array[string] | Raw flags a consumer must compile with |
 
+Everything in that table is the package's **interface**: it reaches the compile
+and link lines of whatever depends on it. `[artifacts.private]` is the other
+half, and carries the same three option keys:
+
+| Key | Type | Description |
+|---|---|---|
+| `include` | array[string] | Directories added as `-I`, for this package only |
+| `defines` | array[string] | Defines added as `-D`, for this package only |
+| `flags` | array[string] | Raw flags, for this package only |
+
+They apply when this package's own sources are compiled and nowhere else. The
+split exists because the two are different claims and were being made with one
+word. `SQLITE_THREADSAFE=1` is interface: it changes what the header declares,
+so a consumer that does not set it is compiling against a different library.
+`-fno-strict-aliasing`, `-Wno-implicit-fallthrough` and an `-I` into the
+package's own internals are not: they are how this code happens to build, and a
+caller that inherits them has inherited a mistake. Without somewhere to put the
+second kind, every one of them is everybody's — including the sources of
+unrelated dependencies that were never told about this package at all.
+
+There is no private `link`, because a `-l` names a library the final binary is
+linked against and there is no line it could be private to. There is no private
+`sources` or `exclude` either: a package has one set of sources, and `sources`
+and `exclude` already cut it from both directions (`sources` fails closed,
+`exclude` fails open, and `exclude` is applied second so a list can be narrowed
+rather than restated).
+
+A recipe that declares only `[artifacts.private]` is read like any other. It is
+a real shape — a package whose one statement is a warning it silences — and
+skipping it because nothing was written directly under `[artifacts]` would drop
+the only thing the recipe was written to say.
+
 `sources` and `exclude` exist because a source drop is not the same thing as a
 library. An upstream archive contains what upstream ships, and what upstream
 ships is usually more than the library: SQLite's amalgamation carries `shell.c`,
@@ -189,7 +221,9 @@ recipe can narrow a list it inherits without rewriting it.
 `flags` is the escape hatch and, as in RFC-0003, it is passed verbatim and is
 the least portable thing a recipe can contain. A recipe that needs it for
 anything other than a genuine ABI requirement — `-pthread`, say — is usually
-describing something that belongs in `defines`.
+describing something that belongs in `defines`, or in
+`[artifacts.private].flags` when it is about how this package builds rather
+than about how it is used.
 
 `type = "source"` means the consumer compiles the dependency's sources into its
 own build rather than linking a prebuilt library. It is the only type that
@@ -541,6 +575,12 @@ package should be one, and should publish as `kind = "package"` with a real
 - **Per-target overrides**, so one recipe can describe a build that differs on
   Windows without becoming three recipes.
 - **Feature selection**, once RFC-0003's `[features]` is un-reserved.
+- **`[artifacts].std` and `.cpp_std`** — the language standard a package's own
+  sources are compiled with. Today they inherit the consumer's, so a library
+  written against C99 is compiled as C23 by a project that asked for C23, and a
+  recipe has no way to say otherwise. The key is reserved here rather than left
+  open because it belongs beside the flags that are already scoped, and because
+  a package that needs it will need it retroactively.
 - **Signing.** A recipe's integrity currently rests on the registry's checksum;
   a signature would let it rest on the publisher instead.
 

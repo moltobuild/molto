@@ -204,6 +204,76 @@ The global cache does not exist. `~/.molto/` currently holds one file,
   and cannot see each other's work. A global cache keyed by a hash of its inputs
   can. Reusing the local scheme globally would produce a cache that never hits.
 
+## The compile line
+
+One function composes every compile line in the build, in this order:
+
+```
+<driver> -c <source> -o <object> -O<n> [-g] [-std=…]
+         <defines…> <include…> <flags…>     ← target scope
+         <defines…> <include…> <flags…>     ← profile scope
+         <defines…> <include…> <flags…>     ← unit scope
+         -MMD -MF <object>.d
+         -I<src>  <-I per dependency…>
+```
+
+The order is contract rather than detail, for two reasons. It is the
+fingerprint, so two compositions that differ only in their order recompile
+everything and produce the same objects. And it decides which of two
+contradictory flags wins, because a compiler takes the last one it is handed.
+
+Within a scope the three keys are always `defines`, then `include`, then
+`flags`. `flags` is last because it is the escape hatch, and an escape hatch
+that could not override the structured keys would not be one.
+
+The scopes are:
+
+- **target** — `[target].defines/include/flags`, plus the interface of every
+  dependency (RFC-0008). A dependency's defines and a manifest's are the same
+  kind of statement, so they are folded together here rather than kept as a
+  fourth scope nothing else would know about.
+- **profile** — the selected `[profile.<name>]`.
+- **unit** — one translation unit's own scope: `[test].options` when the unit
+  is a test, and the package's own options when the unit belongs to a
+  dependency.
+
+Include paths that are relative are anchored at the project root; absolute ones
+are passed through. The `-I` flags at the end are composed apart from the scopes
+above and always come last, because a manifest option is capped at ninety-five
+characters (RFC-0003) and a path into the shared cache is not.
+
+Two defines are always present and appear in no manifest: `MOLTO_PKG_NAME` and
+`MOLTO_PKG_VERSION`, injected into the target scope from `[package]`. They are
+what lets a source report its own version without a generated header, and they
+are why the target scope holds two slots more than a manifest is allowed to
+fill.
+
+### A dependency's line is not the project's
+
+Dependencies are compiled in a pass of their own, with a deliberately smaller
+line:
+
+| | the project's sources | a dependency's sources |
+|---|---|---|
+| `-std`, `-O`, `-g` | from the manifest and the profile | the same |
+| target scope | `[target]` and every dependency's interface | empty |
+| profile scope | the selected profile | empty |
+| unit scope | `[test].options`, for a test | that package's own options |
+| `-I` | `src/`, then every dependency's | that package's own |
+
+The consumer's `[target]` is absent from a dependency's line for two reasons. It
+would hand a library defines nobody wrote it for; and it would put the
+application's `src/` on the library's include path, where a dependency's
+`#include "config.h"` finds the application's. It also means a package compiles
+identically in every project that depends on it, which is what makes one
+compiled object worth putting in a shared cache at all.
+
+What "that package's own options" contains is specified by RFC-0008: its private
+table, its own interface, and the interface of every package it reaches — never
+a sibling's. All of them are in one pass regardless, because a pass is a thread
+pool and a barrier, and there is no reason for two dependencies to wait on each
+other.
+
 ## Linking
 
 Objects are linked with the compiler driver, not with `ld` directly, so the
@@ -340,9 +410,9 @@ would order diagnostics by unit, at the cost of a buffer.
 
 Implemented: discovery with its sort and symlink rule, `[test].sources`, the
 depfile absorption, the hybrid freshness test, whole-command fingerprints, the
-mid-compile edit guard, per-profile output directories, the link line above,
-test binaries in both modes, pruning of orphaned outputs, and the work-stealing
-pool.
+mid-compile edit guard, per-profile output directories, the compile and link
+lines above with their scopes, test binaries in both modes, pruning of orphaned
+outputs, and the work-stealing pool.
 
 Not implemented, each waiting on something other than this RFC:
 
