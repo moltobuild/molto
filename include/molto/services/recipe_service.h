@@ -27,6 +27,10 @@
 #define RECIPE_MAX_SOURCES 32
 #define RECIPE_SOURCE_MAX 128
 
+/* Room for a language standard. The same size as the manifest's, because that
+   is the field one ends up in. */
+#define RECIPE_STD_MAX 16
+
 typedef enum {
     recipe_form_binary,
     recipe_form_source,
@@ -63,7 +67,11 @@ typedef enum {
  * is everybody's.
  *
  * `link` has no private counterpart. A `-l` is a library the final binary is
- * linked against, and there is no line it could be private to.
+ * linked against, and there is no line it could be private to. Neither has
+ * `std`, and for the opposite reason: the standard a package's sources are
+ * compiled with never leaves them, so there is nothing for a private version
+ * to distinguish itself from. Empty means the consumer's, which is what a
+ * package that never had an opinion says by saying nothing.
  *
  * Both are the manifest's own option type rather than one of this file's, so
  * compile_flags_push_options puts either on a compile line with the code that
@@ -80,7 +88,9 @@ typedef enum {
  * it.
  */
 typedef struct {
-    recipe_artifact_type type; /* default: static (RFC-0009) */
+    recipe_artifact_type type;    /* default: static (RFC-0009) */
+    char std[RECIPE_STD_MAX];     /* C standard for its own sources; "" = the consumer's */
+    char cpp_std[RECIPE_STD_MAX]; /* the same for C++, decided separately */
     char sources[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
     size_t source_count;
     char exclude[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];

@@ -114,6 +114,55 @@ static bool read_type(doc_view doc, recipe_artifact_type *out, char *err, size_t
     return set_error(err, err_size, "[artifacts].type '%s' is not source, static or shared", name);
 }
 
+/*
+ * The language standards molto will put behind `-std=`.
+ *
+ * Checked here rather than left to the compiler because of who writes a recipe
+ * and who reads it. A misspelled `[target].std` in a manifest fails in the
+ * build of the person who typed it, which is the shortest feedback loop there
+ * is; a misspelled `std` in a published recipe fails in the build of everyone
+ * who depends on it, and the message names a compiler option none of them
+ * wrote. So the manifest is taken at its word and a recipe is not.
+ *
+ * Two lists rather than one, so a `c++20` written under `std` is caught as
+ * well: it is a real standard and still the wrong answer to that key.
+ */
+static const char *const C_STANDARDS[] = {
+    "c89",   "c90",   "c94",   "c99",   "c11",   "c17",   "c18",   "c23",   "c2x",
+    "gnu89", "gnu90", "gnu99", "gnu11", "gnu17", "gnu18", "gnu23", "gnu2x",
+};
+
+static const char *const CPP_STANDARDS[] = {
+    "c++98",   "c++03",   "c++11",   "c++14",   "c++17",   "c++20",   "c++23",
+    "c++26",   "c++2a",   "c++2b",   "c++2c",   "gnu++98", "gnu++03", "gnu++11",
+    "gnu++14", "gnu++17", "gnu++20", "gnu++23", "gnu++26",
+};
+
+/* One standard, against the list for its language. An absent key leaves `out`
+   alone, and `out` starts empty — which is what says "whatever the consumer
+   compiles with". */
+static bool read_std(doc_view doc, const char *key, const char *const *known, size_t count,
+                     char *out, size_t out_size, char *err, size_t err_size) {
+    /* Read into more room than a standard needs, so an overlong value is
+       reported as what was written rather than as a truncation of it. */
+    char value[RECIPE_STD_MAX * 2];
+    if(!doc_get_string(doc, ARTIFACTS_SECTION, key, value, sizeof value)) {
+        if(doc_has_key(doc, ARTIFACTS_SECTION, key))
+            return set_error(err, err_size, "[artifacts].%s must be a string", key);
+        return true;
+    }
+
+    for(size_t i = 0; i < count; i++) {
+        if(strcmp(known[i], value) == 0) {
+            snprintf(out, out_size, "%s", value);
+            return true;
+        }
+    }
+    return set_error(err, err_size,
+                     "[artifacts].%s '%s' is not a language standard molto knows about", key,
+                     value);
+}
+
 /* The three option lists a table carries. `[artifacts]` and
    `[artifacts.private]` hold the same ones: what separates them is who they
    reach, not what they can say. */
@@ -139,6 +188,10 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
         return true;
 
     return read_type(doc, &out->type, err, err_size) &&
+           read_std(doc, "std", C_STANDARDS, sizeof C_STANDARDS / sizeof C_STANDARDS[0], out->std,
+                    sizeof out->std, err, err_size) &&
+           read_std(doc, "cpp_std", CPP_STANDARDS, sizeof CPP_STANDARDS / sizeof CPP_STANDARDS[0],
+                    out->cpp_std, sizeof out->cpp_std, err, err_size) &&
            doc_read_strings(doc, ARTIFACTS_SECTION, "sources", out->sources[0], RECIPE_MAX_SOURCES,
                             RECIPE_SOURCE_MAX, &out->source_count, err, err_size) &&
            doc_read_strings(doc, ARTIFACTS_SECTION, "exclude", out->exclude[0], RECIPE_MAX_SOURCES,

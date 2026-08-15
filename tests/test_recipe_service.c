@@ -329,3 +329,79 @@ MOLTEST(a_recipe_without_the_private_table_keeps_nothing_back) {
     EXPECT_EQ(0u, artifacts.private_options.include_count);
     EXPECT_EQ(0u, artifacts.private_options.flag_count);
 }
+
+/* --- the standard a package's own sources compile with --- */
+
+static const char *const STD_TOML = "schema = 1\n"
+                                    "form = \"source\"\n"
+                                    "kind = \"package\"\n"
+                                    "name = \"legacy\"\n"
+                                    "version = \"1.0.0\"\n"
+                                    "target = \"any\"\n"
+                                    "\n"
+                                    "[artifacts]\n"
+                                    "type = \"source\"\n"
+                                    "std = \"c99\"\n"
+                                    "cpp_std = \"c++17\"\n";
+
+static const char *const STD_JSON =
+    "{\"schema\":1,\"form\":\"source\",\"kind\":\"package\",\"name\":\"legacy\","
+    "\"version\":\"1.0.0\",\"target\":\"any\","
+    "\"artifacts\":{\"type\":\"source\",\"std\":\"c99\",\"cpp_std\":\"c++17\"}}";
+
+static void check_std(doc_view doc) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(recipe_read_artifacts(doc, &artifacts, err, sizeof err));
+    EXPECT_STREQ("c99", artifacts.std);
+    EXPECT_STREQ("c++17", artifacts.cpp_std);
+}
+
+MOLTEST(a_recipe_may_name_the_standard_its_sources_compile_with) {
+    for_both(STD_TOML, STD_JSON, check_std);
+}
+
+/* Saying nothing is how a package says it never had an opinion, and an empty
+   standard is what makes it inherit the consumer's. */
+MOLTEST(a_recipe_that_names_no_standard_inherits_one) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(read_artifacts_of(SQLITE_TOML, &artifacts, err, sizeof err));
+    EXPECT_STREQ("", artifacts.std);
+    EXPECT_STREQ("", artifacts.cpp_std);
+}
+
+/* Each language decides separately: naming one leaves the other inherited,
+   which is what a C library with a single C++ shim needs. */
+MOLTEST(one_standard_named_leaves_the_other_alone) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(read_artifacts_of("[artifacts]\nstd = \"c11\"\n", &artifacts, err, sizeof err));
+    EXPECT_STREQ("c11", artifacts.std);
+    EXPECT_STREQ("", artifacts.cpp_std);
+}
+
+/* A recipe is written by one person and read by everyone who depends on them,
+   so the typo has to fail here rather than in their build, under a compiler
+   option none of them wrote. */
+MOLTEST(a_recipe_rejects_a_standard_molto_cannot_place) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    EXPECT_FALSE(read_artifacts_of("[artifacts]\nstd = \"C99\"\n", &artifacts, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[artifacts].std"));
+    EXPECT_NOT_NULL(strstr(err, "C99"));
+}
+
+/* `c++20` is a real standard and still the wrong answer to `std`. Checking each
+   key against its own language is what catches it. */
+MOLTEST(a_recipe_rejects_a_standard_of_the_other_language) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    EXPECT_FALSE(read_artifacts_of("[artifacts]\nstd = \"c++20\"\n", &artifacts, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "c++20"));
+
+    char other[256] = "";
+    EXPECT_FALSE(read_artifacts_of("[artifacts]\ncpp_std = \"c11\"\n", &artifacts, other,
+                                   sizeof other));
+    EXPECT_NOT_NULL(strstr(other, "[artifacts].cpp_std"));
+}
