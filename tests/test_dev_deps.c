@@ -117,7 +117,7 @@ MOLTEST(a_test_may_include_a_development_dependency) {
     app_path(&at, app, sizeof app);
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, false, &binaries));
+    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, false, &binaries, NULL));
 
     str_list_free(&binaries);
     sandbox_close(&at);

@@ -1243,7 +1243,12 @@ static int link_tests_single(const test_link_context *context, const str_list *t
 }
 
 int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
-                str_list *test_binaries_out) {
+                str_list *test_binaries_out, project_env *env_out) {
+    /* Cleared up front so a caller that keeps going after a failure runs
+       nothing in a half-read environment. */
+    if(env_out != NULL)
+        memset(env_out, 0, sizeof *env_out);
+
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -1269,6 +1274,8 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
         warn_if_not_saved(db);
         return result;
     }
+    if(env_out != NULL)
+        *env_out = ctx.env;
 
     manifest_profile settings = profile_settings(&ctx, profile);
     const project_options *profile_opts = profile_options_for(&ctx, profile);

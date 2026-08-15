@@ -62,6 +62,53 @@ MOLTEST(test_command) {
     (void)system(cmd);
 }
 
+MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
+    /* The manifest exports [env] to the compiler and to `molto run`; a test
+       binary is a program the project asked to be run too, and used to be the
+       one place the table did not reach. */
+    char root[] = "/tmp/molto_test_env_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/tests", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"greeter\"\n"
+                                    "[env]\nMOLTO_TEST_GREETING = \"hello\"\n"));
+    snprintf(path, sizeof path, "%s/src/lib.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int lib(void) { return 0; }\n"));
+
+    /* The assertion is the exit code: the test can only pass if the variable
+       reached it. */
+    snprintf(path, sizeof path, "%s/tests/test_env.c", root);
+    EXPECT_TRUE(fs_write_file(path, "#include <stdlib.h>\n"
+                                    "#include <string.h>\n"
+                                    "int main(void) {\n"
+                                    "    const char *say = getenv(\"MOLTO_TEST_GREETING\");\n"
+                                    "    return say != NULL && strcmp(say, \"hello\") == 0"
+                                    " ? 0 : 1;\n"
+                                    "}\n"));
+
+    char previous[4096];
+    EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    EXPECT_TRUE(chdir(root) == 0);
+
+    EXPECT_EQ(exit_ok, test_command_run(NULL, false));
+
+    EXPECT_TRUE(chdir(previous) == 0);
+
+    /* The other half of the promise: the variables are set after forking, so
+       the process that ran the tests never saw them. */
+    EXPECT_NULL(getenv("MOLTO_TEST_GREETING"));
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
 MOLTEST(test_build_prunes_a_deleted_test) {
     char root[] = "/tmp/molto_test_prune_XXXXXX";
     ASSERT_TRUE(mkdtemp(root) != NULL);
@@ -83,7 +130,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
 
     str_list binaries;
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries, NULL) == exit_ok);
     EXPECT_EQ(2, str_list_count(&binaries));
     str_list_free(&binaries);
 
@@ -99,7 +146,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
        `molto test` would keep running forever. */
     EXPECT_TRUE(remove(doomed) == 0);
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries, NULL) == exit_ok);
     EXPECT_EQ(1, str_list_count(&binaries));
     str_list_free(&binaries);
 

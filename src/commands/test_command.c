@@ -2,6 +2,7 @@
 
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/project/project_ctx.h>
 #include <molto/services/build_service.h>
 #include <molto/services/process_service.h>
 #include <molto/util/str_list.h>
@@ -12,10 +13,16 @@
 /* process_run reports a signal death as 128 + signal (shell convention). */
 #define SIGNAL_EXIT_BASE 128
 
-/* Run one test binary and print its result, updating the pass/fail counters. */
-static void run_one_test(const char *binary, size_t *passed, size_t *failed) {
+/* Run one test binary and print its result, updating the pass/fail counters.
+   The binary runs in the [env] it was built in: a variable the manifest sets
+   for the compiler is one the code may well read at runtime too, and a test is
+   the first place that would be noticed. */
+static void run_one_test(const char *binary, const project_env *env, size_t *passed,
+                         size_t *failed) {
     const char *argv[] = {binary, NULL};
-    int status = process_run(argv);
+    process_env_var vars[PROJECT_MAX_ENV];
+    size_t var_count = project_env_to_vars(env, vars, PROJECT_MAX_ENV);
+    int status = process_run_env(argv, vars, var_count);
     if(status == 0) {
         printf("  %s ... ok\n", binary);
         (*passed)++;
@@ -45,7 +52,8 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain) {
     }
     str_list binaries;
     str_list_init(&binaries);
-    int code = build_tests(root, profile, refresh_toolchain, &binaries);
+    project_env env;
+    int code = build_tests(root, profile, refresh_toolchain, &binaries, &env);
     if(code != exit_ok) {
         str_list_free(&binaries);
         return code;
@@ -62,7 +70,7 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain) {
     size_t passed = 0;
     size_t failed = 0;
     for(size_t i = 0; i < total; i++)
-        run_one_test(str_list_get(&binaries, i), &passed, &failed);
+        run_one_test(str_list_get(&binaries, i), &env, &passed, &failed);
     printf("%zu passed, %zu failed\n", passed, failed);
 
     str_list_free(&binaries);

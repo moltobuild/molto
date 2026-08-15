@@ -30,8 +30,14 @@ size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t
    `root/build/<profile>/tests/<name>`, linked against the project's objects
    (excluding the app's src/main.c). Appends every built test binary path to
    `test_binaries_out` (caller-initialised, caller-freed). A missing or empty
-   tests/ directory is not an error. Returns a molto_exit_code. */
+   tests/ directory is not an error. Returns a molto_exit_code.
+
+   When `env_out` is not NULL it receives the manifest's [env], so that whoever
+   runs these binaries runs them in the environment they were built in. It is
+   handed back rather than read again from the manifest because the build may
+   rewrite Project.toml on its way through, and a test that runs under a
+   different environment than the one that compiled it is the bug this avoids. */
 [[nodiscard]] int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
-                              str_list *test_binaries_out);
+                              str_list *test_binaries_out, project_env *env_out);
 
 #endif /* MOLTO_BUILD_SERVICE_H */
