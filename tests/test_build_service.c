@@ -358,3 +358,71 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
     snprintf(cmd, sizeof cmd, "rm -rf %s %s", root, tools);
     (void)system(cmd);
 }
+
+/* The whole point of scoping flags, checked by the compiler rather than by
+   reading a list: every claim below is a #error that fires if the flag reached
+   a translation unit it had no business reaching. Before the scopes existed,
+   this project failed to build on two of them. */
+MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
+    char root[] = "/tmp/molto_scope_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/alpha", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/beta", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    /* alpha exports one define and keeps another. */
+    snprintf(path, sizeof path, "%s/alpha/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+        "name = \"alpha\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+        "[artifacts]\ntype = \"source\"\ninclude = [\".\"]\ndefines = [\"ALPHA_API=1\"]\n"
+        "[artifacts.private]\ndefines = [\"ALPHA_INTERNAL=1\"]\n"));
+    snprintf(path, sizeof path, "%s/alpha/alpha.h", root);
+    EXPECT_TRUE(fs_write_file(path, "int alpha_answer(void);\n"));
+    snprintf(path, sizeof path, "%s/alpha/alpha.c", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#ifndef ALPHA_INTERNAL\n#error \"a package did not get its own private define\"\n#endif\n"
+        "int alpha_answer(void) { return 1; }\n"));
+
+    /* beta names nobody, so nothing of alpha's may appear on its line. */
+    snprintf(path, sizeof path, "%s/beta/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+        "name = \"beta\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+        "[artifacts]\ntype = \"source\"\ninclude = [\".\"]\ndefines = [\"BETA_API=1\"]\n"));
+    snprintf(path, sizeof path, "%s/beta/beta.h", root);
+    EXPECT_TRUE(fs_write_file(path, "int beta_answer(void);\n"));
+    snprintf(path, sizeof path, "%s/beta/beta.c", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#ifdef ALPHA_INTERNAL\n#error \"a sibling's private define reached beta\"\n#endif\n"
+        "#ifdef ALPHA_API\n#error \"a sibling's interface reached beta\"\n#endif\n"
+        "int beta_answer(void) { return 2; }\n"));
+
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    char manifest[1024];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\n"
+             "[deps]\nalpha = { path = \"%s/alpha\" }\nbeta = { path = \"%s/beta\" }\n",
+             root, root);
+    EXPECT_TRUE(fs_write_file(path, manifest));
+
+    /* The consumer gets both interfaces and neither private table. */
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#include <alpha.h>\n#include <beta.h>\n"
+        "#ifdef ALPHA_INTERNAL\n#error \"a private define reached the consumer\"\n#endif\n"
+        "#ifndef ALPHA_API\n#error \"an interface did not reach the consumer\"\n#endif\n"
+        "#ifndef BETA_API\n#error \"an interface did not reach the consumer\"\n#endif\n"
+        "int main(void) { return alpha_answer() + beta_answer() - 3; }\n"));
+
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
