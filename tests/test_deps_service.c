@@ -392,3 +392,57 @@ MOLTEST(a_dependency_compiles_against_what_it_reaches) {
     prepared_deps_free(&deps);
     sandbox_close(&at);
 }
+
+/* The standard travels from the recipe to the unit that compiles that package,
+   and each language is decided on its own: a C library with one C++ shim names
+   `std` and lets `cpp_std` be whatever the consumer compiles with. */
+MOLTEST(a_unit_carries_the_standard_its_recipe_named) {
+    static const char *const legacy = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                      "name = \"yyjson\"\nversion = \"0.10.0\"\n"
+                                      "target = \"any\"\n"
+                                      "\n[artifacts]\ntype = \"source\"\n"
+                                      "sources = [\"yyjson.c\"]\ninclude = [\".\"]\n"
+                                      "std = \"c99\"\n";
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, legacy));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_dep(&at, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+
+    ASSERT_EQ(1u, deps.unit_count);
+    EXPECT_STREQ("c99", deps.units[0].std);
+    /* Unnamed, so the consumer's applies. */
+    EXPECT_STREQ("", deps.units[0].cpp_std);
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
+/* And a recipe that names none leaves both empty, which is how every package
+   behaved before the keys existed. */
+MOLTEST(a_unit_whose_recipe_named_no_standard_inherits_the_consumers) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, RECIPE));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_dep(&at, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+
+    ASSERT_EQ(1u, deps.unit_count);
+    EXPECT_STREQ("", deps.units[0].std);
+    EXPECT_STREQ("", deps.units[0].cpp_std);
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}

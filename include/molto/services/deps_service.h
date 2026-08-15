@@ -43,6 +43,13 @@ typedef struct {
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */
+    /* The standard its recipe asked for, per language. Empty means the recipe
+       named none and the consumer's applies — which is what every package did
+       before recipes could say. Unlike the lists above, these do not travel
+       along the closure: a define is ABI a caller has to share, and a standard
+       is not. */
+    char std[RECIPE_STD_MAX];
+    char cpp_std[RECIPE_STD_MAX];
 } prepared_unit;
 
 typedef struct {

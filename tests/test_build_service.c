@@ -426,3 +426,54 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+/* A library written against an older standard is compiled against it, in a
+   project that asked for a newer one. Both halves are checked by the
+   preprocessor, so the test fails whichever way the standard leaks. */
+MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
+    char root[] = "/tmp/molto_std_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/legacy", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/legacy/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+        "name = \"legacy\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+        "[artifacts]\ntype = \"source\"\ninclude = [\".\"]\nstd = \"c99\"\n"));
+    snprintf(path, sizeof path, "%s/legacy/legacy.h", root);
+    EXPECT_TRUE(fs_write_file(path, "int legacy_answer(void);\n"));
+    snprintf(path, sizeof path, "%s/legacy/legacy.c", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#if __STDC_VERSION__ != 199901L\n"
+        "#error \"a dependency did not get the standard its recipe named\"\n#endif\n"
+        "int legacy_answer(void) { return 0; }\n"));
+
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    char manifest[1024];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"modern\"\nversion = \"0.1.0\"\n"
+             "[target]\nstd = \"c11\"\n"
+             "[deps]\nlegacy = { path = \"%s/legacy\" }\n",
+             root);
+    EXPECT_TRUE(fs_write_file(path, manifest));
+
+    /* The consumer keeps its own: a dependency's standard is about its sources
+       and travels no further than they do. */
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path,
+        "#include <legacy.h>\n"
+        "#if __STDC_VERSION__ != 201112L\n"
+        "#error \"a dependency's standard reached the consumer\"\n#endif\n"
+        "int main(void) { return legacy_answer(); }\n"));
+
+    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}

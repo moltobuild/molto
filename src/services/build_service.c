@@ -692,8 +692,8 @@ typedef struct {
     size_t count;
     project_options *options; /* one per dependency */
     str_list *include_flags;  /* one per dependency */
-    size_t package_count;     /* how many of the two above are initialised */
-    project_target target;    /* the language standard, and nothing else */
+    project_target *targets;  /* one per dependency: the language standard */
+    size_t package_count;     /* how many of the three above are initialised */
 } dep_pass;
 
 static void dep_pass_free(dep_pass *pass) {
@@ -701,22 +701,32 @@ static void dep_pass_free(dep_pass *pass) {
         str_list_free(&pass->include_flags[i]);
     free(pass->include_flags);
     free(pass->options);
+    free(pass->targets);
     free(pass->units);
     memset(pass, 0, sizeof *pass);
+}
+
+/* What one dependency is compiled as: the consumer's target with everything it
+   chose stripped out, and the standard the recipe named where it named one.
+ *
+ * A target per package rather than one for the pass, because the standard is
+ * the one thing left in here that two dependencies can disagree about. A
+ * package that names none keeps the consumer's, which is what every package
+ * did before recipes could say otherwise. */
+static project_target target_for(const project_target *base, const prepared_unit *unit) {
+    project_target target = *base;
+    memset(&target.options, 0, sizeof target.options);
+    target.link_count = 0;
+    if(unit->std[0] != '\0')
+        snprintf(target.std, sizeof target.std, "%s", unit->std);
+    if(unit->cpp_std[0] != '\0')
+        snprintf(target.cpp_std, sizeof target.cpp_std, "%s", unit->cpp_std);
+    return target;
 }
 
 [[nodiscard]] static bool dep_pass_build(dep_pass *pass, const prepared_deps *deps,
                                          const project_target *base) {
     memset(pass, 0, sizeof *pass);
-    /* A dependency is compiled against the language standard and its own
-       recipe: the consumer's defines would reach code that never asked for
-       them, and the consumer's src/ on the include path is where a
-       dependency's `#include "config.h"` finds the application's. It is also
-       what makes one dependency compile identically in every project, which is
-       what lets one object be shared. */
-    pass->target = *base;
-    memset(&pass->target.options, 0, sizeof pass->target.options);
-    pass->target.link_count = 0;
 
     size_t total = 0;
     for(size_t i = 0; i < deps->unit_count; i++)
@@ -726,20 +736,29 @@ static void dep_pass_free(dep_pass *pass) {
 
     pass->options = calloc(deps->unit_count, sizeof *pass->options);
     pass->include_flags = calloc(deps->unit_count, sizeof *pass->include_flags);
+    pass->targets = calloc(deps->unit_count, sizeof *pass->targets);
     pass->units = calloc(total, sizeof *pass->units);
-    if(pass->options == NULL || pass->include_flags == NULL || pass->units == NULL)
+    if(pass->options == NULL || pass->include_flags == NULL || pass->targets == NULL ||
+       pass->units == NULL)
         return false;
     pass->package_count = deps->unit_count;
 
     for(size_t i = 0; i < deps->unit_count; i++) {
         const prepared_unit *unit = &deps->units[i];
         str_list_init(&pass->include_flags[i]);
+        pass->targets[i] = target_for(base, unit);
         if(!collect_unit_options(unit, &pass->options[i], &pass->include_flags[i]))
             return false;
         for(size_t j = 0; j < str_list_count(&unit->sources); j++) {
             pass->units[pass->count++] = (compile_unit){
                 .source = str_list_get(&unit->sources, j),
-                .target = &pass->target,
+                .target = &pass->targets[i],
+                /* No profile scope: the consumer's defines would reach code
+                   that never asked for them, and its src/ on the include path
+                   is where a dependency's `#include "config.h"` finds the
+                   application's. It is also what makes one dependency compile
+                   identically everywhere, which is what lets an object be
+                   shared. */
                 .profile_opts = NULL,
                 .extra_opts = &pass->options[i],
                 .include_flags = &pass->include_flags[i],

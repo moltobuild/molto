@@ -52,7 +52,8 @@ void prepared_deps_free(prepared_deps *out) {
 /* Room for one more dependency, initialised and named. Grown one at a time:
    a graph is bounded at a few dozen packages, and doubling would be arithmetic
    in exchange for nothing measurable. */
-static prepared_unit *unit_open(prepared_deps *out, const char *name, char *err, size_t err_size) {
+static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *err,
+                                size_t err_size) {
     prepared_unit *grown = realloc(out->units, (out->unit_count + 1) * sizeof *grown);
     if(grown == NULL) {
         (void)set_error(err, err_size, "out of memory collecting dependencies");
@@ -60,7 +61,11 @@ static prepared_unit *unit_open(prepared_deps *out, const char *name, char *err,
     }
     out->units = grown;
     prepared_unit *unit = &out->units[out->unit_count++];
-    snprintf(unit->name, sizeof unit->name, "%s", name);
+    snprintf(unit->name, sizeof unit->name, "%s", node->name);
+    /* Copied rather than composed: a standard is one value the recipe either
+       named or did not, and an empty one means the consumer's applies. */
+    snprintf(unit->std, sizeof unit->std, "%s", node->artifacts.std);
+    snprintf(unit->cpp_std, sizeof unit->cpp_std, "%s", node->artifacts.cpp_std);
     str_list_init(&unit->sources);
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);
@@ -205,7 +210,7 @@ static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps 
             return set_error(err, err_size, "out of memory collecting dependencies");
     }
 
-    prepared_unit *unit = unit_open(out, node->name, err, err_size);
+    prepared_unit *unit = unit_open(out, node, err, err_size);
     return unit != NULL && collect_sources(artifacts, node->root, &unit->sources, err, err_size) &&
            collect_unit(graph, node, unit, err, err_size);
 }
