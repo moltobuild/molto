@@ -221,6 +221,11 @@ Exported into the compiler and linker invocations, and into the program under
 forking, so Molto's own environment is never modified and one project's `[env]`
 cannot leak elsewhere. Values must be strings.
 
+Changing `[env]` recompiles and re-links, for the same reason changing a define
+does: it is part of what an object was built from, not merely how it was
+launched. The order the variables are written in is not — they are sorted by
+name, so moving two lines rebuilds nothing.
+
 ## Key reference
 
 Status is what the current binary does, not what RFC-0003 specifies.

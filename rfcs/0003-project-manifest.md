@@ -243,6 +243,13 @@ command is executed: Molto's own environment is never modified, so one
 project's `[env]` cannot leak into anything else the process does. A
 non-string value is a manifest error.
 
+Because they reach the compiler and the linker, the variables are part of the
+compile and link fingerprints (RFC-0007): changing one recompiles and re-links,
+the way changing a define does. The order they are declared in is not part of
+anything — they are sorted by name — so moving two lines rebuilds nothing, and
+two projects declaring the same variables in different orders still share an
+object in the cache.
+
 ## `[profile.*]`
 
 One table per build profile: `debug`, `release`, `bench`, or the user-defined

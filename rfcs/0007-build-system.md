@@ -143,12 +143,29 @@ An object is **fresh**, and its compile is skipped, when all four hold:
 3. the object file can be `stat`-ed;
 4. every recorded prerequisite is unchanged.
 
-The command fingerprint is **the entire command line**, joined by spaces. There
-is no list of "flags that matter", because every such list is eventually wrong:
-it omits the one flag someone adds next. Recording the whole line means a
-changed `-D`, a changed `-std`, a changed optimisation level, a changed include
-path, and a changed compiler driver all invalidate the object by construction,
-without anyone having enumerated them.
+The command fingerprint is **the entire command line**, joined by spaces, and
+after it **the environment that line runs in**. There is no list of "flags that
+matter", because every such list is eventually wrong: it omits the one flag
+someone adds next. Recording the whole line means a changed `-D`, a changed
+`-std`, a changed optimisation level, a changed include path, and a changed
+compiler driver all invalidate the object by construction, without anyone having
+enumerated them.
+
+`[env]` is recorded for that same reason and not as an afterthought: the
+variables reach the compiler, and `CPATH` or `SOURCE_DATE_EPOCH` change the
+object as surely as a flag would. It is written after a byte no manifest can
+produce, and everything past that byte is compared and hashed exactly as it
+stands — an environment value is not an argument molto composed, so it may
+contain spaces, and splitting it could make two environments look alike to the
+shared object cache. The variables are sorted by name before they get there, so
+the order two lines were written in never reaches a fingerprint. A project with
+no `[env]` fingerprints byte for byte as it did before any of this existed,
+which is what keeps the databases and cached objects already on disk valid.
+
+The link fingerprint follows the same rule, and for a reason worth stating:
+`[env]` reaches the linker too, so a changed `LIBRARY_PATH` is a changed binary.
+Leaving it to the "something was recompiled" flag would be correct only by
+accident, since every object could have come from the shared cache.
 
 A prerequisite is **unchanged** under a hybrid test. Nanosecond mtime and size
 are compared first; if both match, the file is unchanged and nothing is read. If

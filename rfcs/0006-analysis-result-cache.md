@@ -99,7 +99,9 @@ A result is recomputed when any part of its fingerprint changes:
   changing `preset`, or excluding a path invalidates exactly what it should;
 - the tool's version. Two releases of `clang-tidy` do not find the same things,
   and a replayed diagnostic from the previous one is a lie about the current
-  one.
+  one;
+- the `[env]` the tools run in. They are launched with the project's variables,
+  so a diagnostic recorded under one environment does not answer for another.
 
 This last point differs deliberately from how RFC-0004 treats compilers, where
 installing a newer one does **not** invalidate the recorded toolchain, because
