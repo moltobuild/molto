@@ -177,14 +177,33 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
     return status;
 }
 
-/* Build the full compile command for one source into `argv` (a str_list):
-   driver, -c, source, -o, object, -O<n>, [-g], [-std], base+profile defines/
-   includes/flags, -MMD -MF depfile, and the src include flag. */
-static bool build_compile_argv(str_list *argv, const char *root, const char *source,
+/*
+ * One translation unit, and everything its command line needs that the build
+ * as a whole does not share.
+ *
+ * It exists so that one pass can compile units that do not agree about their
+ * flags. A dependency is compiled against its own recipe and the project
+ * against its manifest; before this they had to be two passes, which meant two
+ * thread pools and a barrier between them for no reason anyone chose.
+ */
+typedef struct {
+    const char *source;
+    const project_target *target;
+    /* Absent for a dependency, which is compiled against the language standard
+       and its own recipe and nothing else the project chose. */
+    const project_options *profile_opts;
+    /* Applied last, so it can add to the rest. Absent when there is none. */
+    const project_options *extra_opts;
+    const str_list *include_flags;
+} compile_unit;
+
+/* Build the full compile command for one unit into `argv` (a str_list):
+   driver, -c, source, -o, object, -O<n>, [-g], [-std], the unit's defines/
+   includes/flags, -MMD -MF depfile, and its include flags. */
+static bool build_compile_argv(str_list *argv, const char *root, const compile_unit *unit,
                                const char *object, const manifest_profile *settings,
-                               const project_target *target, const project_options *profile_opts,
-                               const project_options *extra_opts, const str_list *include_flags,
                                const char *depfile, const resolved_toolchain *chain) {
+    const char *source = unit->source;
     bool is_cpp = source_is_cpp(source);
     const char *driver = compile_flags_driver(chain, is_cpp);
     if(driver == NULL) {
@@ -201,16 +220,13 @@ static bool build_compile_argv(str_list *argv, const char *root, const char *sou
     if(ok && settings->debug_info)
         ok = str_list_push(argv, ARG_DEBUG);
     if(ok)
-        ok = compile_flags_push_std(argv, target, is_cpp);
+        ok = compile_flags_push_std(argv, unit->target, is_cpp);
     if(ok)
-        ok = compile_flags_push_options(argv, root, &target->options);
-    /* Absent for a dependency, which is compiled against the language standard
-       and its own recipe and nothing else the project chose. */
-    if(ok && profile_opts != NULL)
-        ok = compile_flags_push_options(argv, root, profile_opts);
-    /* Extra scope, used by tests: applied last so it can add to the rest. */
-    if(ok && extra_opts != NULL)
-        ok = compile_flags_push_options(argv, root, extra_opts);
+        ok = compile_flags_push_options(argv, root, &unit->target->options);
+    if(ok && unit->profile_opts != NULL)
+        ok = compile_flags_push_options(argv, root, unit->profile_opts);
+    if(ok && unit->extra_opts != NULL)
+        ok = compile_flags_push_options(argv, root, unit->extra_opts);
     if(ok)
         ok = str_list_push(argv, ARG_DEPFILE_GEN) && str_list_push(argv, ARG_DEPFILE_OUT) &&
              str_list_push(argv, depfile);
@@ -218,18 +234,15 @@ static bool build_compile_argv(str_list *argv, const char *root, const char *sou
        directory a dependency exports. They are composed by the caller rather
        than stored in project_options because a dependency's is an absolute
        path into the cache, and a manifest option is sized for "-DFOO=1". */
-    for(size_t i = 0; ok && i < str_list_count(include_flags); i++)
-        ok = str_list_push(argv, str_list_get(include_flags, i));
+    for(size_t i = 0; ok && i < str_list_count(unit->include_flags); i++)
+        ok = str_list_push(argv, str_list_get(unit->include_flags, i));
     return ok;
 }
 
-/* Build the current compile command for a source as a heap string, for the
+/* Build the current compile command for a unit as a heap string, for the
    fingerprint comparison (caller frees). NULL on allocation failure. */
-static char *compile_command_string(const char *root, const char *source, const char *object,
-                                    const manifest_profile *settings, const project_target *target,
-                                    const project_options *profile_opts,
-                                    const project_options *extra_opts,
-                                    const str_list *include_flags,
+static char *compile_command_string(const char *root, const compile_unit *unit, const char *object,
+                                    const manifest_profile *settings,
                                     const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if(!depfile_path_for(object, depfile, sizeof depfile))
@@ -237,8 +250,7 @@ static char *compile_command_string(const char *root, const char *source, const 
     str_list argv;
     str_list_init(&argv);
     char *command = NULL;
-    if(build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
-                          include_flags, depfile, chain))
+    if(build_compile_argv(&argv, root, unit, object, settings, depfile, chain))
         command = join_args(&argv);
     str_list_free(&argv);
     return command;
@@ -247,18 +259,15 @@ static char *compile_command_string(const char *root, const char *source, const 
 /* Compile a single translation unit to `object`. gcc writes the header
    dependency file (`-MMD -MF <object>.d`) as a side effect; it is absorbed into
    the WSDB afterwards, on the main thread. */
-static bool compile_one(const char *root, const char *source, const char *object,
-                        const manifest_profile *settings, const project_target *target,
-                        const project_options *profile_opts, const project_options *extra_opts,
-                        const str_list *include_flags, const project_env *env,
+static bool compile_one(const char *root, const compile_unit *unit, const char *object,
+                        const manifest_profile *settings, const project_env *env,
                         const resolved_toolchain *chain) {
     char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
     if(!depfile_path_for(object, depfile, sizeof depfile))
         return false;
     str_list argv;
     str_list_init(&argv);
-    if(!build_compile_argv(&argv, root, source, object, settings, target, profile_opts, extra_opts,
-                           include_flags, depfile, chain)) {
+    if(!build_compile_argv(&argv, root, unit, object, settings, depfile, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -327,17 +336,13 @@ static void warn_if_not_saved(wsdb *db) {
                         "the next build will not be incremental\n");
 }
 
-/* One parallel compilation task: compile `source` into `object`, recording a
+/* One parallel compilation task: compile `unit` into `object`, recording a
    shared failure flag. Runs on a task_pool worker. */
 typedef struct {
     const char *root;
-    const char *source;
+    const compile_unit *unit;
     const char *object;
     const manifest_profile *settings;
-    const str_list *include_flags;
-    const project_target *target;
-    const project_options *profile_opts;
-    const project_options *extra_opts;
     const project_env *env;
     const resolved_toolchain *chain;
     atomic_bool *failed;
@@ -347,11 +352,10 @@ typedef struct {
 
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
-    task->succeeded = compile_one(task->root, task->source, task->object, task->settings,
-                                  task->target, task->profile_opts, task->extra_opts,
-                                  task->include_flags, task->env, task->chain);
+    task->succeeded =
+        compile_one(task->root, task->unit, task->object, task->settings, task->env, task->chain);
     if(!task->succeeded) {
-        fprintf(stderr, "molto: failed to compile '%s'\n", task->source);
+        fprintf(stderr, "molto: failed to compile '%s'\n", task->unit->source);
         atomic_store(task->failed, true);
     }
 }
@@ -393,13 +397,35 @@ static void share_in_object_cache(const char *source, const char *object, const 
         object_cache_put(object, cached);
 }
 
-static int compile_sources(const char *root, build_profile profile,
-                           const manifest_profile *settings, const str_list *include_flags,
-                           const project_target *target, const project_options *profile_opts,
-                           const project_options *extra_opts, const project_env *env,
-                           const resolved_toolchain *chain, wsdb *db, const str_list *sources,
-                           str_list *objects, bool *any_cpp, bool *any_compiled) {
-    size_t count = str_list_count(sources);
+/* Every source in `sources` as a unit with one command line: what a pass over
+   one package's own code needs, where nothing disagrees about its flags.
+
+   The units borrow `sources` and everything else handed in, so all of it has to
+   outlive them. Caller frees. NULL means the allocation failed, so callers with
+   nothing to compile do not ask. */
+[[nodiscard]] static compile_unit *units_from(const str_list *sources, const project_target *target,
+                                              const project_options *profile_opts,
+                                              const project_options *extra_opts,
+                                              const str_list *include_flags) {
+    compile_unit *units = calloc(str_list_count(sources), sizeof *units);
+    if(units == NULL)
+        return NULL;
+    for(size_t i = 0; i < str_list_count(sources); i++) {
+        units[i] = (compile_unit){
+            .source = str_list_get(sources, i),
+            .target = target,
+            .profile_opts = profile_opts,
+            .extra_opts = extra_opts,
+            .include_flags = include_flags,
+        };
+    }
+    return units;
+}
+
+static int compile_units(const char *root, build_profile profile, const manifest_profile *settings,
+                         const project_env *env, const resolved_toolchain *chain, wsdb *db,
+                         const compile_unit *units, size_t count, str_list *objects, bool *any_cpp,
+                         bool *any_compiled) {
     /* `objects` accumulates across the passes a build makes — dependencies
        first, then the project — so this call's entries begin where the list
        already stood. Indexing it from zero would hand one source another's
@@ -412,7 +438,7 @@ static int compile_sources(const char *root, build_profile profile,
     /* Phase 1: resolve object paths and ask the WSDB what is stale. Finishing
        all str_list_push here keeps the object pointers stable for phase 2. */
     for(size_t i = 0; i < count; i++) {
-        const char *source = str_list_get(sources, i);
+        const char *source = units[i].source;
         if(source_is_cpp(source))
             *any_cpp = true;
         char object[PATH_BUFFER_SIZE];
@@ -429,8 +455,7 @@ static int compile_sources(const char *root, build_profile profile,
             free(needs);
             return exit_build_failure;
         }
-        char *command = compile_command_string(root, source, object, settings, target, profile_opts,
-                                               extra_opts, include_flags, chain);
+        char *command = compile_command_string(root, &units[i], object, settings, chain);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
 
         /* A stale object that another project already compiled the same way is
@@ -470,17 +495,13 @@ static int compile_sources(const char *root, build_profile profile,
             continue;
         tasks[queued] = (compile_task){
             .root = root,
-            .source = str_list_get(sources, i),
+            .unit = &units[i],
             .object = str_list_get(objects, objects_base + i),
             .settings = settings,
-            .include_flags = include_flags,
-            .target = target,
-            .profile_opts = profile_opts,
-            .extra_opts = extra_opts,
             .env = env,
             .chain = chain,
             .failed = &failed,
-            .signature = fs_signature(str_list_get(sources, i)),
+            .signature = fs_signature(units[i].source),
         };
         if(!task_pool_submit(pool, compile_task_run, &tasks[queued]))
             result = exit_build_failure;
@@ -505,16 +526,16 @@ static int compile_sources(const char *root, build_profile profile,
            recorded under the signature of content the object does not contain,
            and nothing would rebuild it afterwards: the stale object simply gets
            linked. Leaving it unrecorded costs one recompilation. */
-        if(fs_signature(task->source) != task->signature) {
+        const char *source = task->unit->source;
+        if(fs_signature(source) != task->signature) {
             discard_depfile(task->object);
             continue;
         }
-        char *command = compile_command_string(root, task->source, task->object, settings, target,
-                                               profile_opts, extra_opts, include_flags, chain);
-        if(command == NULL || !wsdb_absorb_object(db, task->source, task->object, command))
-            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", task->source);
+        char *command = compile_command_string(root, task->unit, task->object, settings, chain);
+        if(command == NULL || !wsdb_absorb_object(db, source, task->object, command))
+            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", source);
         if(command != NULL)
-            share_in_object_cache(task->source, task->object, command);
+            share_in_object_cache(source, task->object, command);
         free(command);
     }
 
@@ -731,8 +752,7 @@ static void watch_registry(size_t frame, void *context) {
 
     for(int attempt = 0; attempt < 2; attempt++) {
         dep_conflict conflict = {0};
-        const bool resolved =
-            dep_graph_resolve_with(ctx, &options, out, &conflict, err, err_size);
+        const bool resolved = dep_graph_resolve_with(ctx, &options, out, &conflict, err, err_size);
         /* Before anything else is printed: half a spinner in front of a
            message reads as part of the message. */
         progress_line_clear(stderr, &line);
@@ -916,9 +936,13 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
         dep_target.link_count = 0;
         bool dep_cpp = false;
         bool dep_compiled = false;
-        result = compile_sources(root, profile, &settings, &dep_include_flags, &dep_target, NULL,
-                                 &dep_options, &ctx_out->env, chain_out, db, &dep_sources,
-                                 objects_out, &dep_cpp, &dep_compiled);
+        compile_unit *units =
+            units_from(&dep_sources, &dep_target, NULL, &dep_options, &dep_include_flags);
+        result = units == NULL ? exit_build_failure
+                               : compile_units(root, profile, &settings, &ctx_out->env, chain_out,
+                                               db, units, str_list_count(&dep_sources), objects_out,
+                                               &dep_cpp, &dep_compiled);
+        free(units);
         *any_cpp_out = *any_cpp_out || dep_cpp;
         *any_compiled_out = *any_compiled_out || dep_compiled;
     }
@@ -928,10 +952,14 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     if(result == exit_ok) {
         bool project_cpp = false;
         bool project_compiled = false;
-        result =
-            compile_sources(root, profile, &settings, include_flags_out, &ctx_out->target,
-                            profile_options_for(ctx_out, profile), NULL, &ctx_out->env, chain_out,
-                            db, &sources, objects_out, &project_cpp, &project_compiled);
+        compile_unit *units =
+            units_from(&sources, &ctx_out->target, profile_options_for(ctx_out, profile), NULL,
+                       include_flags_out);
+        result = units == NULL ? exit_build_failure
+                               : compile_units(root, profile, &settings, &ctx_out->env, chain_out,
+                                               db, units, str_list_count(&sources), objects_out,
+                                               &project_cpp, &project_compiled);
+        free(units);
         *any_cpp_out = *any_cpp_out || project_cpp;
         *any_compiled_out = *any_compiled_out || project_compiled;
     }
@@ -1258,12 +1286,16 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
 
         bool dev_cpp = false;
         bool dev_compiled = false;
-        if(!collect_dep_options(&dev, &dev_options, &dev_include_flags))
+        compile_unit *units = NULL;
+        if(!collect_dep_options(&dev, &dev_options, &dev_include_flags) ||
+           (units = units_from(&dev.sources, &dev_target, NULL, &dev_options,
+                               &dev_include_flags)) == NULL)
             result = exit_build_failure;
         else
-            result = compile_sources(root, profile, &settings, &dev_include_flags, &dev_target,
-                                     NULL, &dev_options, &ctx.env, &chain, db, &dev.sources,
-                                     &lib_objects, &dev_cpp, &dev_compiled);
+            result =
+                compile_units(root, profile, &settings, &ctx.env, &chain, db, units,
+                              str_list_count(&dev.sources), &lib_objects, &dev_cpp, &dev_compiled);
+        free(units);
         any_cpp = any_cpp || dev_cpp;
         any_compiled = any_compiled || dev_compiled;
         str_list_free(&dev_include_flags);
@@ -1281,10 +1313,15 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     str_list_init(&test_objects);
     bool tests_cpp = false;
     bool tests_compiled = false;
-    if(result == exit_ok && str_list_count(&test_sources) > 0)
-        result = compile_sources(root, profile, &settings, &include_flags, &ctx.target,
-                                 profile_opts, &ctx.test.options, &ctx.env, &chain, db,
-                                 &test_sources, &test_objects, &tests_cpp, &tests_compiled);
+    if(result == exit_ok && str_list_count(&test_sources) > 0) {
+        compile_unit *units =
+            units_from(&test_sources, &ctx.target, profile_opts, &ctx.test.options, &include_flags);
+        result = units == NULL ? exit_build_failure
+                               : compile_units(root, profile, &settings, &ctx.env, &chain, db,
+                                               units, str_list_count(&test_sources), &test_objects,
+                                               &tests_cpp, &tests_compiled);
+        free(units);
+    }
 
     if(result == exit_ok) {
         const test_link_context context = {
