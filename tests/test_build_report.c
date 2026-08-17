@@ -313,6 +313,63 @@ static void screen_forget(void) {
     (void)unsetenv("LINES");
 }
 
+/* The region is about to name these one at a time as it compiles them, so
+   listing them here as well fills the scrollback with what the region says
+   better and then throws the region away. */
+MOLTEST(a_terminal_counts_the_projects_own_sources_instead_of_listing_them) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "40");
+
+    build_report_will_compile(report, &sqlite, "btree.c");
+    build_report_will_compile(report, &own, "main.c");
+    build_report_will_compile(report, &own, "game.c");
+    build_report_will_compile(report, &own, "world.c");
+    build_report_will_compile(report, &suite, "test_main.c");
+    build_report_begin(report, 5);
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    /* A package still names itself: its line was already one piece of work. */
+    EXPECT_NOT_NULL(strstr(text, "sqlite3 v3.50.3"));
+    EXPECT_NOT_NULL(strstr(text, "3 files"));
+    EXPECT_NOT_NULL(strstr(text, "1 file\n"));
+    EXPECT_NULL(strstr(text, "main.c"));
+    EXPECT_NULL(strstr(text, "game.c"));
+    EXPECT_NULL(strstr(text, "test_main.c"));
+
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* And the other half of the same rule: a pipe has no region to defer to, so
+   the line per source is the whole of the record and stays. */
+MOLTEST(a_stream_nobody_watches_lists_every_source_it_will_compile) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+
+    build_report_will_compile(report, &own, "main.c");
+    build_report_will_compile(report, &own, "game.c");
+    build_report_will_compile(report, &own, "world.c");
+    build_report_begin(report, 3);
+
+    char text[1024] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NOT_NULL(strstr(text, "main.c"));
+    EXPECT_NOT_NULL(strstr(text, "game.c"));
+    EXPECT_NOT_NULL(strstr(text, "world.c"));
+    EXPECT_NULL(strstr(text, "3 files"));
+
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
 MOLTEST(a_terminal_says_which_files_are_being_compiled_now) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);

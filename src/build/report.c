@@ -213,6 +213,33 @@ static void write_cached(build_report *report) {
     write_line(report, ANSI_DIM, CACHED_GLYPH, CACHED_WORD, count, NULL);
 }
 
+/*
+ * Whether an origin is listed a source at a time or counted in one line.
+ *
+ * The two that are listed are the two whose lines are sources rather than
+ * packages, and they are exactly the two the region is about to name one by
+ * one as it compiles them. Saying them twice is filling the scrollback with
+ * what the region says better and then throwing the region away.
+ *
+ * Only on a terminal. A pipe and a log file have no region to defer to, and
+ * there the line per source is the whole of the record.
+ */
+static bool counted_not_listed(const build_report *report, build_origin origin) {
+    if(!report->interactive)
+        return false;
+    return origin == build_origin_project || origin == build_origin_tests;
+}
+
+/* One line for everything an origin contributes, in the shape the `cached`
+   line already had — which is the sign that counting rather than listing is
+   something this report was already doing. */
+static void write_origin_count(build_report *report, build_origin origin, size_t files) {
+    char count[64];
+    (void)snprintf(count, sizeof count, "%zu file%s", files, files == 1 ? "" : "s");
+    write_line(report, origin_style[origin].colour, origin_style[origin].glyph,
+               origin_style[origin].word, count, NULL);
+}
+
 /* --- the region --- */
 
 /* Cells the bar may have on a terminal this wide. It gives up columns before
@@ -437,10 +464,16 @@ void build_report_begin(build_report *report, size_t total) {
        planned: what a dependency contributes and what the tests do are two
        different things to read, and the build's own order interleaves them. */
     for(size_t origin = 0; origin < ORIGIN_COUNT; origin++) {
+        size_t files = 0;
         for(size_t i = 0; i < report->entry_count; i++) {
-            if(report->entries[i].origin == (build_origin)origin)
+            if(report->entries[i].origin != (build_origin)origin)
+                continue;
+            files++;
+            if(!counted_not_listed(report, (build_origin)origin))
                 write_entry(report, &report->entries[i]);
         }
+        if(files > 0 && counted_not_listed(report, (build_origin)origin))
+            write_origin_count(report, (build_origin)origin, files);
     }
     if(report->skipped > 0)
         write_cached(report);
