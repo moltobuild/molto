@@ -38,7 +38,7 @@ static void run_one_test(const char *binary, const project_env *env, size_t *pas
     }
 }
 
-int test_command_run(const char *requested_profile, bool refresh_toolchain) {
+int test_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs) {
     build_profile profile = profile_debug;
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
@@ -53,7 +53,7 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain) {
     str_list binaries;
     str_list_init(&binaries);
     project_env env;
-    int code = build_tests(root, profile, refresh_toolchain, &binaries, &env);
+    int code = build_tests(root, profile, refresh_toolchain, jobs, &binaries, &env);
     if(code != exit_ok) {
         str_list_free(&binaries);
         return code;

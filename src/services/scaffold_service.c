@@ -56,7 +56,11 @@ static const char gitignore_template[] = "# Build output\n"
                                          "/build/\n"
                                          "\n"
                                          "# Workspace database (molto-owned metadata)\n"
-                                         "/.bin/\n";
+                                         "/.bin/\n"
+                                         "\n"
+                                         "# What every build tells clangd and clang-tidy about\n"
+                                         "# this project: derived from Project.toml and the tree\n"
+                                         "/compile_commands.json\n";
 
 /* Write one of the starter files, leaving an existing one untouched. */
 static int write_starter_file(const char *root, const char *relative, const char *content) {

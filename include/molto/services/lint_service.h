@@ -2,6 +2,7 @@
 #define MOLTO_LINT_SERVICE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <molto/build/diagnostic.h>
 #include <molto/build/profile.h>
@@ -10,6 +11,10 @@ typedef struct {
     build_profile profile;
     bool refresh_toolchain;
     bool refresh_tools;
+    /* How many files may be analysed at once; 0 takes the whole machine. The
+       analysis is a compiler and a linter per file, so `-j` means here what it
+       means to a build: a cap on what this command does to the machine. */
+    size_t jobs;
     /* Re-analyse every file and rewrite its recorded result, for a tool that is
        not deterministic or depends on something the fingerprint cannot see
        (RFC-0006). Needing it routinely means the cache is wrong, not that the

@@ -73,6 +73,15 @@ Compiles the project.
   WSDB, see `spec.md` section 11).
 - `--refresh-toolchain` resolves the compiler again instead of reusing the
   answer recorded in the workspace database. Also accepted by `run` and `test`.
+- `--jobs <n>`, `-j <n>` compiles at most `n` translation units at once.
+  Without it the build takes every core. It is a cap on this invocation and is
+  never recorded: two builds differing only in `-j` produce the same objects.
+  Also accepted by `run`, `test`, `lint` and `fmt` — all five run the same
+  pool, and a cap only some of them obeyed would be a cap in name only.
+- Writes `compile_commands.json` at the project root, describing every unit it
+  compiled — including the ones it found up to date — so clangd, clang-tidy and
+  anything else that parses this code reads the same flags the build used
+  (RFC-0007). `molto test` writes one covering `tests/` too.
 
 ### `molto run [args]`
 

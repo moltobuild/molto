@@ -33,7 +33,7 @@ static bool built_workspace_setup(built_workspace *workspace) {
     snprintf(path, sizeof path, "%s/src/main.c", workspace->root);
     if (!fs_write_file(path, "int main(void) { return 0; }\n"))
         return false;
-    if (build_project(workspace->root, profile_debug, false, NULL, 0) != exit_ok)
+    if (build_project(workspace->root, profile_debug, false, 0, NULL, 0) != exit_ok)
         return false;
 
     snprintf(workspace->build_dir, sizeof workspace->build_dir, "%s/build", workspace->root);

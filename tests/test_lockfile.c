@@ -338,7 +338,7 @@ MOLTEST(a_build_with_dependencies_writes_the_lock) {
 
     char app[PATH_MAX_LEN];
     ASSERT_TRUE(fs_format_path(app, sizeof app, "%s/app", at.root));
-    ASSERT_EQ(exit_ok, build_project(app, profile_debug, false, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
 
     lockfile lock;
     char err[512] = "";
@@ -365,7 +365,7 @@ MOLTEST(a_build_without_dependencies_writes_no_lock) {
     ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/Project.toml", at.root));
     ASSERT_TRUE(fs_write_file(file, "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n"));
 
-    ASSERT_EQ(exit_ok, build_project(at.root, profile_debug, false, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(at.root, profile_debug, false, 0, NULL, 0));
 
     ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/Molto.lock", at.root));
     EXPECT_FALSE(fs_path_exists(file));
@@ -478,14 +478,14 @@ MOLTEST(a_build_stops_when_the_lock_disagrees) {
 
     char app[PATH_MAX_LEN];
     ASSERT_TRUE(fs_format_path(app, sizeof app, "%s/app", at.root));
-    ASSERT_EQ(exit_ok, build_project(app, profile_debug, false, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
 
     /* Someone repoints the same name at a different directory. */
     ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/Molto.lock", app));
     ASSERT_TRUE(fs_write_file(file, "version = 1\nroot = \"app\"\n\n[[package]]\n"
                                     "name = \"greet\"\nsource = \"path+/somewhere/else\"\n"
                                     "scopes = [\"runtime\"]\ndependencies = []\n"));
-    EXPECT_EQ(exit_dependency_failure, build_project(app, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_dependency_failure, build_project(app, profile_debug, false, 0, NULL, 0));
 
     sandbox_close(&at);
 }

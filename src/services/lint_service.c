@@ -617,7 +617,7 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     bool ok =
         build_tasks(root, &setup, request->profile, &sources, db, files, tasks, argvs, &count);
     if(ok && count > 0) {
-        task_pool *pool = task_pool_create(0);
+        task_pool *pool = task_pool_create(request->jobs);
         if(pool == NULL) {
             ok = false;
         } else {

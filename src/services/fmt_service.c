@@ -427,7 +427,7 @@ int fmt_project(const char *root, const fmt_request *request, fmt_result *result
         ok = read_originals(tasks, count);
 
     if(ok) {
-        task_pool *pool = task_pool_create(0);
+        task_pool *pool = task_pool_create(request->jobs);
         if(pool == NULL) {
             ok = false;
         } else {

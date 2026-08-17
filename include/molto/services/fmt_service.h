@@ -17,6 +17,8 @@ typedef enum {
 typedef struct {
     fmt_mode mode;
     bool refresh_tools;
+    /* How many files may be formatted at once; 0 takes the whole machine. */
+    size_t jobs;
     /* Format every file again instead of skipping the ones already recorded as
        formatted (RFC-0006). */
     bool refresh_analysis;

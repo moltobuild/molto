@@ -46,7 +46,7 @@ MOLTEST(lint_outside_a_workspace_is_a_manifest_error) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, false));
 
-    EXPECT_EQ(exit_invalid_manifest, lint_command_run(NULL, false, false, false, NULL));
+    EXPECT_EQ(exit_invalid_manifest, lint_command_run(NULL, false, false, false, NULL, 0));
 
     workspace_leave(&ws);
 }
@@ -55,7 +55,7 @@ MOLTEST(fmt_outside_a_workspace_is_a_manifest_error) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, false));
 
-    EXPECT_EQ(exit_invalid_manifest, fmt_command_run(false, false, false, false));
+    EXPECT_EQ(exit_invalid_manifest, fmt_command_run(false, false, false, false, 0));
 
     workspace_leave(&ws);
 }
@@ -63,11 +63,11 @@ MOLTEST(fmt_outside_a_workspace_is_a_manifest_error) {
 MOLTEST(lint_rejects_an_unknown_profile) {
     /* Validated before the workspace is even looked for: a typo in a flag is
        the user's mistake, not the project's. */
-    EXPECT_EQ(exit_usage_error, lint_command_run("relase", false, false, false, NULL));
+    EXPECT_EQ(exit_usage_error, lint_command_run("relase", false, false, false, NULL, 0));
 }
 
 MOLTEST(lint_rejects_an_unknown_output_format) {
-    EXPECT_EQ(exit_usage_error, lint_command_run(NULL, false, false, false, "yaml"));
+    EXPECT_EQ(exit_usage_error, lint_command_run(NULL, false, false, false, "yaml", 0));
 }
 
 MOLTEST(lint_accepts_the_formats_it_documents) {
@@ -76,16 +76,16 @@ MOLTEST(lint_accepts_the_formats_it_documents) {
 
     /* An empty project has nothing to analyse, which is success, not an error
        — and it proves the two formats are accepted rather than rejected. */
-    EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "text"));
-    EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "json"));
-    EXPECT_EQ(exit_ok, lint_command_run("release", false, false, false, NULL));
+    EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "text", 0));
+    EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "json", 0));
+    EXPECT_EQ(exit_ok, lint_command_run("release", false, false, false, NULL, 0));
 
     workspace_leave(&ws);
 }
 
 MOLTEST(fmt_rejects_check_and_diff_together) {
     /* Two answers to the same question: which one was meant is not guessable. */
-    EXPECT_EQ(exit_usage_error, fmt_command_run(true, true, false, false));
+    EXPECT_EQ(exit_usage_error, fmt_command_run(true, true, false, false, 0));
 }
 
 /* Format `root` in write mode and report how many files it rewrote, or -1 when

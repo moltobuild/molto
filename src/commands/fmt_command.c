@@ -20,7 +20,7 @@ static void report(const fmt_result *result, fmt_mode mode) {
     fprintf(stderr, "%zu file%s would change\n", changed, changed == 1 ? "" : "s");
 }
 
-int fmt_command_run(bool check, bool diff, bool refresh_tools, bool refresh_analysis) {
+int fmt_command_run(bool check, bool diff, bool refresh_tools, bool refresh_analysis, size_t jobs) {
     if(check && diff) {
         fprintf(stderr, "molto: --check and --diff are two answers to the same "
                         "question; pick one\n");
@@ -38,6 +38,7 @@ int fmt_command_run(bool check, bool diff, bool refresh_tools, bool refresh_anal
         .mode = mode,
         .refresh_tools = refresh_tools,
         .refresh_analysis = refresh_analysis,
+        .jobs = jobs,
         .diff_stream = mode == fmt_mode_diff ? stdout : NULL,
     };
 

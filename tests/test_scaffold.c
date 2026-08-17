@@ -85,6 +85,10 @@ MOLTEST(scaffold_ignores_the_directories_molto_owns) {
     ASSERT_NOT_NULL(ignore);
     EXPECT_NOT_NULL(strstr(ignore, "/build/"));
     EXPECT_NOT_NULL(strstr(ignore, "/.bin/"));
+    /* And the compilation database, which every build rewrites from the
+       manifest and the tree: committing it would put one developer's absolute
+       paths in everyone else's checkout. */
+    EXPECT_NOT_NULL(strstr(ignore, "/compile_commands.json"));
     free(ignore);
 
     char cmd[700];

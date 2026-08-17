@@ -1,5 +1,6 @@
 #include <molto/services/build_service.h>
 
+#include <molto/build/compile_db.h>
 #include <molto/build/compile_flags.h>
 #include <molto/build/depfile.h>
 #include <molto/build/profile.h>
@@ -289,18 +290,53 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
     return ok;
 }
 
+/* The compile command for one unit, depfile path included. The three callers
+   below all need the same argv — to run it, to fingerprint it, and to write it
+   into the compilation database — and a fourth spelling of it would be one
+   that could disagree with what is executed. */
+[[nodiscard]] static bool unit_argv(str_list *argv, const char *root, const compile_unit *unit,
+                                    const char *object, const manifest_profile *settings,
+                                    const resolved_toolchain *chain) {
+    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
+    return depfile_path_for(object, depfile, sizeof depfile) &&
+           build_compile_argv(argv, root, unit, object, settings, depfile, chain);
+}
+
+/* The same compile line, as a tool that is not the build should read it: minus
+   `-MMD` and `-MF <path>`.
+ *
+ * They are the one part of the line that says nothing about the translation.
+ * They exist so the build learns which headers a unit read, and no consumer of
+ * the compilation database wants them — Clang's own tooling strips them before
+ * parsing, and the tools that instead *run* the line, like
+ * include-what-you-use, would write a depfile into `build/` on Molto's behalf.
+ *
+ * The line that is executed and the line that is fingerprinted both keep them.
+ * Only the description drops them, so nothing about freshness moves. */
+[[nodiscard]] static bool described_argv(str_list *out, const str_list *argv) {
+    for(size_t i = 0; i < str_list_count(argv); i++) {
+        const char *argument = str_list_get(argv, i);
+        if(strcmp(argument, ARG_DEPFILE_GEN) == 0)
+            continue;
+        if(strcmp(argument, ARG_DEPFILE_OUT) == 0) {
+            i++; /* and the path it names */
+            continue;
+        }
+        if(!str_list_push(out, argument))
+            return false;
+    }
+    return true;
+}
+
 /* Build the current compile command for a unit as a heap string, for the
    fingerprint comparison (caller frees). NULL on allocation failure. */
 static char *compile_command_string(const char *root, const compile_unit *unit, const char *object,
                                     const manifest_profile *settings, const project_env *env,
                                     const resolved_toolchain *chain) {
-    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if(!depfile_path_for(object, depfile, sizeof depfile))
-        return NULL;
     str_list argv;
     str_list_init(&argv);
     char *command = NULL;
-    if(build_compile_argv(&argv, root, unit, object, settings, depfile, chain))
+    if(unit_argv(&argv, root, unit, object, settings, chain))
         command = command_fingerprint(&argv, env);
     str_list_free(&argv);
     return command;
@@ -312,12 +348,9 @@ static char *compile_command_string(const char *root, const compile_unit *unit, 
 static bool compile_one(const char *root, const compile_unit *unit, const char *object,
                         const manifest_profile *settings, const project_env *env,
                         const resolved_toolchain *chain) {
-    char depfile[PATH_BUFFER_SIZE + sizeof(DEPFILE_SUFFIX)];
-    if(!depfile_path_for(object, depfile, sizeof depfile))
-        return false;
     str_list argv;
     str_list_init(&argv);
-    if(!build_compile_argv(&argv, root, unit, object, settings, depfile, chain)) {
+    if(!unit_argv(&argv, root, unit, object, settings, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -385,6 +418,19 @@ static void warn_if_not_saved(wsdb *db) {
         fprintf(stderr, "molto: warning: could not save the workspace database; "
                         "the next build will not be incremental\n");
 }
+
+/* What every compilation pass of a build shares, beyond the units it compiles.
+   Both answers belong to the invocation rather than to the project: how much of
+   the machine this build may take, and whether anyone asked for a description
+   of what it compiled. */
+typedef struct {
+    /* Worker threads per pass; 0 takes the whole machine, which is what a build
+       does when `-j` is not given. */
+    size_t jobs;
+    /* Where every unit's command line is recorded, or NULL when nothing is
+       collecting them. */
+    compile_db *cdb;
+} pass_options;
 
 /* One parallel compilation task: compile `unit` into `object`, recording a
    shared failure flag. Runs on a task_pool worker. */
@@ -474,8 +520,8 @@ static void share_in_object_cache(const char *source, const char *object, const 
 
 static int compile_units(const char *root, build_profile profile, const manifest_profile *settings,
                          const project_env *env, const resolved_toolchain *chain, wsdb *db,
-                         const compile_unit *units, size_t count, str_list *objects, bool *any_cpp,
-                         bool *any_compiled) {
+                         const pass_options *options, const compile_unit *units, size_t count,
+                         str_list *objects, bool *any_cpp, bool *any_compiled) {
     /* `objects` accumulates across the passes a build makes — dependencies
        first, then the project — so this call's entries begin where the list
        already stood. Indexing it from zero would hand one source another's
@@ -505,7 +551,23 @@ static int compile_units(const char *root, build_profile profile, const manifest
             free(needs);
             return exit_build_failure;
         }
-        char *command = compile_command_string(root, &units[i], object, settings, env, chain);
+        /* One argv answers both questions asked here: whether this unit is
+           stale, and what it compiles as. The second is recorded for every
+           unit and not only the stale ones — an editor asks what a file
+           compiles as, and "it was already up to date" is not an answer. */
+        str_list argv;
+        str_list_init(&argv);
+        char *command = NULL;
+        if(unit_argv(&argv, root, &units[i], object, settings, chain)) {
+            command = command_fingerprint(&argv, env);
+            str_list described;
+            str_list_init(&described);
+            if(!described_argv(&described, &argv) ||
+               !compile_db_add(options->cdb, source, object, &described))
+                fprintf(stderr, "molto: warning: could not describe '%s' for the editor\n", source);
+            str_list_free(&described);
+        }
+        str_list_free(&argv);
         needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
 
         /* A stale object that another project already compiled the same way is
@@ -529,7 +591,7 @@ static int compile_units(const char *root, build_profile profile, const manifest
 
     /* Phase 2: compile the stale units concurrently (no WSDB access here). */
     compile_task *tasks = calloc(to_build, sizeof(compile_task));
-    task_pool *pool = task_pool_create(0);
+    task_pool *pool = task_pool_create(options->jobs);
     if(tasks == NULL || pool == NULL) {
         free(tasks);
         task_pool_destroy(pool);
@@ -982,10 +1044,10 @@ static void watch_registry(size_t frame, void *context) {
    (caller-initialised, caller-freed). Reports whether C++ is present and whether
    anything was recompiled. Shared by build_project and build_tests. */
 static int compile_project(const char *root, build_profile profile, wsdb *db,
-                           bool refresh_toolchain, project_ctx *ctx_out,
-                           resolved_toolchain *chain_out, str_list *objects_out,
-                           str_list *include_flags_out, bool *any_cpp_out, bool *any_compiled_out,
-                           prepared_deps *dev_out) {
+                           bool refresh_toolchain, const pass_options *options,
+                           project_ctx *ctx_out, resolved_toolchain *chain_out,
+                           str_list *objects_out, str_list *include_flags_out, bool *any_cpp_out,
+                           bool *any_compiled_out, prepared_deps *dev_out) {
     int result = load_project(root, ctx_out);
     if(result != exit_ok)
         return result;
@@ -1072,8 +1134,8 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     if(pass.count > 0) {
         bool dep_cpp = false;
         bool dep_compiled = false;
-        result = compile_units(root, profile, &settings, &ctx_out->env, chain_out, db, pass.units,
-                               pass.count, objects_out, &dep_cpp, &dep_compiled);
+        result = compile_units(root, profile, &settings, &ctx_out->env, chain_out, db, options,
+                               pass.units, pass.count, objects_out, &dep_cpp, &dep_compiled);
         *any_cpp_out = *any_cpp_out || dep_cpp;
         *any_compiled_out = *any_compiled_out || dep_compiled;
     }
@@ -1088,8 +1150,8 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
                        include_flags_out);
         result = units == NULL ? exit_build_failure
                                : compile_units(root, profile, &settings, &ctx_out->env, chain_out,
-                                               db, units, str_list_count(&sources), objects_out,
-                                               &project_cpp, &project_compiled);
+                                               db, options, units, str_list_count(&sources),
+                                               objects_out, &project_cpp, &project_compiled);
         free(units);
         *any_cpp_out = *any_cpp_out || project_cpp;
         *any_compiled_out = *any_compiled_out || project_compiled;
@@ -1098,8 +1160,23 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
     return result;
 }
 
-int build_project(const char *root, build_profile profile, bool refresh_toolchain, char *out_binary,
-                  size_t out_binary_size) {
+/* Write out what this build compiled, for whoever parses this code without
+   being the build: clangd, clang-tidy, cppcheck (RFC-0007).
+ *
+ * It is published even when the build failed, because that is when an editor
+ * that understands the project is worth the most — and a command line does not
+ * become wrong just because the code it describes does not compile. Failing to
+ * write it is a warning: nothing about the artifact depends on it. */
+static void publish_compile_db(const compile_db *cdb, const char *root) {
+    if(compile_db_count(cdb) == 0)
+        return;
+    if(!compile_db_write(cdb, root))
+        fprintf(stderr, "molto: warning: could not write compile_commands.json; "
+                        "editors and static analysers will have to guess\n");
+}
+
+int build_project(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
+                  char *out_binary, size_t out_binary_size) {
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -1118,9 +1195,12 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
        the version check — but this build links none of them. */
     prepared_deps dev;
     prepared_deps_init(&dev);
-    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &include_flags, &any_cpp, &any_compiled, &dev);
+    const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
+    int result = compile_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
+                                 &objects, &include_flags, &any_cpp, &any_compiled, &dev);
     prepared_deps_free(&dev);
+    publish_compile_db(options.cdb, root);
+    compile_db_destroy(options.cdb);
 
     if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
@@ -1298,7 +1378,7 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     return ok ? exit_ok : exit_build_failure;
 }
 
-int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
+int build_tests(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
                 str_list *test_binaries_out, project_env *env_out) {
     /* Cleared up front so a caller that keeps going after a failure runs
        nothing in a half-read environment. */
@@ -1321,10 +1401,17 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     bool any_compiled = false;
     prepared_deps dev;
     prepared_deps_init(&dev);
-    int result = compile_project(root, profile, db, refresh_toolchain, &ctx, &chain, &objects,
-                                 &include_flags, &any_cpp, &any_compiled, &dev);
+    /* One database for the whole command, so what it describes is everything a
+       test build compiles: the project, its dependencies, and tests/ — which is
+       what makes `molto test` the command that leaves an editor able to follow
+       a test into the code it exercises. */
+    const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
+    int result = compile_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
+                                 &objects, &include_flags, &any_cpp, &any_compiled, &dev);
     if(result != exit_ok) {
         prepared_deps_free(&dev);
+        publish_compile_db(options.cdb, root);
+        compile_db_destroy(options.cdb);
         str_list_free(&objects);
         str_list_free(&include_flags);
         warn_if_not_saved(db);
@@ -1348,6 +1435,8 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
        !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) ||
        !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
         (void)fs_report_long_path(root);
+        publish_compile_db(options.cdb, root);
+        compile_db_destroy(options.cdb);
         str_list_free(&objects);
         str_list_free(&include_flags);
         warn_if_not_saved(db);
@@ -1420,8 +1509,8 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
         if(!dep_pass_build(&pass, &dev, &ctx.target))
             result = exit_build_failure;
         else if(pass.count > 0)
-            result = compile_units(root, profile, &settings, &ctx.env, &chain, db, pass.units,
-                                   pass.count, &lib_objects, &dev_cpp, &dev_compiled);
+            result = compile_units(root, profile, &settings, &ctx.env, &chain, db, &options,
+                                   pass.units, pass.count, &lib_objects, &dev_cpp, &dev_compiled);
         dep_pass_free(&pass);
         any_cpp = any_cpp || dev_cpp;
         any_compiled = any_compiled || dev_compiled;
@@ -1444,8 +1533,8 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             units_from(&test_sources, &ctx.target, profile_opts, &ctx.test.options, &include_flags);
         result = units == NULL ? exit_build_failure
                                : compile_units(root, profile, &settings, &ctx.env, &chain, db,
-                                               units, str_list_count(&test_sources), &test_objects,
-                                               &tests_cpp, &tests_compiled);
+                                               &options, units, str_list_count(&test_sources),
+                                               &test_objects, &tests_cpp, &tests_compiled);
         free(units);
     }
 
@@ -1480,6 +1569,8 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     }
 
     prepared_deps_free(&dev);
+    publish_compile_db(options.cdb, root);
+    compile_db_destroy(options.cdb);
     str_list_free(&test_objects);
     str_list_free(&test_sources);
     str_list_free(&lib_objects);

@@ -392,8 +392,71 @@ The mechanics matter less than two invariants:
   make the retry after a fixed typo recompile the whole project, which is the
   moment a developer is least willing to wait.
 
-The pool is created and destroyed per batch, and there is no `-j`. Both are
-worth fixing and neither changes the contract above.
+`-j <n>` caps the worker count; without it the pool takes the whole machine,
+which is the default because a build is what the developer is waiting for. The
+flag is a cap on this command and nothing else: it is not recorded, it does not
+reach the fingerprint, and two builds that differ only in `-j` produce the same
+objects. That is what makes it safe to hand to a laptop on battery or to a CI
+runner sharing a host, and what keeps it out of the manifest — how much of a
+machine to use is a property of the machine, and the manifest describes the
+code.
+
+`build`, `run`, `test`, `lint` and `fmt` all take it, because all five run the
+same pool over a file at a time. A cap the compiler obeys and the linter
+ignores would be a cap in name only.
+
+The pool is still created and destroyed per batch. That is worth fixing and
+does not change the contract above.
+
+## The compilation database
+
+A build writes `compile_commands.json` at the project root, in the format the
+Clang tooling defines: one entry per translation unit, with `directory`,
+`file`, `output` and `arguments`.
+
+It exists because every tool that parses this code without being the build has
+the same problem the build already solved. clangd — and behind it VS Code,
+neovim, Emacs, Helix and Zed — cannot resolve an `#include` without the search
+path, and cannot read an `#ifdef` without the defines. Neither can clang-tidy,
+cppcheck or include-what-you-use. Molto knows both exactly, because it composed
+the command line, and a project whose editor disagrees with its build about
+what compiles is a project where every diagnostic has to be double-checked
+against `molto build`.
+
+Four decisions worth stating:
+
+- **Every unit, not every compilation.** The database is filled where freshness
+  is decided, not where the compiler runs, so a unit that was already up to
+  date is described exactly like one that was rebuilt. A database that only
+  covered what changed would be empty on the second build.
+- **The arguments are what is executed, minus the depfile flags.** Nothing is
+  rewritten to look tidier: `directory` is the project root and `file` and
+  `output` are relative to it, which is presentation, but no argument is
+  reworded, reordered or made prettier. The one omission is `-MMD -MF <path>`,
+  and it is an omission rather than an edit — those two say nothing about the
+  translation. They exist so the build learns which headers a unit read. Clang's
+  own tooling strips them before parsing, and a tool that runs the line instead
+  of reading it, like include-what-you-use, would write a depfile into `build/`
+  on Molto's behalf. `-o` stays: the object a unit produces is part of what the
+  compilation is, which is why `output` names it too.
+
+  The line that is *executed* and the line that is *fingerprinted* both keep
+  them. Only the description drops them, so nothing about freshness moves —
+  dropping them from the fingerprint would change the hash of every unit in
+  every project already on disk, and buy a full rebuild for a cosmetic gain.
+- **The last command wins.** The file is written by whichever command last
+  compiled, with the profile it compiled — so `molto test` leaves a database
+  covering `tests/` as well, and `molto build --profile release` leaves one
+  describing release. One file cannot hold two profiles, and choosing silently
+  between them would be worse than following what the developer last ran.
+- **It is written even when the build fails.** A command line does not become
+  wrong because the code it describes does not compile, and a broken build is
+  when an editor that understands the project is worth the most.
+
+Failing to write it is a warning, never a failure: nothing about the artifact
+depends on it. It is generated output — `molto new` puts it in `.gitignore`,
+and a committed one would carry one developer's absolute paths into everyone
+else's checkout.
 
 ## Diagnostics
 
@@ -433,7 +496,7 @@ Implemented: discovery with its sort and symlink rule, `[test].sources`, the
 depfile absorption, the hybrid freshness test, whole-command fingerprints, the
 mid-compile edit guard, per-profile output directories, the compile and link
 lines above with their scopes, test binaries in both modes, pruning of orphaned
-outputs, and the work-stealing pool.
+outputs, the work-stealing pool with `-j`, and the compilation database.
 
 Not implemented, each waiting on something other than this RFC:
 
@@ -443,7 +506,6 @@ Not implemented, each waiting on something other than this RFC:
   policy. Rejected explicitly in the meantime.
 - **`molto bench`.** The `bench` profile is honoured, but no command runs
   benchmarks and `bench/` is not discovered.
-- **`-j`.** The pool always takes the whole machine.
 - **Arbitrarily named profiles**, and rejection of the reserved profile keys.
 - **Output verification.** Objects and binaries are checked with `stat`, not
   hashed; an object corrupted in place is considered fresh. Inputs are hashed,

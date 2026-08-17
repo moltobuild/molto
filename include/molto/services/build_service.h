@@ -14,10 +14,16 @@
    an executable at `root/build/<profile>/<package-name>`. When `out_binary` is
    not NULL and the build succeeds, the executable path is written into it
    (`out_binary_size` bytes). `refresh_toolchain` re-resolves the compiler
-   instead of using the one recorded in the workspace database.
+   instead of using the one recorded in the workspace database. `jobs` caps how
+   many translation units compile at once; 0 takes the whole machine, which is
+   what a build does when `-j` is not given.
+
+   Also writes `root/compile_commands.json` describing every unit it compiled,
+   including the ones it found up to date: it is what the tools that parse this
+   code without being the build read (RFC-0007).
    Returns a molto_exit_code. */
 [[nodiscard]] int build_project(const char *root, build_profile profile, bool refresh_toolchain,
-                                char *out_binary, size_t out_binary_size);
+                                size_t jobs, char *out_binary, size_t out_binary_size);
 
 /* Translate a manifest's [env] table into the plain pairs process_service
    expects, writing at most `capacity` of them. Returns how many were written.
@@ -44,7 +50,12 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size);
    `root/build/<profile>/tests/<name>`, linked against the project's objects
    (excluding the app's src/main.c). Appends every built test binary path to
    `test_binaries_out` (caller-initialised, caller-freed). A missing or empty
-   tests/ directory is not an error. Returns a molto_exit_code.
+   tests/ directory is not an error. `jobs` caps the parallelism as in
+   build_project. Returns a molto_exit_code.
+
+   The `compile_commands.json` this writes covers tests/ as well as src/, so it
+   is a superset of the one `molto build` leaves — running the tests is what
+   makes an editor able to follow a test into the code it exercises.
 
    When `env_out` is not NULL it receives the manifest's [env], so that whoever
    runs these binaries runs them in the environment they were built in. It is
@@ -52,6 +63,6 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size);
    rewrite Project.toml on its way through, and a test that runs under a
    different environment than the one that compiled it is the bug this avoids. */
 [[nodiscard]] int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
-                              str_list *test_binaries_out, project_env *env_out);
+                              size_t jobs, str_list *test_binaries_out, project_env *env_out);
 
 #endif /* MOLTO_BUILD_SERVICE_H */

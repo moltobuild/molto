@@ -47,13 +47,13 @@ MOLTEST(test_command) {
     EXPECT_TRUE(chdir(root) == 0);
 
     /* One test fails -> non-zero exit; both binaries built. */
-    EXPECT_TRUE(test_command_run(NULL, false) == exit_build_failure);
+    EXPECT_TRUE(test_command_run(NULL, false, 0) == exit_build_failure);
     EXPECT_TRUE(fs_path_exists("build/debug/tests/test_pass"));
     EXPECT_TRUE(fs_path_exists("build/debug/tests/test_fail"));
 
     /* Fix the failing test -> everything passes. */
     EXPECT_TRUE(fs_write_file("tests/test_fail.c", "int main(void) { return 0; }\n"));
-    EXPECT_TRUE(test_command_run(NULL, false) == exit_ok);
+    EXPECT_TRUE(test_command_run(NULL, false, 0) == exit_ok);
 
     EXPECT_TRUE(chdir(previous) == 0);
 
@@ -96,7 +96,7 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
     EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
     EXPECT_TRUE(chdir(root) == 0);
 
-    EXPECT_EQ(exit_ok, test_command_run(NULL, false));
+    EXPECT_EQ(exit_ok, test_command_run(NULL, false, 0));
 
     EXPECT_TRUE(chdir(previous) == 0);
 
@@ -130,7 +130,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
 
     str_list binaries;
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries, NULL) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_ok);
     EXPECT_EQ(2, str_list_count(&binaries));
     str_list_free(&binaries);
 
@@ -146,7 +146,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
        `molto test` would keep running forever. */
     EXPECT_TRUE(remove(doomed) == 0);
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, &binaries, NULL) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_ok);
     EXPECT_EQ(1, str_list_count(&binaries));
     str_list_free(&binaries);
 

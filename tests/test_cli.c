@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/cli.h>
+#include <molto/exit_code.h>
 #include <molto/services/fs_service.h>
 #include <molto/util/cli.h>
 
@@ -145,4 +146,25 @@ MOLTEST(cli_reports_the_version_the_manifest_declares) {
     ASSERT_TRUE(read);
 
     EXPECT_STREQ(declared, cli_version());
+}
+
+MOLTEST(cli_refuses_a_jobs_count_that_is_not_one) {
+    /* Every one of these is rejected before the command looks for a workspace,
+       so nothing is compiled here — which is also what makes the check worth
+       having: a build told to take two workers and silently taking the machine
+       would be found out much later, on a laptop with a fan. */
+    char *not_a_number[] = { "molto", "build", "-j", "many" };
+    EXPECT_EQ(exit_usage_error, cli_run(4, not_a_number));
+
+    char *zero[] = { "molto", "build", "--jobs", "0" };
+    EXPECT_EQ(exit_usage_error, cli_run(4, zero));
+
+    char *negative[] = { "molto", "test", "-j", "-2" };
+    EXPECT_EQ(exit_usage_error, cli_run(4, negative));
+
+    char *trailing[] = { "molto", "lint", "-j", "4x" };
+    EXPECT_EQ(exit_usage_error, cli_run(4, trailing));
+
+    char *absurd[] = { "molto", "fmt", "-j", "4096" };
+    EXPECT_EQ(exit_usage_error, cli_run(4, absurd));
 }

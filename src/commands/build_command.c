@@ -7,7 +7,7 @@
 
 #include <stdio.h>
 
-int build_command_run(const char *requested_profile, bool refresh_toolchain) {
+int build_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs) {
     build_profile profile = profile_debug;
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
@@ -24,7 +24,7 @@ int build_command_run(const char *requested_profile, bool refresh_toolchain) {
        of anyone redirecting a build. */
     const char *label = profile_name(profile);
     fprintf(stderr, "Compiling (%s)\n", label);
-    int code = build_project(root, profile, refresh_toolchain, NULL, 0);
+    int code = build_project(root, profile, refresh_toolchain, jobs, NULL, 0);
     if(code == exit_ok)
         fprintf(stderr, "Finished %s -> build/%s\n", label, label);
     return code;

@@ -2,14 +2,17 @@
 #define MOLTO_LINT_COMMAND_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
-/* Execute `molto lint [--profile <name>] [--format text|json]`.
+/* Execute `molto lint [--profile <name>] [--format text|json] [--jobs <n>]`.
    `requested_profile` and `format` may be NULL, which means the defaults.
    `refresh_analysis` re-analyses every file instead of replaying what was
-   recorded for the ones that did not change (RFC-0006).
+   recorded for the ones that did not change (RFC-0006). `jobs` is 0 when `-j`
+   was not given, which analyses on the whole machine.
    Returns a molto_exit_code: non-zero when an error-severity diagnostic was
    produced. A warning reports and still succeeds (RFC-0005). */
 [[nodiscard]] int lint_command_run(const char *requested_profile, bool refresh_toolchain,
-                                   bool refresh_tools, bool refresh_analysis, const char *format);
+                                   bool refresh_tools, bool refresh_analysis, const char *format,
+                                   size_t jobs);
 
 #endif /* MOLTO_LINT_COMMAND_H */

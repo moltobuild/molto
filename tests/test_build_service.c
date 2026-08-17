@@ -4,6 +4,8 @@
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/util/json.h>
+#include <molto/util/str_list.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,14 +48,14 @@ MOLTEST(build_service) {
         "int main(void) { printf(\"hi\\n\"); return answer(); }\n"));
 
     /* First build compiles and links. */
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     EXPECT_TRUE(fs_path_exists(binary));
     int64_t linked_at = mtime_of(binary);
 
     /* A no-op rebuild must NOT re-link (the binary is left untouched). */
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
     /* Touching a header recompiles the units that include it. main.c includes
@@ -61,7 +63,7 @@ MOLTEST(build_service) {
     char util_header[512];
     snprintf(util_header, sizeof util_header, "%s/src/util.h", root);
     EXPECT_TRUE(fs_write_file(util_header, "int answer(void); /* touched */\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
     linked_at = mtime_of(binary); /* rebase for the next step */
 
@@ -71,7 +73,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(main_path,
         "#include <stdio.h>\n"
         "int main(void) { printf(\"hi again\\n\"); return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
 
     /* The produced binary runs successfully. */
@@ -85,7 +87,7 @@ MOLTEST(build_service) {
     /* A directory without Project.toml is an invalid-manifest error. */
     char empty[] = "/tmp/molto_empty_XXXXXX";
     EXPECT_TRUE(mkdtemp(empty) != NULL);
-    EXPECT_TRUE(build_project(empty, profile_debug, false, NULL, 0) == exit_invalid_manifest);
+    EXPECT_TRUE(build_project(empty, profile_debug, false, 0, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
 
@@ -103,7 +105,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(path,
         "#include <math.h>\n"
         "int main(void) { return (int)sqrt(4.0) - 2; }\n"));
-    EXPECT_TRUE(build_project(lib_root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(lib_root, profile_debug, false, 0, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
     (void)system(cmd);
 
@@ -118,13 +120,13 @@ MOLTEST(build_service) {
     snprintf(path, sizeof path, "%s/Project.toml", fp_root);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 0\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, false, 0, NULL, 0) == exit_ok);
     char fp_obj[512];
     snprintf(fp_obj, sizeof fp_obj, "%s/build/debug/obj/src/main.c.o", fp_root);
     int64_t compiled_at = mtime_of(fp_obj);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(fp_obj) > compiled_at); /* recompiled due to changed opt_level */
     snprintf(cmd, sizeof cmd, "rm -rf %s", fp_root);
     (void)system(cmd);
@@ -140,7 +142,7 @@ MOLTEST(build_service) {
         "[package]\nname = \"def\"\n[target]\ndefines = [\"ANSWER=42\"]\n"));
     snprintf(path, sizeof path, "%s/src/main.c", def_root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return ANSWER - 42; }\n"));
-    EXPECT_TRUE(build_project(def_root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(def_root, profile_debug, false, 0, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
     (void)system(cmd);
 }
@@ -160,7 +162,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     EXPECT_TRUE(fs_write_file(path, "this is not valid C\n"));
 
     /* The build fails because of bad.c... */
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_build_failure);
 
     /* ...but good.c did compile, and its object is recorded as up to date. */
     char good_object[512];
@@ -170,7 +172,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
 
     /* A second attempt only retries the broken unit: the good object is left
        alone instead of being thrown away and rebuilt. */
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_build_failure);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at);
 
     /* No stale depfile is left behind for the unit that failed. */
@@ -181,7 +183,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     /* Fixing the broken unit completes the build. */
     snprintf(path, sizeof path, "%s/src/bad.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
 
     char cmd[600];
@@ -213,7 +215,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
         "    return 1;\n"
         "}\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
 
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/cpp_app", root);
@@ -240,7 +242,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_release, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_release, false, 0, NULL, 0) == exit_ok);
 
     /* Each profile gets its own output tree, so debug and release coexist. */
     char release_binary[512];
@@ -250,7 +252,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast", root);
     EXPECT_FALSE(fs_path_exists(debug_binary));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(fs_path_exists(debug_binary));
     EXPECT_TRUE(fs_path_exists(release_binary));
 
@@ -288,7 +290,7 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
     snprintf(deep, sizeof deep, "%s/deep/nested", root);
     ASSERT_TRUE(chdir(deep) == 0);
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
 
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[600];
@@ -334,7 +336,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
     ASSERT_TRUE(chmod(compiler, 0755) == 0);
     ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
 
     char log[512];
     snprintf(log, sizeof log, "%s/calls", tools);
@@ -347,7 +349,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
        Recording it would leave nothing to rebuild it, and the next link would
        quietly take the stale object — which is how a test suite ends up
        running against code that was already changed. */
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
     char *second = fs_read_file(log);
     ASSERT_NOT_NULL(second);
     EXPECT_TRUE(strlen(second) > after_first);
@@ -420,7 +422,7 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
         "#ifndef BETA_API\n#error \"an interface did not reach the consumer\"\n#endif\n"
         "int main(void) { return alpha_answer() + beta_answer() - 3; }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -471,7 +473,7 @@ MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
         "#error \"a dependency's standard reached the consumer\"\n#endif\n"
         "int main(void) { return legacy_answer(); }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -499,7 +501,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
              "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"one\"\n");
     EXPECT_TRUE(fs_write_file(manifest_path, manifest));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
 
     char object[512];
     char binary[512];
@@ -511,7 +513,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
 
     /* Same manifest, same fingerprint: the string has to be stable across runs
        or nothing would ever be up to date. */
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) == compiled_at);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
@@ -519,7 +521,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
              "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"two\"\n");
     EXPECT_TRUE(fs_write_file(manifest_path, manifest));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) != compiled_at);
     EXPECT_TRUE(mtime_of(binary) != linked_at);
 
@@ -546,7 +548,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
     EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
                                              "[env]\nZED = \"z\"\nALPHA = \"a\"\n"));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
 
     char object[512];
     snprintf(object, sizeof object, "%s/build/debug/obj/src/main.c.o", root);
@@ -555,7 +557,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
 
     EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
                                              "[env]\nALPHA = \"a\"\nZED = \"z\"\n"));
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) == compiled_at);
 
     char cmd[600];
@@ -621,4 +623,119 @@ MOLTEST(env_fingerprint_separates_two_environments) {
     EXPECT_TRUE(project_env_fingerprint(&one.env, first, sizeof first) > 0);
     EXPECT_TRUE(project_env_fingerprint(&two.env, second, sizeof second) > 0);
     EXPECT_STREQ(first, second);
+}
+
+/* A build describes what it compiled, for the tools that parse this code
+   without being the build (RFC-0007). */
+MOLTEST(build_writes_the_compilation_database) {
+    char root[] = "/tmp/molto_cdb_build_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    ASSERT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    ASSERT_TRUE(fs_write_file(path,
+        "[package]\nname = \"described\"\n"
+        "[target]\nstd = \"c11\"\ndefines = [\"GREETING=\\\"hi\\\"\"]\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    ASSERT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+    snprintf(path, sizeof path, "%s/src/util.c", root);
+    ASSERT_TRUE(fs_write_file(path, "int used(void) { return 1; }\n"));
+
+    /* -j 1 is the flag doing something observable: one worker compiles both
+       units, which is the case a machine with one core has always had. */
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 1, NULL, 0));
+
+    char database[512];
+    snprintf(database, sizeof database, "%s/compile_commands.json", root);
+    char *text = fs_read_file(database);
+    ASSERT_NOT_NULL(text);
+    json_document *doc = json_parse(text);
+    free(text);
+    ASSERT_NOT_NULL(doc);
+
+    json_value array = json_root(doc);
+    EXPECT_EQ(2, (long long)json_count(array));
+    json_value entry = json_at(array, 0);
+    EXPECT_STREQ("src/main.c", json_string(json_get(entry, "file")));
+    EXPECT_STREQ("build/debug/obj/src/main.c.o", json_string(json_get(entry, "output")));
+
+    /* A define with quotes in it survives the round trip: escaping it wrong is
+       the difference between a database and an unparseable file. The depfile
+       flags do not survive it, and neither does the path they name: they say
+       nothing about the translation, and a tool that runs this line would
+       write a depfile into build/ on the build's behalf. */
+    bool found_define = false;
+    bool found_depflag = false;
+    json_value arguments = json_get(entry, "arguments");
+    EXPECT_TRUE(json_count(arguments) > 3);
+    for(size_t i = 0; i < json_count(arguments); i++) {
+        const char *argument = json_string(json_at(arguments, i));
+        if(argument == NULL)
+            continue;
+        found_define = found_define || strcmp(argument, "-DGREETING=\"hi\"") == 0;
+        found_depflag = found_depflag || strcmp(argument, "-MMD") == 0 ||
+                        strcmp(argument, "-MF") == 0 || strstr(argument, ".o.d") != NULL;
+    }
+    EXPECT_TRUE(found_define);
+    EXPECT_FALSE(found_depflag);
+    /* What is left is still a compile line: the object it produces is named. */
+    bool found_output = false;
+    for(size_t i = 0; i < json_count(arguments); i++) {
+        const char *argument = json_string(json_at(arguments, i));
+        found_output = found_output || (argument != NULL && strcmp(argument, "-o") == 0);
+    }
+    EXPECT_TRUE(found_output);
+    json_free(doc);
+
+    /* A rebuild that compiles nothing still describes everything: an editor
+       asks what a file compiles as, and "it was up to date" is no answer. */
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    text = fs_read_file(database);
+    ASSERT_NOT_NULL(text);
+    doc = json_parse(text);
+    free(text);
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(2, (long long)json_count(json_root(doc)));
+    json_free(doc);
+
+    /* The test build covers tests/ as well, so it is a superset of the one a
+       plain build leaves. */
+    snprintf(path, sizeof path, "%s/tests", root);
+    ASSERT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/tests/first_test.c", root);
+    ASSERT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    str_list binaries;
+    str_list_init(&binaries);
+    EXPECT_EQ(exit_ok, build_tests(root, profile_debug, false, 2, &binaries, NULL));
+    str_list_free(&binaries);
+
+    text = fs_read_file(database);
+    ASSERT_NOT_NULL(text);
+    doc = json_parse(text);
+    free(text);
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(3, (long long)json_count(json_root(doc)));
+    json_free(doc);
+
+    /* A build that fails still describes what it tried to compile: a command
+       line does not become wrong because the code it describes does not, and a
+       broken build is when an editor that understands the project helps most. */
+    snprintf(path, sizeof path, "%s/src/util.c", root);
+    ASSERT_TRUE(fs_write_file(path, "int used(void) { return \n"));
+    ASSERT_TRUE(remove(database) == 0);
+    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, false, 0, NULL, 0));
+    text = fs_read_file(database);
+    ASSERT_NOT_NULL(text);
+    doc = json_parse(text);
+    free(text);
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(2, (long long)json_count(json_root(doc)));
+    json_free(doc);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
 }

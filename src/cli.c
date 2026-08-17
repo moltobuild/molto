@@ -15,6 +15,7 @@
 #include <molto/util/cli.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Handed in by whoever compiled this, from [package] version in Project.toml.
@@ -43,12 +44,18 @@ static const cli_option add_options[] = {
 };
 
 /* The options shared by build/run/test. --refresh-toolchain asks again which
-   compiler satisfies [target] instead of reusing the recorded answer. */
+   compiler satisfies [target] instead of reusing the recorded answer.
+
+   --jobs is spelled -j because that is what it is called everywhere a build is
+   run, and it is absent by default rather than set to the core count: "as much
+   of this machine as there is" is not a number Molto should record. */
 static const cli_option build_options[] = {
     {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
      "debug"},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
      "Resolve the compiler again instead of reusing the cached one", NULL},
+    {"--jobs", 'j', cli_opt_value, "<n>", "Compile at most n units at once (default: every core)",
+     NULL},
 };
 
 /* `molto lint` takes what a build takes — the profile decides which defines are
@@ -64,6 +71,8 @@ static const cli_option lint_options[] = {
     {"--refresh-analysis", 0, cli_opt_flag, NULL,
      "Analyse every file again instead of replaying what did not change", NULL},
     {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, json)", "text"},
+    {"--jobs", 'j', cli_opt_value, "<n>", "Analyse at most n files at once (default: every core)",
+     NULL},
 };
 
 /* `molto login` has two ways in: exchange an email and password for a token,
@@ -98,6 +107,8 @@ static const cli_option fmt_options[] = {
      "Ask pickup again which formatter and linter this machine has", NULL},
     {"--refresh-analysis", 0, cli_opt_flag, NULL,
      "Format every file again instead of skipping what did not change", NULL},
+    {"--jobs", 'j', cli_opt_value, "<n>", "Format at most n files at once (default: every core)",
+     NULL},
 };
 
 /* --- command handlers: thin adapters over the *_command_run functions --- */
@@ -158,32 +169,77 @@ static bool wants_refresh(const cli_args *args) {
     return cli_args_flag(args, "--refresh-toolchain");
 }
 
+/* More worker threads than this is not a machine, it is a typo. The number is
+   arbitrary; refusing it is not, because the alternative is the thread pool
+   failing to start and the command reporting a build error for what was a
+   command-line mistake. */
+#define MAX_JOBS 1024
+
+/* The value of -j, or 0 for "every core", which is what no flag means. Returns
+   false for anything that is not a positive count: a build told to take two
+   workers and silently taking the whole machine is worse than one that stops
+   and says the argument makes no sense. */
+[[nodiscard]] static bool parse_jobs(const cli_args *args, size_t *out) {
+    *out = 0;
+    const char *value = cli_args_option(args, "--jobs");
+    if(value == NULL)
+        return true;
+
+    char *end = NULL;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if(end == value || *end != '\0' || parsed == 0 || parsed > MAX_JOBS)
+        return false;
+    *out = (size_t)parsed;
+    return true;
+}
+
+static int report_bad_jobs(const cli_args *args) {
+    fprintf(stderr, "molto: --jobs takes a count between 1 and %d, not '%s'\n", MAX_JOBS,
+            cli_args_option(args, "--jobs"));
+    return exit_usage_error;
+}
+
 static int handle_build(const cli_args *args) {
-    return build_command_run(cli_args_option(args, "--profile"), wants_refresh(args));
+    size_t jobs = 0;
+    if(!parse_jobs(args, &jobs))
+        return report_bad_jobs(args);
+    return build_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs);
 }
 
 static int handle_run(const cli_args *args) {
+    size_t jobs = 0;
+    if(!parse_jobs(args, &jobs))
+        return report_bad_jobs(args);
     int forwarded_count = 0;
     char *const *forwarded = cli_args_forwarded(args, &forwarded_count);
-    return run_command_run(cli_args_option(args, "--profile"), wants_refresh(args), forwarded,
+    return run_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs, forwarded,
                            forwarded_count);
 }
 
 static int handle_test(const cli_args *args) {
-    return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args));
+    size_t jobs = 0;
+    if(!parse_jobs(args, &jobs))
+        return report_bad_jobs(args);
+    return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs);
 }
 
 static int handle_lint(const cli_args *args) {
+    size_t jobs = 0;
+    if(!parse_jobs(args, &jobs))
+        return report_bad_jobs(args);
     return lint_command_run(cli_args_option(args, "--profile"), wants_refresh(args),
                             cli_args_flag(args, "--refresh-tools"),
                             cli_args_flag(args, "--refresh-analysis"),
-                            cli_args_option(args, "--format"));
+                            cli_args_option(args, "--format"), jobs);
 }
 
 static int handle_fmt(const cli_args *args) {
+    size_t jobs = 0;
+    if(!parse_jobs(args, &jobs))
+        return report_bad_jobs(args);
     return fmt_command_run(cli_args_flag(args, "--check"), cli_args_flag(args, "--diff"),
                            cli_args_flag(args, "--refresh-tools"),
-                           cli_args_flag(args, "--refresh-analysis"));
+                           cli_args_flag(args, "--refresh-analysis"), jobs);
 }
 
 static int handle_clean(const cli_args *args) {

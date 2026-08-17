@@ -28,7 +28,7 @@ static bool parse_format(const char *format, bool *as_json) {
 }
 
 int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool refresh_tools,
-                     bool refresh_analysis, const char *format) {
+                     bool refresh_analysis, const char *format, size_t jobs) {
     build_profile profile = profile_debug;
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr,
@@ -60,6 +60,7 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
         .refresh_toolchain = refresh_toolchain,
         .refresh_tools = refresh_tools,
         .refresh_analysis = refresh_analysis,
+        .jobs = jobs,
     };
 
     diagnostic_list found;

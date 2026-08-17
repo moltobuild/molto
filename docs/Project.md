@@ -409,6 +409,43 @@ Inside `[deps]` and `[dev-deps]` the trade is already closed: those two tables
 is specified but not implemented is an error naming the dependency, because a
 dependency read wrong is a dependency that silently is not there.
 
+## Your editor, and how much of the machine a build takes
+
+Neither of these is a manifest key. Both belong to the invocation, which is
+where the machine gets a say and the project does not.
+
+### `compile_commands.json`
+
+Every build writes one at the project root. It lists each translation unit with
+the exact command line the build used, which is what clangd (VS Code, neovim,
+Emacs, Helix, Zed), clang-tidy, cppcheck and include-what-you-use read to
+resolve an `#include` or evaluate an `#ifdef`. Nothing to enable and nothing to
+configure: the tools find it by walking up from the file they are looking at.
+
+Three things worth knowing:
+
+- **It describes the last thing you compiled.** `molto build` covers `src/` and
+  the dependencies; `molto test` covers those *and* `tests/`, so run the tests
+  once if you want the editor to follow a test into the code it exercises. A
+  `--profile release` build leaves a database describing release.
+- **It is generated.** `molto new` puts it in `.gitignore`; an adopted project
+  should add `/compile_commands.json` to its own. Committing it would ship your
+  absolute paths to everyone else.
+- **A stale editor means a stale database.** If clangd cannot find a header the
+  build finds, build once and it is current again — the file is rewritten every
+  time, including for units that did not need recompiling.
+
+### `-j`
+
+`molto build -j 4` compiles at most four units at once; without it the build
+uses every core. `run`, `test`, `lint` and `fmt` take it too. It caps this one
+invocation and changes nothing about the output: `-j 1` and `-j 16` produce the
+same objects, which is why it is not in the manifest and not in the fingerprint.
+
+Reach for it when the machine has something else to do — a laptop on battery, a
+CI runner shared with other jobs, or a build whose compiler is memory-hungry
+enough that one process per core starts swapping.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -427,6 +464,8 @@ dependency read wrong is a dependency that silently is not there.
 | `brings no recipe.toml at the root of its source` | A `path`/`git` dependency does not describe itself | Add a `recipe.toml` with `[artifacts]` beside its sources |
 | A key seems to do nothing | Typo, or the key is not implemented | Check the reference and the table above |
 | `not inside a molto workspace` | No `Project.toml` in this directory or its ancestors | `molto init` |
+| clangd reports errors the build does not | No `compile_commands.json`, or one from another profile | Run `molto build` (or `molto test`, for `tests/`) and reload the editor |
+| `--jobs takes a count between 1 and 1024` | `-j` given something that is not a positive count | `-j 4`, or drop the flag to use every core |
 | `invalid package name` from `molto init` | The directory name is not `snake_case` (`my-app`, `MyApp`) | Write the manifest by hand with a valid `name` |
 | `package name is missing or not snake_case` | `[package].name` absent or malformed | Lowercase letter first, then letters, digits and `_` |
 
