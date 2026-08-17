@@ -103,14 +103,21 @@ static double elapsed_seconds(const build_report *report) {
     return seconds + nanos / 1e9;
 }
 
-/* One inventory line: a glyph in the origin's colour, the origin word in its
-   padded field, the name, and a version where there is one.
+/* One line with the shape of an inventory line: a glyph in the origin's
+   colour, the origin word in its padded field, the name, and a version where
+   there is one. Returns the bytes written, terminator excluded.
 
    The padding is counted over the word alone and never over the composed line,
    because a glyph is three bytes and one column and an escape sequence is
-   several bytes and no columns at all. */
-static void write_line(build_report *report, const char *colour, const char *glyph,
-                       const char *word, const char *name, const char *version) {
+   several bytes and no columns at all.
+
+   Composed rather than printed, because the same shape is wanted in two
+   places: the inventory writes it out, and the region collects a handful of
+   them into a frame. No newline, for the same reason — the inventory adds one
+   and a row of the region must not have one. */
+static size_t compose_line(const build_report *report, char *out, size_t out_size,
+                           const char *colour, const char *glyph, const char *word,
+                           const char *name, const char *version) {
     const size_t width = strlen(word);
     const size_t pad = width < ORIGIN_FIELD ? ORIGIN_FIELD - width : 1;
     char spaces[ORIGIN_FIELD + 1];
@@ -122,11 +129,21 @@ static void write_line(build_report *report, const char *colour, const char *gly
         (void)snprintf(tail, sizeof tail, "%s%s%s", paint(report, ANSI_DIM), version,
                        paint(report, ANSI_RESET));
 
+    const int written =
+        snprintf(out, out_size, " %s%s%s %s%s%s%s%s%s", paint(report, colour), glyph,
+                 paint(report, ANSI_RESET), paint(report, ANSI_DIM), word,
+                 paint(report, ANSI_RESET), spaces, name, tail);
+    if(written < 0)
+        return 0;
+    return (size_t)written < out_size ? (size_t)written : out_size - 1;
+}
+
+static void write_line(build_report *report, const char *colour, const char *glyph,
+                       const char *word, const char *name, const char *version) {
     char line[LINE_MAX];
-    (void)snprintf(line, sizeof line, " %s%s%s %s%s%s%s%s%s\n", paint(report, colour), glyph,
-                   paint(report, ANSI_RESET), paint(report, ANSI_DIM), word,
-                   paint(report, ANSI_RESET), spaces, name, tail);
+    (void)compose_line(report, line, sizeof line, colour, glyph, word, name, version);
     (void)fputs(line, report->out);
+    (void)fputc('\n', report->out);
 }
 
 static void write_entry(build_report *report, const report_entry *entry) {
