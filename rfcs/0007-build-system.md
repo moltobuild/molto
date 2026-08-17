@@ -437,11 +437,10 @@ for the person when the terminal cannot. A build that failed prints no summary
 line at all — the compiler has already said the thing worth reading, and a tick
 under it would be the report contradicting it.
 
-One consequence is visible and accepted: the compiler's own stderr is inherited
-rather than captured, so a diagnostic can land on the line the bar occupies.
-The bar is one line, redrawn from column zero, so the next frame repairs it.
-Capturing that output would fix it properly and would also take the colour out
-of every diagnostic gcc emits; that trade is not made here.
+The compiler's own stderr was once inherited rather than captured, so a
+diagnostic could land on the line the bar occupied and stay there until the next
+frame repaired it. It is captured now, and every block a build prints goes
+through the report's lock in one act (RFC-0011). Nothing lands on the bar.
 
 ## The compilation database
 
@@ -513,17 +512,16 @@ line, so a project that never runs `lint` is not seeing what `lint` would say.
 
 ### The order of what a build prints
 
-**Diagnostics are not ordered.** Units compile concurrently and each compiler
-writes to the build's stderr as it goes, so the output of two units that fail
-at once can interleave line by line — and does, on a machine with enough cores
-to run them together. Nor is the first diagnostic printed necessarily the first
-unit that failed.
+**Diagnostics are ordered by unit.** Each compiler's output is captured whole
+and printed once its unit is done, in one act against the report — which is
+what `lint` and `fmt` already did under the same pool, and what the build now
+does too (RFC-0011). Two units failing at once no longer interleave line by
+line.
 
-This is a defect and not a decision. The fix is already written elsewhere:
-`lint` and `fmt` capture each task's output whole and print it once the task is
-done, which is what keeps their output legible under the same pool. The build
-launches its compilers without capturing. Doing there what those two already do
-would order diagnostics by unit, at the cost of a buffer.
+They are not ordered by *plan*: blocks arrive as their units finish, so the
+first block printed is not necessarily the first unit that was queued. Buffering
+every block to replay them in plan order would be fully deterministic at the
+cost of saying nothing until the build ended, and that trade is not made here.
 
 ## Implementation Status
 
@@ -545,9 +543,9 @@ Not implemented, each waiting on something other than this RFC:
 - **Output verification.** Objects and binaries are checked with `stat`, not
   hashed; an object corrupted in place is considered fresh. Inputs are hashed,
   which is where correctness is actually at risk.
-- **Ordered diagnostics.** Compilers write straight to the build's stderr from
-  the pool, so concurrent failures interleave. `lint` and `fmt` already capture
-  per task and the build does not.
+- **Warnings on a cached unit.** A unit found up to date is not compiled, so
+  what the compiler said about it last time is not said again. RFC-0006's store
+  already records and replays that for `lint`; the build does not read it.
 
 ## Non-Goals
 
@@ -592,6 +590,7 @@ whose stated non-goal is being a compiler has no business attempting either
 - [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — replays the freshness rules specified here for `lint` and `fmt`
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the edges this build has none of yet
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — where a dependency's include paths, libraries and defines come from
+- [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — what a build prints when a unit does not compile, and why no flag is asked for
 
 See also `spec.md` sections 6 (Philosophy), 9-10 (Artifacts and Global Cache),
 12 (Incremental Compilation), 13 (Build Profiles) and 20 (Performance).

@@ -224,7 +224,12 @@ build artifacts, as specified in RFC-0002.
 
 - `--fix` — apply automatic fixes, delegated to the backend when it supports
   them.
-- `--format json` — emit machine-readable diagnostics for CI.
+- `--format json` — emit machine-readable diagnostics for CI. This is the
+  contract a script depends on, and no other shape moves it.
+- `--format rich` — the frame a build draws a diagnostic in, with the source
+  line and a caret (RFC-0011). It is what a terminal gets when `--format` is not
+  given; anything redirected gets the normalized one-line form below, so a
+  pipeline is never handed a shape it did not ask for.
 
 ## Current State
 
@@ -323,6 +328,7 @@ existing task pool.
 - [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — the store the caching above needs
 - [RFC-0007: Build System](0007-build-system.md) — the discovery walk this widens to headers
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — how a formatter or a linter is published and obtained
+- [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — the `rich` shape, which sits beside the normalized line rather than replacing it
 
 See also `spec.md` sections 10 (Global Cache), 11 (Workspace Database) and 17
 (Coding Conventions).

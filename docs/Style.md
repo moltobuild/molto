@@ -78,6 +78,26 @@ $ molto lint --profile release   # analyse with the release profile's defines
 $ molto lint -j 4                # at most four files at once; without it, every core
 ```
 
+### What it prints
+
+Three shapes, and which one you get when you do not ask:
+
+| `--format` | Shape | Default when |
+|---|---|---|
+| `rich` | the frame a build draws, with the source line and a caret | stdout is a terminal |
+| `text` | one normalized line per finding: `path:line:col: severity: message [rule]` | stdout is anything else |
+| `json` | one document, for CI | only when asked |
+
+So `molto lint` at a terminal reads like a build, and `molto lint > report`,
+`molto lint \| grep`, and every CI job that never passed the flag keep exactly
+the output they have always had. `--format text` asks for that shape at a
+terminal too. `json` is the contract a script should depend on; neither of the
+other two moves it.
+
+A `rich` block covers one file, names it at the top, and draws up to ten
+findings in a frame before the rest fall back to the `text` line. The frame is
+described in [Project.md](Project.md#what-a-build-says-when-something-is-wrong).
+
 Two passes over every source under `src/`:
 
 1. **The compiler** declared in `[target]`, in a syntax-only pass. No object

@@ -30,8 +30,10 @@ specification is required so that:
 - Commands that operate on a project require a `Project.toml` to be
   discoverable in the current directory or an ancestor directory (see
   RFC-0003).
-- Exit code `0` on success, non-zero on failure. Compiler/toolchain errors
-  are surfaced verbatim before Molto's own diagnostics.
+- Exit code `0` on success, non-zero on failure. Compiler and toolchain errors
+  are surfaced before Molto's own diagnostics. They are captured and reframed
+  rather than passed through untouched (RFC-0011); what a tool said is kept word
+  for word, and a line Molto could not read is printed as the tool wrote it.
 
 ## Commands
 
@@ -227,3 +229,4 @@ run `molto build` first and then the executable directly.
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — `add`, `remove` and `update`, and exit code 3
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — the document `publish` reads
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — `login` and `publish`
+- [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — how what a compiler said reaches the person who typed the command

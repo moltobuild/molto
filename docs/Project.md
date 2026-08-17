@@ -454,10 +454,79 @@ and `molto run > out.txt` captures only your program. Redirect stderr instead
 — a pipe, a file, a CI job — and the bar and the colour go away while the lines
 stay. `NO_COLOR=1` turns the colour off on a terminal too.
 
-A build that fails prints no `Finished` line: the compiler has already said the
-thing worth reading. You may see one torn line where a compiler diagnostic
-landed on top of the bar; the next frame repairs it, and the diagnostic itself
-is never touched.
+A build that fails prints no `Finished` line: what it prints instead is below.
+
+## What a build says when something is wrong
+
+A unit that does not compile is reported with the line it failed on:
+
+```
+   ✗ Failed to compile `database.c`
+
+   error[-Wincompatible-pointer-types]: compilation failed
+
+   ┌─ modules/database/src/database.c:42:17
+   │
+42 │     return user.name;
+   │                ^ incompatible pointer types
+   │
+   = dependency: database v1.2.0
+   = source: modules/database
+   = compiler: clang 20.1.2
+
+error: build failed
+```
+
+The bracket carries **the compiler's own flag**, where it named one, and is
+left out where it did not — there is no Molto error-code space to look up. The
+message under the caret is the compiler's, word for word.
+
+The footer says whose code this was. `= dependency:` names the package and its
+version; a source of your own has no package and gets no such line. `= source:`
+appears only when the package is somewhere you can go and look — a `path`
+dependency under your project — because a path into `~/.molto/cache/sources/`
+says no more than the coordinate above it already did. `= compiler:` is the
+vendor and version pickup resolved, or the name of the binary when `C_COMPILER`
+chose one by hand and nothing asked it what it was.
+
+**Warnings are reported the same way**, on builds that succeed:
+
+```
+   ⚠ Warnings compiling `parser.c`
+
+   warning[-Wunused-variable]: compiled with a warning
+
+   ┌─ src/parser.c:88:9
+   │
+88 │     int tmp = 0;
+   │         ^ unused variable 'tmp'
+   │
+   = compiler: gcc 12.3.0
+```
+
+`error: build failed` closes a build that failed — once, however many units
+broke — and nothing closes one that merely warned. A failure before any
+compiler ran, like a manifest that would not parse, says only its own message:
+nothing was built, so nothing failed to build.
+
+A failed **link** gets the same treatment. Its source line is only reachable
+when the objects carry debug information, so `debug` and `bench` point at the
+line and `release` quotes what the linker said instead.
+
+Four things worth knowing:
+
+- **Nothing is thrown away.** A line Molto could not read is printed as the
+  tool wrote it. Past ten frames for one file the rest fall back to the
+  one-line form `path:line:col: severity: message [rule]`, which still says
+  everything the frame would have.
+- **A cached unit does not repeat its warnings.** The compiler was not run, so
+  there is nothing to repeat. The warning comes back the next time that file is
+  actually compiled.
+- **A source that cannot be read loses only its excerpt.** The location and the
+  message stay. This is the ordinary outcome for `<command line>`, for
+  `<built-in>`, and for anything generated and since removed.
+- **`molto lint` draws the same frames**, at a terminal. Redirected, it keeps
+  the one-line form every script already parses — see `docs/Style.md`.
 
 ## Your editor, and how much of the machine a build takes
 
