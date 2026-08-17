@@ -28,10 +28,16 @@
  * will actually compile, which is why the build plans every pass before running
  * one. A bar over a total that grows is a bar that lies.
  *
- * **Everything goes to stderr, and the extras only when a person is there.** A
- * bar in a log file is noise and a bar in a pipe is corruption, so a
- * non-terminal gets the same lines with no bar and no escape sequences.
- * NO_COLOR speaks for the person even when the terminal does not.
+ * **Everything goes to stderr, and a terminal gets a region where everything
+ * else gets lines.** A bar in a log file is noise and a bar in a pipe is
+ * corruption, so a non-terminal gets one line per source, no region and no
+ * escape sequences at all. A terminal gets the inventory counted rather than
+ * listed, and the files themselves named in a region at the bottom of the
+ * screen that is redrawn as the work moves and taken away when it stops — the
+ * names are worth having while the file is compiling and worth nothing
+ * afterwards, and a build that leaves a hundred of them in the scrollback is
+ * charging the reader for both. NO_COLOR speaks for the person even when the
+ * terminal does not.
  */
 
 /* Which part of a build a unit belongs to, and — through it — the word and the
@@ -84,6 +90,14 @@ void build_report_destroy(build_report *report);
    No report means no terminal to answer for, so: plain. */
 [[nodiscard]] bool build_report_wants_colour(const build_report *report);
 
+/* Draw as though somebody were watching.
+ *
+ * This exists for the test suite, which has no terminal and needs the region
+ * pinned byte for byte all the same. It does not touch colour: the escapes
+ * stay off unless the stream asked for them, so what a test reads is the shape
+ * of the region and not a paint job. */
+void build_report_force_interactive(build_report *report);
+
 /* One unit this build is going to compile. Calls naming the same package
    collapse into one line; `display` is what a line without a package name
    shows, which for the project's own code is the source. */
@@ -107,7 +121,7 @@ void build_report_begin(build_report *report, size_t total);
  * to `unit_done` and means nothing anywhere else.
  */
 typedef size_t build_report_slot;
-#define BUILD_REPORT_NO_SLOT ((build_report_slot)-1)
+#define BUILD_REPORT_NO_SLOT ((build_report_slot) - 1)
 
 /*
  * One unit has started compiling. The region names it until the `unit_done`
@@ -124,9 +138,8 @@ typedef size_t build_report_slot;
  * failure: the bar and the count come from the total and the tally, not from
  * this table, so a unit that finds no room simply goes unnamed.
  */
-[[nodiscard]] build_report_slot build_report_unit_started(build_report *report,
-                                                          const build_unit_label *label,
-                                                          const char *display);
+[[nodiscard]] build_report_slot
+build_report_unit_started(build_report *report, const build_unit_label *label, const char *display);
 
 /* One unit has finished compiling, whether or not it succeeded. `slot` is what
    `unit_started` returned; BUILD_REPORT_NO_SLOT is valid and frees nothing.

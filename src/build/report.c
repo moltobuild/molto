@@ -2,6 +2,7 @@
 
 #include <molto/util/ansi.h>
 #include <molto/util/progress.h>
+#include <molto/util/viewport.h>
 
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -11,9 +12,30 @@
 #include <threads.h>
 #include <time.h>
 
-/* Columns of the bar. Wide enough for a percentage to be visible in it, narrow
-   enough to leave the figure room on an eighty-column terminal. */
+/* The widest the bar is drawn. Wide enough for a percentage to be visible in
+   it, narrow enough to leave the figure room on an eighty-column terminal —
+   and on a narrower one it gives up columns rather than the figure, because
+   what the bar is worth is the number beside it. */
 #define BAR_CELLS 32
+
+/* Columns the figure to the right of the bar needs: " 100%  9999/9999". */
+#define BAR_FIGURE_COLUMNS 18
+
+/* Below this the bar is a token rather than a measurement, but a terminal that
+   narrow has bigger problems than a short bar. */
+#define BAR_MIN_CELLS 4
+
+/* Rows of in-flight work the region will show at once, however many are
+   running. Eight is enough to see the build breathing and short enough to
+   leave the screen to whatever was on it. */
+#define FRAME_FILES_MAX 8
+
+/* Those, the line that counts what did not fit, and the bar. */
+#define FRAME_ROWS_MAX (FRAME_FILES_MAX + 2)
+
+/* One row of the region, before the terminal's width cuts it down. A source
+   path shown relative to the project fits many times over. */
+#define FRAME_LINE_MAX 512
 
 /* How often the bar is redrawn while the build runs. It is also what repairs
    the line after a compiler diagnostic scrolled over it, so it ticks on a
@@ -106,7 +128,9 @@ struct build_report {
        writing, and putting it back is one act and the drawer is another
        thread. */
     mtx_t lock;
-    bool bar_up; /* the cursor is sitting on a drawn bar */
+
+    viewport view;
+    bool frame_up; /* the region is on the screen */
 
     atomic_bool drawing; /* cleared to ask the drawer to stop */
     bool running;        /* whether there is a drawer to join */
@@ -157,10 +181,9 @@ static size_t compose_line(const build_report *report, char *out, size_t out_siz
         (void)snprintf(tail, sizeof tail, "%s%s%s", paint(report, ANSI_DIM), version,
                        paint(report, ANSI_RESET));
 
-    const int written =
-        snprintf(out, out_size, " %s%s%s %s%s%s%s%s%s", paint(report, colour), glyph,
-                 paint(report, ANSI_RESET), paint(report, ANSI_DIM), word,
-                 paint(report, ANSI_RESET), spaces, name, tail);
+    const int written = snprintf(out, out_size, " %s%s%s %s%s%s%s%s%s", paint(report, colour),
+                                 glyph, paint(report, ANSI_RESET), paint(report, ANSI_DIM), word,
+                                 paint(report, ANSI_RESET), spaces, name, tail);
     if(written < 0)
         return 0;
     return (size_t)written < out_size ? (size_t)written : out_size - 1;
@@ -190,29 +213,99 @@ static void write_cached(build_report *report) {
     write_line(report, ANSI_DIM, CACHED_GLYPH, CACHED_WORD, count, NULL);
 }
 
-/* --- the bar --- */
+/* --- the region --- */
 
-/* Draw the bar where the cursor is, assuming the lock is held. */
-static void draw_bar_locked(build_report *report) {
-    char cells[PROGRESS_BAR_SIZE(BAR_CELLS)];
-    const size_t done = atomic_load(&report->done);
-    (void)progress_bar_render(cells, sizeof cells, done, report->total, BAR_CELLS);
-
-    char line[LINE_MAX];
-    (void)snprintf(line, sizeof line, " %s %s%3zu%%%s", cells, paint(report, ANSI_DIM),
-                   progress_bar_percent(done, report->total), paint(report, ANSI_RESET));
-    progress_erase_line(report->out);
-    (void)fputs(line, report->out);
-    (void)fflush(report->out);
-    report->bar_up = true;
+/* Cells the bar may have on a terminal this wide. It gives up columns before
+   it gives up the figure: a bar with no percentage beside it says only that
+   something is happening, which the fact that it is moving already said. */
+static size_t bar_cells(size_t columns) {
+    if(columns <= BAR_FIGURE_COLUMNS + BAR_MIN_CELLS)
+        return BAR_MIN_CELLS;
+    const size_t room = columns - BAR_FIGURE_COLUMNS - 1;
+    return room < BAR_CELLS ? room : BAR_CELLS;
 }
 
-/* Take the bar off the line, assuming the lock is held. */
-static void erase_bar_locked(build_report *report) {
-    if(!report->bar_up)
+/* The `want` oldest units still compiling, oldest first, assuming the lock is
+   held. Ordered by arrival and not by slot, so a row does not jump to a
+   different file because the slot beside it was reused. An insertion into a
+   list of at most eight beats sorting sixty-four. */
+static size_t oldest_busy(const build_report *report, const inflight_slot **picked, size_t want) {
+    size_t count = 0;
+    for(size_t i = 0; i < report->inflight_high; i++) {
+        const inflight_slot *entry = &report->inflight[i];
+        if(!entry->busy)
+            continue;
+        size_t at = count;
+        while(at > 0 && picked[at - 1]->sequence > entry->sequence)
+            at--;
+        if(at >= want)
+            continue;
+        for(size_t j = count < want ? count : want - 1; j > at; j--)
+            picked[j] = picked[j - 1];
+        picked[at] = entry;
+        if(count < want)
+            count++;
+    }
+    return count;
+}
+
+/* Every row the region shows this frame — what is being compiled now, what did
+   not fit, and the bar — assuming the lock is held. It composes and does not
+   write, which is also why it may be called with the lock: nothing here
+   re-enters the report. */
+static size_t compose_frame(build_report *report, char rows[][FRAME_LINE_MAX], viewport_size size) {
+    const size_t height = viewport_height(report->inflight_busy, size.rows, FRAME_FILES_MAX);
+    const inflight_slot *picked[FRAME_FILES_MAX];
+    const size_t shown = oldest_busy(report, picked, height);
+
+    size_t used = 0;
+    for(; used < shown; used++) {
+        const inflight_slot *entry = picked[used];
+        /* The field says who the file belongs to: a package by name, and the
+           project's own code by the word the inventory gave it. */
+        const char *word = entry->name[0] != '\0' ? entry->name : origin_style[entry->origin].word;
+        (void)compose_line(report, rows[used], FRAME_LINE_MAX, origin_style[entry->origin].colour,
+                           origin_style[entry->origin].glyph, word, entry->display, NULL);
+    }
+
+    if(report->inflight_busy > shown) {
+        (void)snprintf(rows[used], FRAME_LINE_MAX, " %s… and %zu more%s", paint(report, ANSI_DIM),
+                       report->inflight_busy - shown, paint(report, ANSI_RESET));
+        used++;
+    }
+
+    char cells[PROGRESS_BAR_SIZE(BAR_CELLS)];
+    const size_t done = atomic_load(&report->done);
+    (void)progress_bar_render(cells, sizeof cells, done, report->total, bar_cells(size.columns));
+    (void)snprintf(rows[used], FRAME_LINE_MAX, " %s %s%3zu%%  %zu/%zu%s", cells,
+                   paint(report, ANSI_DIM), progress_bar_percent(done, report->total), done,
+                   report->total, paint(report, ANSI_RESET));
+    return used + 1;
+}
+
+/* Draw the region where the last one was, assuming the lock is held. The
+   terminal is measured every frame rather than once: a window dragged narrower
+   halfway through a build is ordinary, and a row that wraps takes the region's
+   arithmetic with it. */
+static void draw_frame_locked(build_report *report) {
+    if(!report->interactive || report->total == 0)
         return;
-    progress_erase_line(report->out);
-    report->bar_up = false;
+    const viewport_size size = viewport_measure(report->out);
+    char rows[FRAME_ROWS_MAX][FRAME_LINE_MAX];
+    const char *lines[FRAME_ROWS_MAX];
+    const size_t count = compose_frame(report, rows, size);
+    for(size_t i = 0; i < count; i++)
+        lines[i] = rows[i];
+    viewport_paint(&report->view, lines, count, size);
+    report->frame_up = count > 0;
+}
+
+/* Take the region off the screen, assuming the lock is held. */
+static void erase_frame_locked(build_report *report) {
+    if(!report->frame_up)
+        return;
+    viewport_clear(&report->view);
+    report->frame_up = false;
 }
 
 /*
@@ -228,7 +321,7 @@ static int drawer_run(void *arg) {
     const struct timespec interval = {.tv_sec = 0, .tv_nsec = DRAW_INTERVAL_NS};
     while(atomic_load(&report->drawing)) {
         (void)mtx_lock(&report->lock);
-        draw_bar_locked(report);
+        draw_frame_locked(report);
         (void)mtx_unlock(&report->lock);
         (void)thrd_sleep(&interval, NULL);
     }
@@ -257,9 +350,10 @@ build_report *build_report_create(FILE *out) {
     }
     report->out = out;
     report->interactive = progress_is_interactive(out);
-    /* A terminal is what makes a bar worth drawing; NO_COLOR is the person at
-       that terminal saying they would rather read it plain. */
+    /* A terminal is what makes a region worth drawing; NO_COLOR is the person
+       at that terminal saying they would rather read it plain. */
     report->colour = report->interactive && getenv("NO_COLOR") == NULL;
+    viewport_init(&report->view, out);
     atomic_init(&report->done, 0);
     atomic_init(&report->drawing, false);
     (void)clock_gettime(CLOCK_MONOTONIC, &report->started);
@@ -275,12 +369,18 @@ void build_report_destroy(build_report *report) {
         free(report->entries[i].version);
     }
     free(report->entries);
+    viewport_free(&report->view);
     mtx_destroy(&report->lock);
     free(report);
 }
 
 bool build_report_wants_colour(const build_report *report) {
     return report != NULL && report->colour;
+}
+
+void build_report_force_interactive(build_report *report) {
+    if(report != NULL)
+        report->interactive = true;
 }
 
 /* Whether this package already has a line. Only a package can: two sources are
@@ -350,7 +450,7 @@ void build_report_begin(build_report *report, size_t total) {
 
     const bool draw = report->interactive && total > 0;
     if(draw) {
-        draw_bar_locked(report);
+        draw_frame_locked(report);
         atomic_store(&report->drawing, true);
         report->running = thrd_create(&report->drawer, drawer_run, report) == thrd_success;
         if(!report->running)
@@ -383,8 +483,7 @@ build_report_slot build_report_unit_started(build_report *report, const build_un
         entry->origin = label != NULL ? label->origin : build_origin_project;
         (void)snprintf(entry->name, sizeof entry->name, "%s",
                        label != NULL && label->name != NULL ? label->name : "");
-        (void)snprintf(entry->display, sizeof entry->display, "%s",
-                       display != NULL ? display : "");
+        (void)snprintf(entry->display, sizeof entry->display, "%s", display != NULL ? display : "");
         entry->sequence = report->inflight_next++;
         report->inflight_busy++;
         if(slot + 1 > report->inflight_high)
@@ -422,11 +521,11 @@ void build_report_message(build_report *report, const char *format, ...) {
         return;
     }
     (void)mtx_lock(&report->lock);
-    const bool redraw = report->bar_up;
-    erase_bar_locked(report);
+    const bool redraw = report->frame_up;
+    erase_frame_locked(report);
     (void)vfprintf(report->out, format, args);
     if(redraw)
-        draw_bar_locked(report);
+        draw_frame_locked(report);
     else
         (void)fflush(report->out);
     (void)mtx_unlock(&report->lock);
@@ -440,18 +539,14 @@ void build_report_finish(build_report *report, const char *profile, molto_exit_c
     const bool ok = code == exit_ok;
 
     (void)mtx_lock(&report->lock);
-    if(ok && report->bar_up) {
-        /* One last frame, so what stays on the screen is the finished bar and
-           not whichever fraction the last tick happened to catch. */
-        draw_bar_locked(report);
-        (void)fputs("\n\n", report->out);
-        report->bar_up = false;
-    } else {
-        /* A build that failed leaves no bar behind: every unit but one may
-           well have compiled, and a full bar over a failure reads as a claim
-           that it worked. */
-        erase_bar_locked(report);
-    }
+    /* The region goes, whether the build worked or not.
+     *
+     * A list of files being compiled stops being true the instant the build
+     * stops, and a bar left behind reads as a claim about the run: a full one
+     * over a failure claims it worked, and a full one over the tick below says
+     * a second time what the tick already said. What survives is the verdict,
+     * on the line the region was standing on. */
+    erase_frame_locked(report);
     char line[LINE_MAX];
     if(ok) {
         (void)snprintf(line, sizeof line, " %s✓%s Finished `%s` build in %.2fs\n",

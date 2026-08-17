@@ -3,6 +3,7 @@
 #include <molto/build/report.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -289,6 +290,194 @@ MOLTEST(a_stream_nobody_watches_wants_no_colour) {
     EXPECT_FALSE(build_report_wants_colour(report));
     EXPECT_FALSE(build_report_wants_colour(NULL));
 
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/*
+ * The region, drawn onto a temporary file because the report was told to draw
+ * as though somebody were watching.
+ *
+ * The ioctl cannot answer for a stream with no terminal behind it, so COLUMNS
+ * and LINES are what decide the size — which means these exercise the real
+ * measuring path rather than going around it.
+ */
+
+static void screen(const char *columns, const char *lines) {
+    (void)setenv("COLUMNS", columns, 1);
+    (void)setenv("LINES", lines, 1);
+}
+
+static void screen_forget(void) {
+    (void)unsetenv("COLUMNS");
+    (void)unsetenv("LINES");
+}
+
+MOLTEST(a_terminal_says_which_files_are_being_compiled_now) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "40");
+
+    build_report_begin(report, 2);
+    const build_report_slot first = build_report_unit_started(report, &own, "main.c");
+    const build_report_slot second = build_report_unit_started(report, &sqlite, "btree.c");
+    EXPECT_TRUE(first != BUILD_REPORT_NO_SLOT);
+    EXPECT_TRUE(second != BUILD_REPORT_NO_SLOT);
+    /* Starting a unit fills the table; a frame is what puts it on the screen,
+       and a message is the one thing that draws one on demand. */
+    build_report_message(report, "a diagnostic\n");
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NOT_NULL(strstr(text, "main.c"));
+    EXPECT_NOT_NULL(strstr(text, "btree.c"));
+    /* A package names itself in the field the origin word holds otherwise. */
+    EXPECT_NOT_NULL(strstr(text, "sqlite3"));
+
+    build_report_unit_done(report, first);
+    build_report_unit_done(report, second);
+    build_report_finish(report, "debug", exit_ok);
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* A row is worth having while the file is compiling and worth nothing after,
+   which is the whole reason it lives in a region and not in the scrollback. */
+MOLTEST(a_unit_is_forgotten_when_it_finishes) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "40");
+
+    build_report_begin(report, 2);
+    const build_report_slot slot = build_report_unit_started(report, &own, "vanishing.c");
+    build_report_unit_done(report, slot);
+
+    (void)fflush(out);
+    const long mark = ftell(out);
+    build_report_message(report, "a diagnostic\n"); /* forces a fresh frame */
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NULL(strstr(text + mark, "vanishing.c"));
+
+    build_report_finish(report, "debug", exit_ok);
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+MOLTEST(a_region_that_overflows_counts_what_it_does_not_show) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "40");
+
+    build_report_begin(report, 12);
+    char name[32];
+    for(size_t i = 0; i < 12; i++) {
+        (void)snprintf(name, sizeof name, "unit%zu.c", i);
+        (void)build_report_unit_started(report, &own, name);
+    }
+    build_report_message(report, "a diagnostic\n"); /* forces a fresh frame */
+
+    char text[8192] = "";
+    (void)captured(out, text, sizeof text);
+    /* Eight rows on a forty-row screen, and the four that did not fit counted
+       rather than dropped. */
+    EXPECT_NOT_NULL(strstr(text, "and 4 more"));
+    EXPECT_NOT_NULL(strstr(text, "unit0.c"));
+    EXPECT_NOT_NULL(strstr(text, "unit7.c"));
+    EXPECT_NULL(strstr(text, "unit8.c"));
+
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* A screen too short to spare three rows keeps the bar and gives up the files:
+   a region taller than the screen scrolls its own anchor away. */
+MOLTEST(a_short_screen_gives_up_the_files_and_keeps_the_bar) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "2");
+
+    build_report_begin(report, 4);
+    (void)build_report_unit_started(report, &own, "invisible.c");
+    build_report_message(report, "a diagnostic\n");
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NULL(strstr(text, "invisible.c"));
+    EXPECT_NOT_NULL(strchr(text, '%'));
+
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* The bar gives up columns before it gives up the figure: a bar with no number
+   beside it says only that something is happening, which its moving said. */
+MOLTEST(a_narrow_terminal_shortens_the_bar_and_keeps_the_figure) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("40", "24");
+
+    build_report_begin(report, 210);
+    for(size_t i = 0; i < 47; i++)
+        build_report_unit_done(report, BUILD_REPORT_NO_SLOT);
+    build_report_message(report, "a diagnostic\n");
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NOT_NULL(strstr(text, "47/210"));
+    EXPECT_NOT_NULL(strstr(text, "22%"));
+
+    screen_forget();
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* Nothing of the region survives the build: what stays on the screen is the
+   verdict, on the line the region was standing on. */
+MOLTEST(a_finished_build_leaves_only_its_verdict) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+    build_report_force_interactive(report);
+    screen("100", "40");
+
+    build_report_begin(report, 2);
+    const build_report_slot slot = build_report_unit_started(report, &own, "main.c");
+    (void)fflush(out);
+    const long mark = ftell(out);
+    build_report_unit_done(report, slot);
+    build_report_finish(report, "debug", exit_ok);
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    const char *tail = text + mark;
+    EXPECT_NULL(strstr(tail, "main.c"));
+    /* And no bar over the tick, saying a second time what the tick says. */
+    EXPECT_NULL(strchr(tail, '%'));
+    EXPECT_NOT_NULL(strstr(tail, "Finished `debug` build in "));
+
+    screen_forget();
     build_report_destroy(report);
     (void)fclose(out);
 }

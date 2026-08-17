@@ -308,6 +308,42 @@ MOLTEST(a_row_wider_than_the_terminal_is_cut_before_it_is_drawn) {
     (void)fclose(out);
 }
 
+/* The height of a build's region moves constantly as workers pick units up and
+   put them down, so growing and shrinking are the ordinary case and not the
+   edge. What each frame must not do is count from a height it no longer has. */
+MOLTEST(a_region_counts_from_the_height_it_last_drew) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const char *five[] = {"one", "two", "three", "four", "five"};
+    const char *one[] = {"one"};
+
+    viewport_paint(&view, five, 5, WIDE);
+    EXPECT_EQ(5u, view.drawn);
+    viewport_paint(&view, one, 1, WIDE);
+    EXPECT_EQ(1u, view.drawn);
+
+    /* One row after one row: nothing to step over, so nothing is stepped. */
+    (void)fflush(out);
+    const long mark = ftell(out);
+    viewport_paint(&view, one, 1, WIDE);
+    EXPECT_EQ(1u, view.drawn);
+
+    char text[4096] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NULL(strstr(text + mark, "A"));
+    EXPECT_EQ(1u, occurrences(text + mark, "\033[2K"));
+
+    /* And back up again, which starts where the single row left the cursor. */
+    viewport_paint(&view, five, 5, WIDE);
+    EXPECT_EQ(5u, view.drawn);
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
 MOLTEST(a_region_that_drew_nothing_is_not_cleared) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
