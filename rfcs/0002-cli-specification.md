@@ -125,6 +125,33 @@ Runs compiler diagnostics and Molto's own static checks (e.g. naming
 convention violations, section 17 of `spec.md`) without producing build
 artifacts.
 
+### `molto metadata`
+
+Writes a **CycloneDX 1.6** bill of materials describing the package and every
+package it links: the exact version, the origin with its revision resolved, the
+checksum, and the licence each recipe declares (RFC-0009 `[about]`). To stdout,
+or to `--output <path>`.
+
+It resolves the graph rather than reading `Molto.lock`, because the lock records
+versions, origins and checksums and deliberately not licences — that fact
+already lives in each recipe, and a lock file that stored it twice could
+contradict itself (RFC-0008). In a project that has been built, resolving
+reaches no network.
+
+Packages that only `[dev-deps]` reaches are **out** by default: a bill of
+materials describes what is in the artifact, and a test framework is not.
+`--include-dev` adds them, marked `excluded` — CycloneDX for "in the graph, not
+in the artifact".
+
+The document carries **no timestamp and no serial number**, though the schema
+allows both. Two runs over one graph have to produce one file: a document that
+differs every time cannot be diffed, cached, or compared between machines, which
+is most of what one is kept for. It is the same rule that makes `Molto.lock`
+sorted.
+
+There is no `--profile`. A profile decides the defines and flags on a compile
+line, and none of that changes which packages the graph contains.
+
 ### `molto add <dependency>[@<version>]`
 
 Adds a dependency to the `[deps]` table of `Project.toml`, writing an **exact

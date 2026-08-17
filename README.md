@@ -8,6 +8,8 @@ A modern packaging ecosystem for C and C++.
 - [`docs/Style.md`](docs/Style.md) — `molto fmt` and `molto lint`: the two
   configuration files, where the formatter and the linter come from, and what
   each command reports
+- [`docs/Metadata.md`](docs/Metadata.md) — `molto metadata`: the CycloneDX bill
+  of materials, what it contains, and why it carries no timestamp
 - [`spec.md`](spec.md) and the [RFCs](rfcs/) — the design
 
 This repository contains the `molto` CLI. It is written in C and **builds
