@@ -168,6 +168,14 @@ void dep_graph_free(dep_graph *graph) {
 
 /* --- the lock file's `source` string --- */
 
+/* The scheme each kind of origin is written under. Named here rather than
+   spelled into the format strings below, because reading one back is the same
+   question as writing it and two spellings of it could disagree. */
+#define SOURCE_SCHEME_REGISTRY "registry+"
+#define SOURCE_SCHEME_GIT "git+"
+#define SOURCE_SCHEME_PATH "path+"
+#define SOURCE_SCHEME_ARCHIVE "archive+"
+
 /* One string that says both where a package came from and which fetcher goes
    back for it (RFC-0008). Composed here, once, so the lock writer has nothing
    to decide. */
@@ -176,23 +184,46 @@ static bool compose_source(const project_dep *dep, const char *registry_url, cha
     int written = 0;
     switch(dep->source) {
     case dep_source_version:
-        written = snprintf(out, out_size, "registry+%s", registry_url);
+        written = snprintf(out, out_size, SOURCE_SCHEME_REGISTRY "%s", registry_url);
         break;
     case dep_source_git:
-        written = dep->reference[0] == '\0'
-                      ? snprintf(out, out_size, "git+%s", dep->location)
-                      : snprintf(out, out_size, "git+%s#%s", dep->location, dep->reference);
+        written =
+            dep->reference[0] == '\0'
+                ? snprintf(out, out_size, SOURCE_SCHEME_GIT "%s", dep->location)
+                : snprintf(out, out_size, SOURCE_SCHEME_GIT "%s#%s", dep->location, dep->reference);
         break;
     case dep_source_path:
-        written = snprintf(out, out_size, "path+%s", dep->location);
+        written = snprintf(out, out_size, SOURCE_SCHEME_PATH "%s", dep->location);
         break;
     case dep_source_archive:
-        written = snprintf(out, out_size, "archive+%s", dep->location);
+        written = snprintf(out, out_size, SOURCE_SCHEME_ARCHIVE "%s", dep->location);
         break;
     }
     if(written < 0 || (size_t)written >= out_size)
         return set_error(err, err_size, "the source of '%s' is too long to record", dep->name);
     return true;
+}
+
+dep_source dep_graph_source_kind(const char *source) {
+    static const struct {
+        const char *scheme;
+        dep_source kind;
+    } schemes[] = {
+        {SOURCE_SCHEME_REGISTRY, dep_source_version},
+        {SOURCE_SCHEME_GIT, dep_source_git},
+        {SOURCE_SCHEME_PATH, dep_source_path},
+        {SOURCE_SCHEME_ARCHIVE, dep_source_archive},
+    };
+    if(source != NULL) {
+        for(size_t i = 0; i < sizeof schemes / sizeof schemes[0]; i++) {
+            if(strncmp(source, schemes[i].scheme, strlen(schemes[i].scheme)) == 0)
+                return schemes[i].kind;
+        }
+    }
+    /* Anything else is treated as bytes nobody can go back for, which is what a
+       path dependency is. Reporting it as a registry package would be the one
+       wrong answer: that is the kind whose version and checksum are claims. */
+    return dep_source_path;
 }
 
 /* --- which registry answers for a dependency --- */
