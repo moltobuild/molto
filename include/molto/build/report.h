@@ -70,6 +70,12 @@ typedef struct build_report build_report;
 [[nodiscard]] build_report *build_report_create(FILE *out);
 void build_report_destroy(build_report *report);
 
+/* Whether escapes are welcome on this report's stream. Asked by whoever
+   composes a block of text to hand to `build_report_message`, which cannot
+   colour what it is given and must not be handed colour that is not wanted.
+   No report means no terminal to answer for, so: plain. */
+[[nodiscard]] bool build_report_wants_colour(const build_report *report);
+
 /* One unit this build is going to compile. Calls naming the same package
    collapse into one line; `display` is what a line without a package name
    shows, which for the project's own code is the source. */

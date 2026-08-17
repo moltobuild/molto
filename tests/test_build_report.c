@@ -250,6 +250,22 @@ MOLTEST(a_message_reaches_the_stream_whether_or_not_a_bar_is_up) {
     (void)fclose(out);
 }
 
+/* Whoever composes a block of text has to ask, because build_report_message
+   cannot colour what it is handed. A tmpfile is nobody watching, and no report
+   at all is nobody to ask. */
+MOLTEST(a_stream_nobody_watches_wants_no_colour) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+
+    EXPECT_FALSE(build_report_wants_colour(report));
+    EXPECT_FALSE(build_report_wants_colour(NULL));
+
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
 /* No report at all is how the test suite builds hundreds of projects in
    silence, and how a build that could not allocate one carries on. */
 MOLTEST(no_report_is_a_report_that_says_nothing) {

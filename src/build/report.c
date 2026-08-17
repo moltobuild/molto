@@ -1,5 +1,6 @@
 #include <molto/build/report.h>
 
+#include <molto/util/ansi.h>
 #include <molto/util/progress.h>
 
 #include <stdarg.h>
@@ -29,13 +30,6 @@
 
 /* " v" and a version, with room for the escapes that dim it. */
 #define VERSION_FIELD_MAX 128
-
-#define ANSI_RESET "\033[0m"
-#define ANSI_DIM "\033[2m"
-#define ANSI_GREEN "\033[32m"
-#define ANSI_BLUE "\033[34m"
-#define ANSI_MAGENTA "\033[35m"
-#define ANSI_CYAN "\033[36m"
 
 /* What every origin looks like on a line. Indexed by build_origin, so adding
    one to the enum without a look here fails to compile rather than printing
@@ -238,6 +232,10 @@ void build_report_destroy(build_report *report) {
     free(report->entries);
     mtx_destroy(&report->lock);
     free(report);
+}
+
+bool build_report_wants_colour(const build_report *report) {
+    return report != NULL && report->colour;
 }
 
 /* Whether this package already has a line. Only a package can: two sources are
