@@ -72,8 +72,9 @@ MOLTEST(a_failed_unit_is_named_framed_and_accounted_for) {
     (void)remove(path);
 }
 
-/* The caret goes under the byte the compiler named. gcc counts bytes from one;
-   the frame counts columns from the rule it drew, and the two have to meet. */
+/* The caret goes under the character the compiler named. The compiler counts
+   from one and from the start of the line; the frame counts from the rule it
+   drew, and the two have to meet. */
 MOLTEST(the_caret_lands_on_the_character_the_compiler_named) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    return u->name;\n"));
@@ -346,4 +347,36 @@ MOLTEST(a_link_is_reported_as_a_link) {
 
     free(block);
     diagnostic_list_free(&found);
+}
+
+/* The two compilers count the column they report differently, and a caret
+   placed under the wrong model lands where the compiler was not pointing.
+   Same source, same character, two numbers — and one caret column. */
+MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "\t\treturn nope;\n"));
+
+    char from_gcc[512];
+    snprintf(from_gcc, sizeof from_gcc, "%s:1:24: error: ‘nope’ undeclared\n", path);
+    char from_clang[512];
+    snprintf(from_clang, sizeof from_clang, "%s:1:10: error: undeclared identifier\n", path);
+
+    const diagnostic_context gcc_ctx = {.unit = "main.c", .columns = diagnostic_columns_display};
+    const diagnostic_context clang_ctx = {.unit = "main.c", .columns = diagnostic_columns_byte};
+
+    char *painted_by_gcc = render(from_gcc, &gcc_ctx, false);
+    char *painted_by_clang = render(from_clang, &clang_ctx, false);
+    ASSERT_NOT_NULL(painted_by_gcc);
+    ASSERT_NOT_NULL(painted_by_clang);
+
+    /* Two tabs are sixteen columns and "return " is seven more, so both carets
+       sit at column 23 — under the `n` of `nope`. */
+    EXPECT_NOT_NULL(strstr(painted_by_gcc, "   │                        ^ "));
+    EXPECT_NOT_NULL(strstr(painted_by_clang, "   │                        ^ "));
+    /* And the excerpt shows the tabs as the terminal will. */
+    EXPECT_NOT_NULL(strstr(painted_by_gcc, " 1 │                 return nope;\n"));
+
+    free(painted_by_gcc);
+    free(painted_by_clang);
+    (void)remove(path);
 }

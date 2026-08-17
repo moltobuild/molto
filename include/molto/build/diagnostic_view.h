@@ -44,6 +44,21 @@ typedef enum {
     diagnostic_view_checking,
 } diagnostic_view_action;
 
+/* How the tool counted the column it reported.
+ *
+ * gcc counts what a terminal counts: a tab advances to the next stop of eight,
+ * and a character outside ASCII is one column however many bytes it took.
+ * clang counts bytes. Both are defensible, they disagree on any line holding a
+ * tab or anything outside ASCII, and a caret placed under the wrong model
+ * lands somewhere the compiler was not pointing.
+ *
+ * The default is gcc's, which is also the one to assume when the compiler was
+ * chosen by hand and never asked what it was. */
+typedef enum {
+    diagnostic_columns_display, /* gcc */
+    diagnostic_columns_byte,    /* clang */
+} diagnostic_column_unit;
+
 /* Whose code this is, as the footer will say it. Every field is borrowed, and
    every one of them may be NULL: a line that has nothing to say is omitted
    rather than printed empty. */
@@ -51,6 +66,7 @@ typedef struct {
     /* What failed, named the way the build's inventory named it. */
     const char *unit;
     diagnostic_view_action action;
+    diagnostic_column_unit columns;
     /* The package it belongs to, and its version. NULL for a project's own
        code, which is named by its source rather than by a package. */
     const char *package;

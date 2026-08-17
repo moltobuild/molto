@@ -19,6 +19,10 @@
    the frame drifting rightwards on a file with four-digit lines. */
 #define GUTTER_MIN 2
 
+/* Where a tab lands. Eight is what a terminal does and what gcc assumes when
+   it counts the column it reports. */
+#define TAB_WIDTH 8
+
 /* How deep the header and the summary line sit. The frame indents itself by
    its own gutter, which is usually the same and occasionally deeper. */
 #define BLOCK_INDENT 3
@@ -301,23 +305,35 @@ static void write_locator(view_state *view, const diagnostic *item, const char *
                  "", RULE_BAR, view->chain[i], view->style->reset);
 }
 
-/* The source line the compiler pointed at, with tabs spent one column each so
-   the byte the compiler named and the column it lands in stay the same number. */
+/* The source line the compiler pointed at, printed as a terminal will show it:
+   tabs advanced to the next stop of eight, which is also the model gcc counts
+   its columns in. `line` keeps the bytes as they are on disk, because that is
+   what a byte-counting compiler's column refers to. */
 static bool write_excerpt(view_state *view, const diagnostic *item, char *line, size_t line_size) {
     if(!fs_read_line(item->file, item->line, line, line_size))
         return false;
-    for(char *at = line; *at != '\0'; at++) {
-        if(*at == '\t')
-            *at = ' ';
-    }
+    char shown[DIAGNOSTIC_TEXT_MAX * 2];
+    text_expand_tabs(line, TAB_WIDTH, shown, sizeof shown);
     text_add(view->text, "%s%*ld %s%s %s\n", view->style->dim, (int)view->gutter, item->line,
-             RULE_BAR, view->style->reset, line);
+             RULE_BAR, view->style->reset, shown);
     return true;
+}
+
+/* Where the caret goes: the column the tool named, in the columns a terminal
+   counts. A tool that already counted those needs no conversion; one that
+   counted bytes needs the line walked to find out what they came to. */
+static size_t caret_column(const view_state *view, const diagnostic *item, const char *line) {
+    if(item->column <= 0)
+        return 0;
+    const size_t named = (size_t)item->column - 1;
+    return view->ctx->columns == diagnostic_columns_byte
+               ? text_column_of_byte(line, named, TAB_WIDTH)
+               : named;
 }
 
 /* The caret, under the character the compiler named, carrying what it said. */
 static void write_caret(view_state *view, const diagnostic *item, const char *line) {
-    const size_t at = item->column > 0 ? text_columns(line, (size_t)item->column - 1) : 0;
+    const size_t at = caret_column(view, item, line);
     char message[DIAGNOSTIC_TEXT_MAX];
     strip_csi(item->message, message, sizeof message);
     text_add(view->text, "%s%*s %s%s %*s%s^%s %s\n", view->style->dim, (int)view->gutter, "",

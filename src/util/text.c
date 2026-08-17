@@ -22,3 +22,46 @@ size_t text_columns(const char *s, size_t bytes) {
         columns += is_continuation(s[i]) ? 0 : 1;
     return columns;
 }
+
+/* How far a tab advances from `column`. Never zero: a tab sitting on a stop
+   moves to the next one rather than staying put. */
+static size_t tab_advance(size_t column, size_t tab_width) {
+    return tab_width - (column % tab_width);
+}
+
+size_t text_column_of_byte(const char *s, size_t offset, size_t tab_width) {
+    if(s == NULL || tab_width == 0)
+        return 0;
+    size_t column = 0;
+    for(size_t i = 0; i < offset && s[i] != '\0'; i++) {
+        if(s[i] == '\t')
+            column += tab_advance(column, tab_width);
+        else if(!is_continuation(s[i]))
+            column++;
+    }
+    return column;
+}
+
+void text_expand_tabs(const char *s, size_t tab_width, char *out, size_t out_size) {
+    if(out == NULL || out_size == 0)
+        return;
+    out[0] = '\0';
+    if(s == NULL || tab_width == 0)
+        return;
+
+    size_t used = 0;
+    size_t column = 0;
+    for(const char *at = s; *at != '\0' && used + 1 < out_size; at++) {
+        if(*at == '\t') {
+            const size_t width = tab_advance(column, tab_width);
+            for(size_t i = 0; i < width && used + 1 < out_size; i++)
+                out[used++] = ' ';
+            column += width;
+            continue;
+        }
+        out[used++] = *at;
+        if(!is_continuation(*at))
+            column++;
+    }
+    out[used] = '\0';
+}

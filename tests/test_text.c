@@ -34,9 +34,56 @@ MOLTEST(a_count_past_the_end_stops_at_the_end) {
     EXPECT_EQ(0u, text_columns("", 500));
 }
 
-/* A tab is one byte and one reported column, which is why an excerpt may
-   substitute a single space for it and keep the arithmetic exact. */
-MOLTEST(a_tab_is_one_column) { EXPECT_EQ(2u, text_columns("\t\tint x;", 2)); }
+/* To a string a tab is one character. To a terminal it is a jump to the next
+   stop, which is what the two functions below are for. */
+MOLTEST(a_tab_is_one_character_to_a_string) { EXPECT_EQ(2u, text_columns("\t\tint x;", 2)); }
+
+/* clang reports the `nope` of "\t\treturn nope;" at byte 10; gcc reports the
+   same character at column 24, because two tabs are sixteen columns and
+   "return " is seven more. Converting the first into the second is the whole
+   job. */
+MOLTEST(a_byte_offset_becomes_the_column_a_terminal_would_be_at) {
+    const char *line = "\t\treturn nope;";
+    EXPECT_EQ(23u, text_column_of_byte(line, 9, 8));
+    EXPECT_EQ(16u, text_column_of_byte(line, 2, 8)); /* both tabs, no more */
+    EXPECT_EQ(8u, text_column_of_byte(line, 1, 8));  /* one tab */
+    EXPECT_EQ(0u, text_column_of_byte(line, 0, 8));
+}
+
+/* A tab already sitting on a stop moves to the next one rather than staying
+   where it is. */
+MOLTEST(a_tab_on_a_stop_still_advances) {
+    EXPECT_EQ(16u, text_column_of_byte("12345678\tx", 9, 8));
+}
+
+/* A multibyte character is one column and several bytes, so the two counts
+   drift apart by exactly the extra bytes. */
+MOLTEST(a_byte_offset_past_multibyte_text_comes_back_shorter) {
+    const char *line = "    /* αβγ */ return nope;";
+    EXPECT_EQ(21u, text_column_of_byte(line, 24, 8));
+}
+
+MOLTEST(tabs_are_expanded_to_the_stops_a_terminal_uses) {
+    char out[64] = "";
+    text_expand_tabs("\tx", 8, out, sizeof out);
+    EXPECT_STREQ("        x", out);
+
+    text_expand_tabs("ab\tc", 8, out, sizeof out);
+    EXPECT_STREQ("ab      c", out);
+
+    text_expand_tabs("no tabs here", 8, out, sizeof out);
+    EXPECT_STREQ("no tabs here", out);
+}
+
+/* Shortened rather than refused, and never left holding whatever was there. */
+MOLTEST(expanding_into_too_small_a_buffer_shortens_the_line) {
+    char out[5] = "";
+    text_expand_tabs("\tx", 8, out, sizeof out);
+    EXPECT_STREQ("    ", out);
+
+    text_expand_tabs(NULL, 8, out, sizeof out);
+    EXPECT_STREQ("", out);
+}
 
 /* Text that is not valid UTF-8 still has to produce a number: a lone
    continuation byte is counted as nothing, and a terminal will make no more of
