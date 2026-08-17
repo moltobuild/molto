@@ -354,9 +354,13 @@ static void write_frame(view_state *view, const diagnostic *item, const char *co
 /* The line above a frame: the severity, the compiler's own rule where it named
    one, and what it meant for the build. */
 static void write_summary(view_state *view, const diagnostic *item) {
+    static const char *const outcomes[][2] = {
+        [diagnostic_view_compiling] = {"compiled with a warning", "compilation failed"},
+        [diagnostic_view_linking] = {"linked with a warning", "linking failed"},
+    };
     const char *word = diagnostic_severity_name(item->severity);
     const bool failed = item->severity == diagnostic_severity_error;
-    const char *outcome = failed ? "compilation failed" : "compiled with a warning";
+    const char *outcome = outcomes[view->ctx->action][failed];
     if(item->rule_native[0] != '\0')
         text_add(view->text, "%*s%s%s%s[%s]%s: %s\n", BLOCK_INDENT, "", view->style->bold,
                  view->style->severity, word, item->rule_native, view->style->reset, outcome);
@@ -365,9 +369,18 @@ static void write_summary(view_state *view, const diagnostic *item) {
                  view->style->severity, word, view->style->reset, outcome);
 }
 
-/* A line no frame can hold: one the parser could not read, or one that carried
-   a severity but no place to point at. Printed as the tool wrote it, because a
-   frame is a way of reading output and never a filter on it. */
+/* A finding with nowhere to point at: the tool's own words, set off by the
+   same rule a frame uses so the block still reads as one thing. A link that
+   failed under a profile carrying no debug information is what this is for —
+   the linker names the symbol, and nothing in anyone's source. */
+static void write_quoted(view_state *view, const diagnostic *item) {
+    write_message_beside_the_bar(view, item);
+    write_bar(view);
+}
+
+/* A line no frame can hold: one the parser could not read at all. Printed as
+   the tool wrote it, because a frame is a way of reading output and never a
+   filter on it. */
 static void write_passthrough(view_state *view, const diagnostic *item) {
     char message[DIAGNOSTIC_TEXT_MAX];
     strip_csi(item->message, message, sizeof message);
@@ -390,14 +403,14 @@ static void write_one(view_state *view, const diagnostic *item) {
         view->chain_count++;
         return;
     }
-    if(!has_location(item)) {
-        write_passthrough(view, item);
-        return;
-    }
     if(!opens_a_frame(item)) {
         /* A note explains the frame above it, so it continues that box rather
-           than announcing itself as a finding of its own. */
-        if(view->frames > 0 && view->frames <= FRAME_LIMIT)
+           than announcing itself as a finding of its own. One that landed
+           nowhere, and anything the parser could not read, is passed through as
+           the tool wrote it. */
+        if(!has_location(item) || item->severity == diagnostic_severity_unknown)
+            write_passthrough(view, item);
+        else if(view->frames > 0 && view->frames <= FRAME_LIMIT)
             write_frame(view, item, RULE_TEE, "note: ");
         else
             write_overflow(view, item);
@@ -411,7 +424,10 @@ static void write_one(view_state *view, const diagnostic *item) {
     text_add(view->text, "\n");
     write_summary(view, item);
     text_add(view->text, "\n");
-    write_frame(view, item, RULE_CORNER, "");
+    if(has_location(item))
+        write_frame(view, item, RULE_CORNER, "");
+    else
+        write_quoted(view, item);
 }
 
 /* --- the block --- */
@@ -419,8 +435,12 @@ static void write_one(view_state *view, const diagnostic *item) {
 /* What this unit is, and whether it survived. The glyph carries the verdict as
    much as the words do, which is what makes a wall of these scannable. */
 static void write_header(view_state *view, bool failed) {
+    static const char *const verbs[][2] = {
+        [diagnostic_view_compiling] = {"Warnings compiling", "Failed to compile"},
+        [diagnostic_view_linking] = {"Warnings linking", "Failed to link"},
+    };
     const char *glyph = failed ? GLYPH_FAILED : GLYPH_WARNED;
-    const char *verb = failed ? "Failed to compile" : "Warnings compiling";
+    const char *verb = verbs[view->ctx->action][failed];
     const char *unit = view->ctx->unit != NULL ? view->ctx->unit : "this unit";
     text_add(view->text, "%*s%s%s%s %s%s `%s`\n", BLOCK_INDENT, "", view->style->bold,
              view->style->severity, glyph, verb, view->style->reset, unit);

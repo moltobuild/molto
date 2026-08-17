@@ -74,6 +74,15 @@ void diagnostic_parse_line(const char *line, diagnostic *out);
    False only on allocation failure. */
 [[nodiscard]] bool diagnostic_parse(const char *text, diagnostic_list *out);
 
+/* Parse what a *failing* linker wrote, which the grammar above cannot read: a
+   linker names no severity, because it has only the one to name, and prefixes
+   some of its lines with its own program name and not others.
+ *
+ * Only for output a failed link produced. Everything it says is taken as an
+ * error, so a linker that merely warned must go through `diagnostic_parse`
+ * instead. False only on allocation failure. */
+[[nodiscard]] bool diagnostic_parse_link(const char *text, diagnostic_list *out);
+
 /* How many entries carry `severity`. Only errors fail a command (RFC-0005). */
 [[nodiscard]] size_t diagnostic_count_severity(const diagnostic_list *list,
                                                diagnostic_severity severity);

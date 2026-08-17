@@ -319,3 +319,31 @@ MOLTEST(a_unit_with_nothing_to_say_is_drawn_as_nothing) {
     EXPECT_NULL(diagnostic_view_render(NULL, &ctx, false));
     diagnostic_list_free(&list);
 }
+
+/* A link is not a compile, and a block that said "Failed to compile" over a
+   linker's words would be naming the wrong step. */
+MOLTEST(a_link_is_reported_as_a_link) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/x.o: in function `main':\n"
+                                      "main.c:(.text+0x9): undefined reference to `db_open'\n"
+                                      "collect2: error: ld returned 1 exit status\n",
+                                      &found));
+
+    const diagnostic_context ctx = {
+        .unit = "build/debug/demo", .action = diagnostic_view_linking, .compiler = "gcc 12.3.0"};
+    char *block = diagnostic_view_render(&found, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "✗ Failed to link `build/debug/demo`"));
+    EXPECT_NOT_NULL(strstr(block, "error: linking failed"));
+    EXPECT_NULL(strstr(block, "Failed to compile"));
+    EXPECT_NULL(strstr(block, "compilation failed"));
+    /* Nowhere to point at, so the linker's own words are quoted instead. */
+    EXPECT_NOT_NULL(strstr(block, "│ main.c:(.text+0x9): undefined reference to `db_open'"));
+    EXPECT_NULL(strstr(block, "┌─"));
+    EXPECT_NOT_NULL(strstr(block, "= compiler: gcc 12.3.0"));
+
+    free(block);
+    diagnostic_list_free(&found);
+}

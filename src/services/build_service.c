@@ -913,13 +913,65 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
     return ok;
 }
 
+/* Everything a link's own report needs that the link itself does not. */
+typedef struct {
+    const char *root;
+    const char *binary;
+    const resolved_toolchain *chain;
+    build_report *report;
+    bool any_cpp;
+} link_env;
+
+/* What the linker said about one binary, framed the way a compiler's output is.
+ *
+ * Usually without an excerpt: a linker names a place in anyone's source only
+ * when the objects it was given carry debug information, so an undefined
+ * symbol can be pointed at under `debug` and never under a profile that turned
+ * it off. What it always names is the symbol, which is the thing to go and
+ * look for. */
+static void report_link_diagnostics(const link_env *where, const char *output, bool truncated,
+                                    int status) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    /* A linker that failed names no severity because it has only the one; a
+       linker that succeeded and still spoke was warning, and saying otherwise
+       would fail a build that stands. */
+    const bool parsed =
+        status == 0 ? diagnostic_parse(output, &found) : diagnostic_parse_link(output, &found);
+    if(!parsed) {
+        diagnostic_list_free(&found);
+        return;
+    }
+    if(truncated)
+        push_own(&found, where->binary, diagnostic_severity_note,
+                 "there was more of this than Molto kept");
+    if(status != 0 && diagnostic_count_severity(&found, diagnostic_severity_error) == 0)
+        push_own(&found, where->binary, diagnostic_severity_error,
+                 "the linker failed with nothing to say about it");
+
+    char compiler[TOOLCHAIN_DESCRIPTION_MAX];
+    describe_compiler(where->chain, where->any_cpp, compiler, sizeof compiler);
+    const diagnostic_context ctx = {
+        .unit = fs_relative_to(where->binary, where->root),
+        .action = diagnostic_view_linking,
+        .compiler = compiler,
+        .root = where->root,
+    };
+    char *block = diagnostic_view_render(&found, &ctx, build_report_wants_colour(where->report));
+    diagnostic_list_free(&found);
+    if(block == NULL)
+        return;
+    build_report_message(where->report, "%s\n", block);
+    free(block);
+}
+
 /* Link `objects` into `binary` when needed — `force` (something recompiled),
    a stale/missing binary, or a changed link command (per the WSDB). Records the
    link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
                          const project_target *target, const project_options *profile_opts,
                          const project_env *env, const resolved_toolchain *chain, bool force,
-                         wsdb *db) {
+                         wsdb *db, const char *root, build_report *report) {
     str_list argv;
     str_list_init(&argv);
     if(!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts, chain)) {
@@ -936,7 +988,22 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     bool ok = true;
     if(force || command == NULL || !wsdb_binary_fresh(db, binary, command) ||
        link_needed(objects, binary)) {
-        ok = run_str_argv(&argv, env, NULL, 0, NULL) == 0;
+        char *output = malloc(BUILD_OUTPUT_SIZE);
+        bool truncated = false;
+        const int status =
+            run_str_argv(&argv, env, output, output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
+        ok = status == 0;
+        if(output != NULL) {
+            const link_env where = {.root = root,
+                                    .binary = binary,
+                                    .chain = chain,
+                                    .report = report,
+                                    .any_cpp = any_cpp};
+            report_link_diagnostics(&where, output, truncated, status);
+        } else if(!ok) {
+            build_report_message(report, "molto: failed to link '%s'\n", binary);
+        }
+        free(output);
         if(ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", binary);
     }
@@ -1530,11 +1597,11 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
             (void)wsdb_close(db);
             return exit_build_failure;
         }
+        /* Whatever the linker had to say has already been framed and printed
+           by then; a line here would only repeat it less clearly. */
         if(!link_project(any_cpp, &objects, binary, &ctx.target, profile_options_for(&ctx, profile),
-                         &ctx.env, &chain, any_compiled, db)) {
-            fprintf(stderr, "molto: failed to link '%s'\n", binary);
+                         &ctx.env, &chain, any_compiled, db, root, report))
             result = exit_build_failure;
-        }
         if(result == exit_ok) {
             /* Prune objects orphaned by removed sources (scoped to src/). */
             char prefix[PATH_BUFFER_SIZE];
@@ -1616,6 +1683,7 @@ typedef struct {
     bool any_cpp;
     bool force; /* something was recompiled */
     wsdb *db;
+    build_report *report; /* where a failed link says so */
 } test_link_context;
 
 /* Link `objects` into `binary`, and record it as one of the built tests. */
@@ -1624,10 +1692,9 @@ static bool link_one_test(const test_link_context *context, const str_list *obje
     if(!make_parent_dirs(binary))
         return false;
     if(!link_project(cpp, objects, binary, &context->ctx->target, context->profile_opts,
-                     &context->ctx->env, context->chain, context->force, context->db)) {
-        fprintf(stderr, "molto: failed to link '%s'\n", binary);
+                     &context->ctx->env, context->chain, context->force, context->db, context->root,
+                     context->report))
         return false;
-    }
     return str_list_push(binaries_out, binary);
 }
 
@@ -1884,6 +1951,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
             .any_cpp = plan.any_cpp,
             .force = any_compiled,
             .db = db,
+            .report = report,
         };
         result =
             ctx.test.mode == test_mode_single

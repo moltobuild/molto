@@ -274,6 +274,92 @@ bool diagnostic_parse(const char *text, diagnostic_list *out) {
     return true;
 }
 
+/* --- what a failing linker says --- */
+
+/* The driver reporting that the link as a whole did not work. It repeats what
+   the lines above already said, in the way `1 error generated.` does. */
+static bool is_link_summary(const char *line) {
+    return strstr(line, ": ld returned ") != NULL || strstr(line, "linker command failed") != NULL;
+}
+
+/* "<object>: in function `name':", which names a temporary object file the
+   reader cannot open and a function that the line below locates properly. */
+static bool is_link_context(const char *line) { return strstr(line, ": in function ") != NULL; }
+
+/* Past a leading "ld: " or "/usr/bin/ld: ".
+ *
+ * GNU ld writes it on some of its lines and not on others — the first location
+ * of a failed link carries no prefix and the second one does — so it is
+ * stripped where it is and not looked for where it is not. Matched on the
+ * program's own name rather than on the shape of the line, because a source
+ * path followed by a space is a shape a real diagnostic has too. */
+static const char *past_link_tool(const char *line) {
+    const char *separator = strstr(line, ": ");
+    if(separator == NULL)
+        return line;
+    const char *base = line;
+    for(const char *at = line; at < separator; at++) {
+        if(*at == '/')
+            base = at + 1;
+    }
+    const size_t length = (size_t)(separator - base);
+    if((length == 2 && strncmp(base, "ld", 2) == 0) || (length > 3 && strncmp(base, "ld.", 3) == 0))
+        return separator + 2;
+    return line;
+}
+
+/* "<path>:<line>: <message>" — the one shape a failing linker gives that can
+   be pointed at, and only when the objects carry debug information. Without it
+   the same failure reads "main.c:(.text+0x9): undefined reference", naming an
+   offset into a section rather than a place in anyone's code. */
+static bool parse_link_location(const char *line, diagnostic *out) {
+    for(const char *at = strchr(line, ':'); at != NULL; at = strchr(at + 1, ':')) {
+        const char *digits = at + 1;
+        const char *end = digits;
+        while(*end >= '0' && *end <= '9')
+            end++;
+        if(end == digits || end[0] != ':' || end[1] != ' ')
+            continue;
+        const size_t path_length = (size_t)(at - line);
+        if(path_length == 0)
+            return false;
+        copy_bounded(out->file, sizeof out->file, line, path_length);
+        out->line = strtol(digits, NULL, 10);
+        copy_bounded(out->message, sizeof out->message, end + 2, strlen(end + 2));
+        return true;
+    }
+    return false;
+}
+
+bool diagnostic_parse_link(const char *text, diagnostic_list *out) {
+    if(text == NULL)
+        return true;
+
+    const char *cursor = text;
+    while(*cursor != '\0') {
+        const char *end = strchr(cursor, '\n');
+        const size_t length = end != NULL ? (size_t)(end - cursor) : strlen(cursor);
+
+        char line[DIAGNOSTIC_TEXT_MAX];
+        copy_bounded(line, sizeof line, cursor, length);
+        if(line[0] != '\0' && !is_link_summary(line) && !is_link_context(line)) {
+            const char *said = past_link_tool(line);
+            /* Everything a failing linker says is an error. It names no
+               severity because it has only the one to name. */
+            diagnostic item = {.severity = diagnostic_severity_error};
+            if(!parse_link_location(said, &item))
+                copy_bounded(item.message, sizeof item.message, said, strlen(said));
+            if(!diagnostic_list_push(out, &item))
+                return false;
+        }
+
+        if(end == NULL)
+            break;
+        cursor = end + 1;
+    }
+    return true;
+}
+
 size_t diagnostic_count_severity(const diagnostic_list *list, diagnostic_severity severity) {
     size_t count = 0;
     for(size_t i = 0; i < list->count; i++) {

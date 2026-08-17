@@ -34,12 +34,20 @@
  * workers. `lint`, with no bar to work around, writes straight out.
  */
 
+/* What was being done, which decides the words the header uses. Compiling is
+   the default, so a context that says nothing about it is about a source. */
+typedef enum {
+    diagnostic_view_compiling,
+    diagnostic_view_linking,
+} diagnostic_view_action;
+
 /* Whose code this is, as the footer will say it. Every field is borrowed, and
    every one of them may be NULL: a line that has nothing to say is omitted
    rather than printed empty. */
 typedef struct {
     /* What failed, named the way the build's inventory named it. */
     const char *unit;
+    diagnostic_view_action action;
     /* The package it belongs to, and its version. NULL for a project's own
        code, which is named by its source rather than by a package. */
     const char *package;

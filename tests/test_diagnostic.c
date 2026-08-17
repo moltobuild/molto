@@ -366,3 +366,96 @@ MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
     str_list_free(&bad_line);
     diagnostic_list_free(&out);
 }
+
+/*
+ * What a failing linker says.
+ *
+ * Every fixture below is what GNU ld 2.38 actually wrote on this machine. Its
+ * grammar is not the compiler's: it names no severity, because it has only the
+ * one, and it prefixes some of its lines with its own name and not others.
+ */
+
+MOLTEST(a_link_failure_with_debug_information_can_be_pointed_at) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/ccobS3PB.o: in function `main':\n"
+                                      "/home/u/proj/src/main.c:3: undefined reference to `db_open'\n"
+                                      "collect2: error: ld returned 1 exit status\n",
+                                      &found));
+
+    /* The object-file context line names a temporary nobody can open, and the
+       driver's summary repeats what the line above already said. */
+    ASSERT_EQ(1u, diagnostic_list_count(&found));
+    const diagnostic *item = diagnostic_list_get(&found, 0);
+    EXPECT_STREQ("/home/u/proj/src/main.c", item->file);
+    EXPECT_EQ(3, item->line);
+    EXPECT_EQ(diagnostic_severity_error, item->severity);
+    EXPECT_STREQ("undefined reference to `db_open'", item->message);
+
+    diagnostic_list_free(&found);
+}
+
+/* Without debug information the same failure names an offset into a section
+   rather than a place in anyone's code. There is nothing to point at, and
+   inventing one would be worse than saying so. */
+MOLTEST(a_link_failure_without_debug_information_carries_no_location) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/ccyaAUJD.o: in function `main':\n"
+                                      "main.c:(.text+0x9): undefined reference to `db_open'\n"
+                                      "collect2: error: ld returned 1 exit status\n",
+                                      &found));
+
+    ASSERT_EQ(1u, diagnostic_list_count(&found));
+    const diagnostic *item = diagnostic_list_get(&found, 0);
+    EXPECT_STREQ("", item->file);
+    EXPECT_EQ(0, item->line);
+    EXPECT_EQ(diagnostic_severity_error, item->severity);
+    EXPECT_NOT_NULL(strstr(item->message, "undefined reference to `db_open'"));
+
+    diagnostic_list_free(&found);
+}
+
+/* The tool's own name is stripped where it appears, and looked for nowhere
+   else: ld writes it on the second location line of a failure and not on the
+   first. */
+MOLTEST(the_linkers_own_name_is_dropped_where_it_appears) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: cannot find -lnosuchlib: No such file or "
+                                      "directory\n"
+                                      "collect2: error: ld returned 1 exit status\n",
+                                      &found));
+
+    ASSERT_EQ(1u, diagnostic_list_count(&found));
+    EXPECT_STREQ("cannot find -lnosuchlib: No such file or directory",
+                 diagnostic_list_get(&found, 0)->message);
+
+    diagnostic_list_free(&found);
+}
+
+/* A source path is a shape a tool prefix has too, so the prefix is matched on
+   the program's name and never on the shape of the line. */
+MOLTEST(a_source_path_is_not_mistaken_for_a_tool_prefix) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link("/home/u/ld/src/main.c:12: undefined reference to `f'\n",
+                                      &found));
+
+    ASSERT_EQ(1u, diagnostic_list_count(&found));
+    EXPECT_STREQ("/home/u/ld/src/main.c", diagnostic_list_get(&found, 0)->file);
+    EXPECT_EQ(12, diagnostic_list_get(&found, 0)->line);
+
+    diagnostic_list_free(&found);
+}
+
+/* clang's driver ends a failed link with its own summary, in its own words. */
+MOLTEST(the_drivers_closing_summary_is_swallowed_too) {
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    ASSERT_TRUE(diagnostic_parse_link(
+        "clang: error: linker command failed with exit code 1 (use -v to see invocation)\n",
+        &found));
+    EXPECT_EQ(0u, diagnostic_list_count(&found));
+    diagnostic_list_free(&found);
+}
