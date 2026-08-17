@@ -11,7 +11,7 @@
 
 [package]
 name = "molto"
-version = "0.10.0"
+version = "0.11.0"
 description = "A package manager and build system for C and C++"
 repository = "https://github.com/black-redoc/molto"
 # license: this repository ships no LICENSE file yet, and the key states a
