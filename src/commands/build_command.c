@@ -27,7 +27,7 @@ int build_command_run(const char *requested_profile, bool refresh_toolchain, siz
     int code = build_project_with(root, profile, refresh_toolchain, jobs, NULL, 0, report);
     /* After the link and not before it: what the line reports is how long the
        whole command took, and the link is part of the command. */
-    build_report_finish(report, profile_name(profile), code == exit_ok);
+    build_report_finish(report, profile_name(profile), code);
     build_report_destroy(report);
     return code;
 }

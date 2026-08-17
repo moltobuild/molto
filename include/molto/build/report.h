@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include <molto/exit_code.h>
+
 /*
  * What a build says while it runs, and what it says when it stops.
  *
@@ -107,9 +109,16 @@ void build_report_unit_done(build_report *report);
 void build_report_message(build_report *report, const char *format, ...)
     __attribute__((format(printf, 2, 3)));
 
-/* Take the bar down and, if the build stands, say which profile it was and how
-   long it took. A build that failed says nothing here: the line worth reading
-   is the compiler's. */
-void build_report_finish(build_report *report, const char *profile, bool ok);
+/* Take the bar down and say how it went.
+ *
+ * `exit_ok` says which profile it was and how long it took. `exit_build_failure`
+ * closes with `error: build failed`, under the diagnostics that already said
+ * which unit and why — one line for the whole build, however many units broke.
+ *
+ * Every other code says nothing, because it belongs to a step before any
+ * compiler ran: a manifest that would not parse, a registry that would not
+ * answer. Those have already been reported in their own words, and "build
+ * failed" underneath them would be naming the wrong thing. */
+void build_report_finish(build_report *report, const char *profile, molto_exit_code code);
 
 #endif /* MOLTO_BUILD_REPORT_H */

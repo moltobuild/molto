@@ -341,10 +341,11 @@ void build_report_message(build_report *report, const char *format, ...) {
     va_end(args);
 }
 
-void build_report_finish(build_report *report, const char *profile, bool ok) {
+void build_report_finish(build_report *report, const char *profile, molto_exit_code code) {
     if(report == NULL)
         return;
     stop_drawer(report);
+    const bool ok = code == exit_ok;
 
     (void)mtx_lock(&report->lock);
     if(ok && report->bar_up) {
@@ -359,11 +360,17 @@ void build_report_finish(build_report *report, const char *profile, bool ok) {
            that it worked. */
         erase_bar_locked(report);
     }
+    char line[LINE_MAX];
     if(ok) {
-        char line[LINE_MAX];
         (void)snprintf(line, sizeof line, " %s✓%s Finished `%s` build in %.2fs\n",
                        paint(report, ANSI_GREEN), paint(report, ANSI_RESET), profile,
                        elapsed_seconds(report));
+        (void)fputs(line, report->out);
+    } else if(code == exit_build_failure) {
+        /* Flush left, unlike everything above it, because it is not one more
+           finding: it is the verdict on all of them. */
+        (void)snprintf(line, sizeof line, "%s%serror%s: build failed\n", paint(report, ANSI_BOLD),
+                       paint(report, ANSI_RED), paint(report, ANSI_RESET));
         (void)fputs(line, report->out);
     }
     (void)fflush(report->out);

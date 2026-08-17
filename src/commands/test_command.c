@@ -56,7 +56,7 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain, size
     project_env env;
     build_report *report = build_report_create(stderr);
     int code = build_tests_with(root, profile, refresh_toolchain, jobs, &binaries, &env, report);
-    build_report_finish(report, profile_name(profile), code == exit_ok);
+    build_report_finish(report, profile_name(profile), code);
     build_report_destroy(report);
     if(code != exit_ok) {
         str_list_free(&binaries);

@@ -38,7 +38,7 @@ MOLTEST(the_inventory_names_the_work_and_where_it_came_from) {
     build_report_will_compile(report, &network, NULL);
     build_report_will_compile(report, &own, "main.c");
     build_report_begin(report, 3);
-    build_report_finish(report, "debug", true);
+    build_report_finish(report, "debug", exit_ok);
 
     char text[1024] = "";
     (void)captured(out, text, sizeof text);
@@ -182,7 +182,7 @@ MOLTEST(a_stream_nobody_watches_gets_no_bar_and_no_escapes) {
     build_report_will_compile(report, &own, "main.c");
     build_report_begin(report, 1);
     build_report_unit_done(report);
-    build_report_finish(report, "debug", true);
+    build_report_finish(report, "debug", exit_ok);
 
     char text[1024] = "";
     (void)captured(out, text, sizeof text);
@@ -201,7 +201,7 @@ MOLTEST(a_finished_build_says_which_profile_and_how_long) {
     ASSERT_NOT_NULL(report);
 
     build_report_begin(report, 0);
-    build_report_finish(report, "release", true);
+    build_report_finish(report, "release", exit_ok);
 
     char text[256] = "";
     (void)captured(out, text, sizeof text);
@@ -213,8 +213,9 @@ MOLTEST(a_finished_build_says_which_profile_and_how_long) {
 }
 
 /* A build that failed has already said why, in the compiler's words. A tick
-   under them would be the report contradicting them. */
-MOLTEST(a_failed_build_claims_nothing) {
+   under them would be the report contradicting them; what it closes with is
+   the verdict on all of them, once, however many units broke. */
+MOLTEST(a_failed_build_claims_nothing_and_says_so) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -222,12 +223,34 @@ MOLTEST(a_failed_build_claims_nothing) {
 
     build_report_will_compile(report, &own, "main.c");
     build_report_begin(report, 1);
-    build_report_finish(report, "debug", false);
+    build_report_finish(report, "debug", exit_build_failure);
 
     char text[256] = "";
     (void)captured(out, text, sizeof text);
     EXPECT_NULL(strstr(text, "Finished"));
     EXPECT_NOT_NULL(strstr(text, "main.c"));
+    EXPECT_NOT_NULL(strstr(text, "error: build failed\n"));
+
+    build_report_destroy(report);
+    (void)fclose(out);
+}
+
+/* A manifest that would not parse, or a registry that would not answer, is not
+   a build that failed: no compiler ever ran. Both have already been reported in
+   their own words, and "build failed" underneath them names the wrong thing. */
+MOLTEST(a_failure_before_the_build_is_not_reported_as_the_builds) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    build_report *report = build_report_create(out);
+    ASSERT_NOT_NULL(report);
+
+    build_report_begin(report, 0);
+    build_report_finish(report, "debug", exit_invalid_manifest);
+
+    char text[256] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NULL(strstr(text, "build failed"));
+    EXPECT_NULL(strstr(text, "Finished"));
 
     build_report_destroy(report);
     (void)fclose(out);
@@ -273,7 +296,7 @@ MOLTEST(no_report_is_a_report_that_says_nothing) {
     build_report_skipped(NULL);
     build_report_begin(NULL, 4);
     build_report_unit_done(NULL);
-    build_report_finish(NULL, "debug", true);
+    build_report_finish(NULL, "debug", exit_ok);
     build_report_destroy(NULL);
 
     EXPECT_NULL(build_report_create(NULL));
