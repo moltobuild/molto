@@ -1,0 +1,126 @@
+#include <moltest.h>
+
+#include <molto/services/fs_service.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/*
+ * Reading one line out of a file.
+ *
+ * The interesting cases are all the ones where there is no line to read,
+ * because that is what happens whenever a compiler names something that is not
+ * a file on disk — and it names those often.
+ */
+
+/* A temporary file holding `content`. The path is written into `path`. */
+static bool write_temp(char *path, size_t path_size, const char *content) {
+    snprintf(path, path_size, "/tmp/molto_fs_XXXXXX");
+    int fd = mkstemp(path);
+    if(fd < 0)
+        return false;
+    (void)close(fd);
+    return fs_write_file(path, content);
+}
+
+MOLTEST(a_line_is_read_without_its_ending) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "first\nsecond\nthird\n"));
+
+    char line[128] = "";
+    EXPECT_TRUE(fs_read_line(path, 1, line, sizeof line));
+    EXPECT_STREQ("first", line);
+    EXPECT_TRUE(fs_read_line(path, 2, line, sizeof line));
+    EXPECT_STREQ("second", line);
+    EXPECT_TRUE(fs_read_line(path, 3, line, sizeof line));
+    EXPECT_STREQ("third", line);
+
+    (void)remove(path);
+}
+
+/* The last line of a file that does not end in a newline is still a line. */
+MOLTEST(a_file_that_does_not_end_in_a_newline_still_has_a_last_line) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "alpha\nomega"));
+
+    char line[128] = "";
+    EXPECT_TRUE(fs_read_line(path, 2, line, sizeof line));
+    EXPECT_STREQ("omega", line);
+
+    (void)remove(path);
+}
+
+/* Two characters end a line on another platform, and showing the first of them
+   would put a stray glyph at the end of every excerpt taken from that file. */
+MOLTEST(a_carriage_return_is_part_of_the_ending_and_not_of_the_line) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "one\r\ntwo\r\n"));
+
+    char line[128] = "";
+    EXPECT_TRUE(fs_read_line(path, 2, line, sizeof line));
+    EXPECT_STREQ("two", line);
+
+    (void)remove(path);
+}
+
+MOLTEST(an_empty_line_is_a_line) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "top\n\nbottom\n"));
+
+    char line[128] = "sentinel";
+    EXPECT_TRUE(fs_read_line(path, 2, line, sizeof line));
+    EXPECT_STREQ("", line);
+
+    (void)remove(path);
+}
+
+/* Past the end, at zero, and negative: none of these is a line, and none of
+   them is a reason to leave the caller's buffer holding whatever it held. */
+MOLTEST(a_line_that_does_not_exist_is_reported_rather_than_invented) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "only\n"));
+
+    char line[128] = "sentinel";
+    EXPECT_FALSE(fs_read_line(path, 2, line, sizeof line));
+    EXPECT_STREQ("", line);
+    EXPECT_FALSE(fs_read_line(path, 0, line, sizeof line));
+    EXPECT_FALSE(fs_read_line(path, -1, line, sizeof line));
+
+    (void)remove(path);
+}
+
+/* The ordinary answer for `<command line>`, `<built-in>`, and any source that
+   was generated and then removed. */
+MOLTEST(a_file_that_cannot_be_opened_is_not_an_excerpt) {
+    char line[128] = "sentinel";
+    EXPECT_FALSE(fs_read_line("/tmp/molto_no_such_file_zzz", 1, line, sizeof line));
+    EXPECT_STREQ("", line);
+    EXPECT_FALSE(fs_read_line("<command line>", 1, line, sizeof line));
+}
+
+/* An excerpt is for reading, and part of one still reads. What must not happen
+   is running on into the line after it. */
+MOLTEST(a_line_longer_than_the_buffer_is_shortened_not_refused) {
+    char path[64];
+    ASSERT_TRUE(write_temp(path, sizeof path, "aaaaaaaaaaaaaaaaaaaa\nnext\n"));
+
+    char line[8] = "";
+    EXPECT_TRUE(fs_read_line(path, 1, line, sizeof line));
+    EXPECT_EQ(sizeof line - 1, strlen(line));
+    EXPECT_STREQ("aaaaaaa", line);
+
+    /* The line after it is still where it was. */
+    char after[64] = "";
+    EXPECT_TRUE(fs_read_line(path, 2, after, sizeof after));
+    EXPECT_STREQ("next", after);
+
+    (void)remove(path);
+}
+
+MOLTEST(no_buffer_is_not_a_place_to_put_a_line) {
+    char line[4] = "";
+    EXPECT_FALSE(fs_read_line("/etc/hostname", 1, NULL, 8));
+    EXPECT_FALSE(fs_read_line("/etc/hostname", 1, line, 0));
+}

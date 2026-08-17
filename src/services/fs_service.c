@@ -58,6 +58,59 @@ char *fs_read_file(const char *path) {
     return buffer;
 }
 
+/* Advance to the start of line `line`, reading and discarding. Returns false
+   when the file ends first, which is how a line past the end is reported. */
+static bool skip_to_line(FILE *file, long line) {
+    for(long at = 1; at < line;) {
+        int c = getc(file);
+        if(c == EOF)
+            return false;
+        if(c == '\n')
+            at++;
+    }
+    return true;
+}
+
+bool fs_read_line(const char *path, long line, char *out, size_t out_size) {
+    if(out == NULL || out_size == 0)
+        return false;
+    out[0] = '\0';
+    if(line < 1)
+        return false;
+
+    FILE *file = fopen(path, "rb");
+    if(file == NULL)
+        return false;
+    if(!skip_to_line(file, line)) {
+        fclose(file);
+        return false;
+    }
+
+    int c = getc(file);
+    if(c == EOF) { /* the file ended on the line before this one */
+        fclose(file);
+        return false;
+    }
+
+    /* Read past the end of the buffer rather than stopping at it, so the line
+       ending is still found and a truncated excerpt is a shorter line and not
+       a run-on into the next one. */
+    size_t used = 0;
+    for(; c != EOF && c != '\n'; c = getc(file)) {
+        if(used + 1 < out_size)
+            out[used++] = (char)c;
+    }
+    fclose(file);
+
+    /* A file written on another platform ends its lines with two characters,
+       and showing the first of them would put a stray glyph at the end of
+       every excerpt taken from it. */
+    if(used > 0 && out[used - 1] == '\r')
+        used--;
+    out[used] = '\0';
+    return true;
+}
+
 bool fs_is_dir(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);

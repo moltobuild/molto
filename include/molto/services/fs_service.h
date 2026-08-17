@@ -18,6 +18,18 @@
    Returns NULL on error; the caller must free() the result. */
 [[nodiscard]] char *fs_read_file(const char *path);
 
+/* Copy the `line`-th line of `path` into `out`, 1-based and without its line
+   ending. Returns false when the file cannot be opened or has no such line —
+   which is the ordinary answer, not an exceptional one, for the pseudo-files a
+   compiler names (`<command line>`, `<built-in>`) and for anything generated
+   and since removed.
+
+   Streamed rather than read whole, because the caller wants one line out of a
+   file that may be a machine-written one of a hundred megabytes. A line longer
+   than `out` holds is truncated rather than refused: an excerpt is for reading,
+   and part of one still reads. */
+[[nodiscard]] bool fs_read_line(const char *path, long line, char *out, size_t out_size);
+
 /* Return true if `path` exists and is a directory. */
 [[nodiscard]] bool fs_is_dir(const char *path);
 
