@@ -277,6 +277,69 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
     (void)system(cmd);
 }
 
+/* A source under `~/.molto/cache/sources/…` is eighty columns saying no more
+   than the coordinate on the line above, so the footer leaves it out. A path
+   dependency inside the project is the opposite: it is somewhere the reader
+   can go and look, and it is named the way they would type it. */
+MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
+    char root[] = "/tmp/molto_depframe_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/modules/database/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/modules/database/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"database\"\nversion = \"1.2.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\n"
+                                    "sources = [\"src/database.c\"]\ninclude = [\"src\"]\n"));
+    snprintf(path, sizeof path, "%s/modules/database/src/database.c", root);
+    EXPECT_TRUE(fs_write_file(path, "struct user { int id; };\n"
+                                    "int db_lookup(struct user *u) {\n"
+                                    "    return u->name;\n"
+                                    "}\n"));
+    /* Absolute, because a relative one is resolved against the directory molto
+       was invoked from and this suite runs from the repository root. What the
+       footer has to show is still the short form. */
+    char manifest[1024];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+             "[target]\nstd = \"c17\"\n"
+             "[deps]\ndatabase = { path = \"%s/modules/database\" }\n",
+             root);
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, manifest));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    FILE *said = tmpfile();
+    ASSERT_NOT_NULL(said);
+    build_report *report = build_report_create(said);
+    ASSERT_NOT_NULL(report);
+    EXPECT_EQ(exit_build_failure,
+              build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+
+    char text[8192] = "";
+    (void)fflush(said);
+    rewind(said);
+    text[fread(text, 1, sizeof text - 1, said)] = '\0';
+
+    EXPECT_NOT_NULL(strstr(text, "= dependency: database"));
+    EXPECT_NOT_NULL(strstr(text, "= source: modules/database\n"));
+    /* Named relative to its own root, not to whoever is building it. */
+    EXPECT_NOT_NULL(strstr(text, "Failed to compile `database.c`"));
+    EXPECT_NOT_NULL(strstr(text, "modules/database/src/database.c:3"));
+
+    build_report_destroy(report);
+    (void)fclose(said);
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
 MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     char root[] = "/tmp/molto_cpp_XXXXXX";
     ASSERT_TRUE(mkdtemp(root) != NULL);
