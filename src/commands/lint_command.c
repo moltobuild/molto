@@ -1,30 +1,82 @@
 #include <molto/commands/lint_command.h>
 
+#include <molto/build/diagnostic_view.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
+#include <molto/services/fs_service.h>
 #include <molto/services/lint_service.h>
+#include <molto/util/progress.h>
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Size of the buffer holding the discovered workspace root. */
 #define ROOT_BUFFER_SIZE 4096
 
-/* The shapes `--format` accepts. */
+/* The shapes `--format` accepts.
+ *
+ * `text` is one normalized line per finding, which is what a file another
+ * program will read wants (RFC-0005). `rich` is the same findings drawn in the
+ * frame a build draws them in, which is what a person at a terminal wants.
+ * `json` is the contract CI reads, and neither of the other two moves it. */
 #define FORMAT_TEXT "text"
 #define FORMAT_JSON "json"
+#define FORMAT_RICH "rich"
 
-static bool parse_format(const char *format, bool *as_json) {
+typedef enum { lint_format_text, lint_format_rich, lint_format_json } lint_format;
+
+static bool parse_format(const char *format, lint_format *out) {
     if(format == NULL || strcmp(format, FORMAT_TEXT) == 0) {
-        *as_json = false;
+        *out = lint_format_text;
+        return true;
+    }
+    if(strcmp(format, FORMAT_RICH) == 0) {
+        *out = lint_format_rich;
         return true;
     }
     if(strcmp(format, FORMAT_JSON) == 0) {
-        *as_json = true;
+        *out = lint_format_json;
         return true;
     }
     return false;
+}
+
+/* Where a run of findings about one file ends.
+ *
+ * A frame is about a file: it names the source at the top and quotes lines out
+ * of it below. Findings arrive in source order, so a run of consecutive entries
+ * is one file's worth — and the ones carrying no file of their own, which is
+ * what an unparsed line looks like, belong to whichever file came before. */
+static size_t run_of_one_file(const diagnostic_list *found, size_t start) {
+    const char *file = found->items[start].file;
+    size_t end = start + 1;
+    while(end < found->count) {
+        const char *next = found->items[end].file;
+        if(next[0] != '\0' && strcmp(next, file) != 0)
+            break;
+        end++;
+    }
+    return end;
+}
+
+/* Every finding, framed, one block per file. The slices borrow the list's own
+   items rather than copying them: the view only reads. */
+static void write_rich(FILE *out, const diagnostic_list *found, const char *root, bool colour) {
+    for(size_t start = 0; start < found->count;) {
+        const size_t end = run_of_one_file(found, start);
+        const diagnostic_list slice = {.items = found->items + start, .count = end - start};
+        const diagnostic_context ctx = {
+            .unit = fs_relative_to(found->items[start].file, root),
+            .action = diagnostic_view_checking,
+            .root = root,
+        };
+        if(start > 0)
+            (void)fputc('\n', out);
+        diagnostic_view_write(out, &slice, &ctx, colour);
+        start = end;
+    }
 }
 
 int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool refresh_tools,
@@ -38,11 +90,12 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
         return exit_usage_error;
     }
 
-    bool as_json = false;
-    if(!parse_format(format, &as_json)) {
-        fprintf(stderr, "molto: unknown output format '%s' (text, json)\n", format);
+    lint_format shape = lint_format_text;
+    if(!parse_format(format, &shape)) {
+        fprintf(stderr, "molto: unknown output format '%s' (text, rich, json)\n", format);
         return exit_usage_error;
     }
+    const bool as_json = shape == lint_format_json;
 
     char root[ROOT_BUFFER_SIZE];
     if(!workspace_find_root(root, sizeof root)) {
@@ -67,8 +120,11 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
     diagnostic_list_init(&found);
     int code = lint_project(root, &request, &found);
     if(code == exit_ok) {
-        if(as_json)
+        if(shape == lint_format_json)
             diagnostic_write_json(stdout, &found, root);
+        else if(shape == lint_format_rich)
+            write_rich(stdout, &found, root,
+                       progress_is_interactive(stdout) && getenv("NO_COLOR") == NULL);
         else
             diagnostic_write_text(stdout, &found, root);
 

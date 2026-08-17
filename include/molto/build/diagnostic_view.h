@@ -39,6 +39,9 @@
 typedef enum {
     diagnostic_view_compiling,
     diagnostic_view_linking,
+    /* Analysis, which is not a build: nothing was produced and nothing was
+       stopped, so a finding says what it is and not what it cost. */
+    diagnostic_view_checking,
 } diagnostic_view_action;
 
 /* Whose code this is, as the footer will say it. Every field is borrowed, and

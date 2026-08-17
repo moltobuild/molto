@@ -71,7 +71,7 @@ static const cli_option lint_options[] = {
      "Ask pickup again which formatter and linter this machine has", NULL},
     {"--refresh-analysis", 0, cli_opt_flag, NULL,
      "Analyse every file again instead of replaying what did not change", NULL},
-    {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, json)", "text"},
+    {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, rich, json)", "text"},
     {"--jobs", 'j', cli_opt_value, "<n>", "Analyse at most n files at once (default: every core)",
      NULL},
 };

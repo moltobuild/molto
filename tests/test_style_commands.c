@@ -75,8 +75,9 @@ MOLTEST(lint_accepts_the_formats_it_documents) {
     ASSERT_TRUE(workspace_enter(&ws, true));
 
     /* An empty project has nothing to analyse, which is success, not an error
-       — and it proves the two formats are accepted rather than rejected. */
+       — and it proves the three formats are accepted rather than rejected. */
     EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "text", 0));
+    EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "rich", 0));
     EXPECT_EQ(exit_ok, lint_command_run(NULL, false, false, false, "json", 0));
     EXPECT_EQ(exit_ok, lint_command_run("release", false, false, false, NULL, 0));
 

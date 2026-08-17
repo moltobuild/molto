@@ -354,19 +354,27 @@ static void write_frame(view_state *view, const diagnostic *item, const char *co
 /* The line above a frame: the severity, the compiler's own rule where it named
    one, and what it meant for the build. */
 static void write_summary(view_state *view, const diagnostic *item) {
+    /* NULL where the action had no outcome to report: analysis produced
+       nothing and stopped nothing, so the finding is the whole statement. */
     static const char *const outcomes[][2] = {
         [diagnostic_view_compiling] = {"compiled with a warning", "compilation failed"},
         [diagnostic_view_linking] = {"linked with a warning", "linking failed"},
+        [diagnostic_view_checking] = {NULL, NULL},
     };
     const char *word = diagnostic_severity_name(item->severity);
     const bool failed = item->severity == diagnostic_severity_error;
     const char *outcome = outcomes[view->ctx->action][failed];
-    if(item->rule_native[0] != '\0')
-        text_add(view->text, "%*s%s%s%s[%s]%s: %s\n", BLOCK_INDENT, "", view->style->bold,
-                 view->style->severity, word, item->rule_native, view->style->reset, outcome);
+    const char *rule_open = item->rule_native[0] != '\0' ? "[" : "";
+    const char *rule = item->rule_native[0] != '\0' ? item->rule_native : "";
+    const char *rule_close = item->rule_native[0] != '\0' ? "]" : "";
+
+    if(outcome != NULL)
+        text_add(view->text, "%*s%s%s%s%s%s%s%s: %s\n", BLOCK_INDENT, "", view->style->bold,
+                 view->style->severity, word, rule_open, rule, rule_close, view->style->reset,
+                 outcome);
     else
-        text_add(view->text, "%*s%s%s%s%s: %s\n", BLOCK_INDENT, "", view->style->bold,
-                 view->style->severity, word, view->style->reset, outcome);
+        text_add(view->text, "%*s%s%s%s%s%s%s%s\n", BLOCK_INDENT, "", view->style->bold,
+                 view->style->severity, word, rule_open, rule, rule_close, view->style->reset);
 }
 
 /* A finding with nowhere to point at: the tool's own words, set off by the
@@ -438,6 +446,7 @@ static void write_header(view_state *view, bool failed) {
     static const char *const verbs[][2] = {
         [diagnostic_view_compiling] = {"Warnings compiling", "Failed to compile"},
         [diagnostic_view_linking] = {"Warnings linking", "Failed to link"},
+        [diagnostic_view_checking] = {"Findings in", "Errors in"},
     };
     const char *glyph = failed ? GLYPH_FAILED : GLYPH_WARNED;
     const char *verb = verbs[view->ctx->action][failed];
