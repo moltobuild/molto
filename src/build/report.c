@@ -5,6 +5,7 @@
 
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
@@ -60,6 +61,24 @@ typedef struct {
     char *version; /* NULL when the origin carries none */
 } report_entry;
 
+/* How many compilations the region will keep track of at once. Fixed rather
+   than taken from `-j`, because the report is created by three commands that
+   do not know it, and what is actually running at once is bounded by the
+   cores of the machine. A build wider than this loses nothing but the names:
+   the bar counts the total, not this table. */
+#define INFLIGHT_MAX 64
+
+/* One unit being compiled right now. Copied and not borrowed, for the reason
+   the inventory copies — and so that finding a slot never has to allocate
+   while the lock is held. `busy` false is a free slot. */
+typedef struct {
+    bool busy;
+    build_origin origin;
+    char name[128];    /* the package, or "" for the project's own code */
+    char display[256]; /* the source, as a person would name it */
+    uint64_t sequence; /* the order it arrived in, so a row does not jump */
+} inflight_slot;
+
 struct build_report {
     FILE *out;
     /* Whether a person is watching, and whether they want colour. The bar is
@@ -73,6 +92,15 @@ struct build_report {
 
     size_t total;
     atomic_size_t done;
+
+    /* What is being compiled at this instant. Guarded by the lock below: the
+       workers write it and the drawer reads it. `high` is one past the
+       furthest slot ever used, so a frame sweeps as many slots as the build is
+       wide rather than as many as the table holds. */
+    inflight_slot inflight[INFLIGHT_MAX];
+    size_t inflight_high;
+    size_t inflight_busy;
+    uint64_t inflight_next;
 
     /* Held around every write to `out`, because taking the bar off the line,
        writing, and putting it back is one act and the drawer is another
@@ -331,9 +359,56 @@ void build_report_begin(build_report *report, size_t total) {
     (void)mtx_unlock(&report->lock);
 }
 
-void build_report_unit_done(build_report *report) {
-    if(report != NULL)
-        (void)atomic_fetch_add(&report->done, 1);
+/* The first free slot, or INFLIGHT_MAX when the build is wider than the table.
+   Assumes the lock is held. */
+static size_t free_slot(const build_report *report) {
+    size_t slot = 0;
+    while(slot < INFLIGHT_MAX && report->inflight[slot].busy)
+        slot++;
+    return slot;
+}
+
+build_report_slot build_report_unit_started(build_report *report, const build_unit_label *label,
+                                            const char *display) {
+    /* Nobody watching is nothing to show: a stream with no region does not pay
+       for the copy, the lock, or the table. */
+    if(report == NULL || !report->interactive)
+        return BUILD_REPORT_NO_SLOT;
+
+    (void)mtx_lock(&report->lock);
+    const size_t slot = free_slot(report);
+    if(slot < INFLIGHT_MAX) {
+        inflight_slot *entry = &report->inflight[slot];
+        entry->busy = true;
+        entry->origin = label != NULL ? label->origin : build_origin_project;
+        (void)snprintf(entry->name, sizeof entry->name, "%s",
+                       label != NULL && label->name != NULL ? label->name : "");
+        (void)snprintf(entry->display, sizeof entry->display, "%s",
+                       display != NULL ? display : "");
+        entry->sequence = report->inflight_next++;
+        report->inflight_busy++;
+        if(slot + 1 > report->inflight_high)
+            report->inflight_high = slot + 1;
+    }
+    (void)mtx_unlock(&report->lock);
+    return slot < INFLIGHT_MAX ? slot : BUILD_REPORT_NO_SLOT;
+}
+
+void build_report_unit_done(build_report *report, build_report_slot slot) {
+    if(report == NULL)
+        return;
+    /* Under the lock, which this used not to need: the slot it gives back is
+       one the drawer reads. What it costs is a mutex nobody is holding, next
+       to a compilation that has just finished forking a compiler. */
+    (void)mtx_lock(&report->lock);
+    if(slot < INFLIGHT_MAX && report->inflight[slot].busy) {
+        report->inflight[slot].busy = false;
+        report->inflight_busy--;
+    }
+    /* Counted with the slot already cleared, so no frame can show a unit
+       tallied as done and still listed as running. */
+    (void)atomic_fetch_add(&report->done, 1);
+    (void)mtx_unlock(&report->lock);
 }
 
 void build_report_message(build_report *report, const char *format, ...) {

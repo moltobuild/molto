@@ -654,6 +654,14 @@ static void report_diagnostics(const compile_task *task, const char *output, boo
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
     const build_pass_env *env = task->env;
+    const compile_unit *unit = task->planned->unit;
+
+    /* Named here rather than when the pass was planned: the region says what
+       is being compiled at this instant, and the planning happened before any
+       compiler of this build had run. The token is a local because its whole
+       life is this function. */
+    const build_report_slot slot = build_report_unit_started(
+        task->report, unit->label, display_source(naming_root(unit, env->root), unit->source));
 
     /* One buffer per worker, held only while the compiler runs. The whole of
        what gcc says about a broken translation unit fits in it many times
@@ -661,20 +669,19 @@ static void compile_task_run(void *arg) {
     char *output = malloc(BUILD_OUTPUT_SIZE);
     bool truncated = false;
     const int status =
-        compile_one(env->root, task->planned->unit, task->planned->object, &env->settings, env->env,
-                    env->chain, output, output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
+        compile_one(env->root, unit, task->planned->object, &env->settings, env->env, env->chain,
+                    output, output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
     task->succeeded = status == 0;
 
     if(output != NULL)
         report_diagnostics(task, output, truncated, status);
     else if(!task->succeeded)
-        build_report_message(task->report, "molto: failed to compile '%s'\n",
-                             task->planned->unit->source);
+        build_report_message(task->report, "molto: failed to compile '%s'\n", unit->source);
     free(output);
 
     if(!task->succeeded)
         atomic_store(task->failed, true);
-    build_report_unit_done(task->report);
+    build_report_unit_done(task->report, slot);
 }
 
 /* Take a dependency's object out of the shared cache, and record it as if it

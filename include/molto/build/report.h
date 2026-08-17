@@ -98,14 +98,48 @@ void build_report_skipped(build_report *report);
    compiled — zero draws no bar, because there is nothing to watch. */
 void build_report_begin(build_report *report, size_t total);
 
-/* One unit has finished compiling, whether or not it succeeded. Safe to call
-   from a worker thread, which is where it is called from. */
-void build_report_unit_done(build_report *report);
+/*
+ * Which row of the region a unit has been given.
+ *
+ * Opaque, and a number rather than a pointer: a pointer into the table is a
+ * pointer that dangles the moment the table moves, and it invites a caller to
+ * read the table without the lock that guards it. It is handed straight back
+ * to `unit_done` and means nothing anywhere else.
+ */
+typedef size_t build_report_slot;
+#define BUILD_REPORT_NO_SLOT ((build_report_slot)-1)
 
-/* Say something while the bar is up: it comes off the line, the message is
-   printed, and it goes back. Anything a build writes to stderr between
-   `begin` and `finish` goes through here, or it lands in the middle of the
-   bar. */
+/*
+ * One unit has started compiling. The region names it until the `unit_done`
+ * that matches. Safe from a worker thread, which is where it is called from.
+ *
+ * The strings are copied and not borrowed, for the reason the inventory copies
+ * them: the lifetime that would make borrowing safe is an invariant spanning
+ * three files that this header can neither state nor check. A fixed table also
+ * means this cannot fail for memory and never calls the allocator with the
+ * lock held.
+ *
+ * BUILD_REPORT_NO_SLOT when there is nothing to show — no report, no terminal,
+ * or more compilations at once than the table allows for. None of those is a
+ * failure: the bar and the count come from the total and the tally, not from
+ * this table, so a unit that finds no room simply goes unnamed.
+ */
+[[nodiscard]] build_report_slot build_report_unit_started(build_report *report,
+                                                          const build_unit_label *label,
+                                                          const char *display);
+
+/* One unit has finished compiling, whether or not it succeeded. `slot` is what
+   `unit_started` returned; BUILD_REPORT_NO_SLOT is valid and frees nothing.
+   Safe to call from a worker thread, which is where it is called from. */
+void build_report_unit_done(build_report *report, build_report_slot slot);
+
+/* Say something while the region is up: it comes off the screen, the message
+   is printed, and it goes back below. Anything a build writes to stderr
+   between `begin` and `finish` goes through here, or it lands in the middle of
+   the region.
+ *
+ * One rule holds the locking up: nothing called with the report's lock held
+ * may re-enter the report. Composing a row does not call this. */
 void build_report_message(build_report *report, const char *format, ...)
     __attribute__((format(printf, 2, 3)));
 

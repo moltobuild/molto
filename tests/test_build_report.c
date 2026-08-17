@@ -181,7 +181,11 @@ MOLTEST(a_stream_nobody_watches_gets_no_bar_and_no_escapes) {
 
     build_report_will_compile(report, &own, "main.c");
     build_report_begin(report, 1);
-    build_report_unit_done(report);
+    /* A unit that starts and finishes: with nobody watching it is given no
+       slot, and naming it on a region there is no room for writes nothing. */
+    const build_report_slot slot = build_report_unit_started(report, &own, "main.c");
+    EXPECT_EQ(BUILD_REPORT_NO_SLOT, slot);
+    build_report_unit_done(report, slot);
     build_report_finish(report, "debug", exit_ok);
 
     char text[1024] = "";
@@ -295,7 +299,8 @@ MOLTEST(no_report_is_a_report_that_says_nothing) {
     build_report_will_compile(NULL, &sqlite, NULL);
     build_report_skipped(NULL);
     build_report_begin(NULL, 4);
-    build_report_unit_done(NULL);
+    EXPECT_EQ(BUILD_REPORT_NO_SLOT, build_report_unit_started(NULL, &sqlite, "main.c"));
+    build_report_unit_done(NULL, BUILD_REPORT_NO_SLOT);
     build_report_finish(NULL, "debug", exit_ok);
     build_report_destroy(NULL);
 
