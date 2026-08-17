@@ -1,6 +1,7 @@
 #include <molto/build/diagnostic.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/util/json_write.h>
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -313,36 +314,6 @@ void diagnostic_write_text(FILE *stream, const diagnostic_list *list, const char
     }
 }
 
-/* Escape a string into a JSON literal, including the quotes. */
-static void write_json_string(FILE *stream, const char *text) {
-    fputc('"', stream);
-    for(const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
-        switch(*p) {
-        case '"':
-            fputs("\\\"", stream);
-            break;
-        case '\\':
-            fputs("\\\\", stream);
-            break;
-        case '\n':
-            fputs("\\n", stream);
-            break;
-        case '\r':
-            fputs("\\r", stream);
-            break;
-        case '\t':
-            fputs("\\t", stream);
-            break;
-        default:
-            if(*p < 0x20)
-                fprintf(stream, "\\u%04x", *p);
-            else
-                fputc(*p, stream);
-        }
-    }
-    fputc('"', stream);
-}
-
 /* Whether an entry belongs in a machine-readable report. The caret lines and
    source snippets a compiler interleaves are there to be read by a person next
    to the line they point at; carrying no file and no line, they are nothing a
@@ -363,14 +334,14 @@ void diagnostic_write_json(FILE *stream, const diagnostic_list *list, const char
         if(!is_reportable(item))
             continue;
         fputs("  {\"file\": ", stream);
-        write_json_string(stream, fs_relative_to(item->file, root));
+        json_write_string(stream, fs_relative_to(item->file, root));
         fprintf(stream, ", \"line\": %ld, \"column\": %ld, \"severity\": ", item->line,
                 item->column);
-        write_json_string(stream, diagnostic_severity_name(item->severity));
+        json_write_string(stream, diagnostic_severity_name(item->severity));
         fputs(", \"message\": ", stream);
-        write_json_string(stream, item->message);
+        json_write_string(stream, item->message);
         fputs(", \"rule\": ", stream);
-        write_json_string(stream, item->rule);
+        json_write_string(stream, item->rule);
         fputs(--remaining > 0 ? "},\n" : "}\n", stream);
     }
     fputs("]\n", stream);

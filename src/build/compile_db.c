@@ -1,6 +1,7 @@
 #include <molto/build/compile_db.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/util/json_write.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -94,39 +95,6 @@ bool compile_db_add(compile_db *db, const char *file, const char *output,
     return true;
 }
 
-/* Write `text` as a JSON string, escaping what the grammar forbids raw.
-   Not decoration: a define reaches the compiler as -DNAME="value", and an
-   unescaped quote in it would produce a document no reader can parse. */
-static void write_json_string(FILE *out, const char *text) {
-    fputc('"', out);
-    for(const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
-        switch(*p) {
-        case '"':
-            fputs("\\\"", out);
-            break;
-        case '\\':
-            fputs("\\\\", out);
-            break;
-        case '\n':
-            fputs("\\n", out);
-            break;
-        case '\r':
-            fputs("\\r", out);
-            break;
-        case '\t':
-            fputs("\\t", out);
-            break;
-        default:
-            if(*p < 0x20)
-                fprintf(out, "\\u%04x", *p);
-            else
-                fputc(*p, out);
-            break;
-        }
-    }
-    fputc('"', out);
-}
-
 /* The directory every relative path in the database is resolved against.
    Absolute, because a tool reads this file from wherever it happens to be
    running; `root` itself is only absolute when the caller made it so. */
@@ -138,15 +106,15 @@ static void resolve_directory(const char *root, char *out, size_t out_size) {
 
 static void write_entry(FILE *out, const compile_entry *entry, const char *directory) {
     fputs("  {\n    \"directory\": ", out);
-    write_json_string(out, directory);
+    json_write_string(out, directory);
     fputs(",\n    \"file\": ", out);
-    write_json_string(out, fs_relative_to(entry->file, directory));
+    json_write_string(out, fs_relative_to(entry->file, directory));
     fputs(",\n    \"output\": ", out);
-    write_json_string(out, fs_relative_to(entry->output, directory));
+    json_write_string(out, fs_relative_to(entry->output, directory));
     fputs(",\n    \"arguments\": [", out);
     for(size_t i = 0; i < str_list_count(&entry->arguments); i++) {
         fputs(i > 0 ? ", " : "", out);
-        write_json_string(out, str_list_get(&entry->arguments, i));
+        json_write_string(out, str_list_get(&entry->arguments, i));
     }
     fputs("]\n  }", out);
 }
