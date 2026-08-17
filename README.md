@@ -18,7 +18,12 @@ itself**:
 ```sh
 molto build      # produces build/debug/molto
 molto test       # builds and runs the suite as one executable
+molto build -j 4 # the same, on four cores instead of all of them
 ```
+
+Every build also writes `compile_commands.json` at the project root, so clangd,
+clang-tidy and anything else that parses this code reads the flags the build
+actually used. Nothing to enable; `molto test` writes one covering `tests/` too.
 
 The `Makefile` remains the bootstrap — something has to compile the first
 molto — but it is no longer the only way. Its manifest names no compiler: it

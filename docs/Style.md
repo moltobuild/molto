@@ -51,6 +51,7 @@ diagnostics, which is most of the value and needs nothing installed.
 $ molto fmt              # rewrite src/ and include/ in place
 $ molto fmt --check      # report what would change, write nothing; exits 1 if any
 $ molto fmt --diff       # print the unified diff, write nothing
+$ molto fmt -j 4         # at most four files at once; without it, every core
 ```
 
 `--check` is the CI form: it fails the build when a file is not formatted,
@@ -74,6 +75,7 @@ the only thing that says otherwise, and this is one more reason to declare it.
 $ molto lint                     # compiler diagnostics, then the linter
 $ molto lint --format json       # machine-readable, for CI
 $ molto lint --profile release   # analyse with the release profile's defines
+$ molto lint -j 4                # at most four files at once; without it, every core
 ```
 
 Two passes over every source under `src/`:
@@ -257,6 +259,8 @@ describes a schema that is still growing.
 | `--check` and `--diff` together | Two answers to one question | Pick one |
 | Lint reports something you already fixed | A cached result that should have been invalidated | `molto lint --refresh-analysis`, and report it: the cache is meant to make that impossible |
 | Lint is not faster on the second run | Nothing could be recorded — most often a compiler that does not write `-MF` dependency lists | Check that `.bin/lint/` contains `.d` files |
+| Lint or fmt takes the whole machine | That is the default | `-j 4`, on either command |
+| An external clang-tidy disagrees with `molto lint` | It is reading `compile_commands.json`, which a *build* writes — not this command | Run `molto build` (or `molto test`) so the database matches what you are linting |
 
 ## Related
 

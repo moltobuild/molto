@@ -278,6 +278,11 @@ Molto tracks:
 - dependency graph
 - compiler flags
 
+Every build also writes `compile_commands.json` at the project root, describing
+each translation unit — including the ones it found up to date. Editors and
+static analysers read the flags the build used instead of guessing them
+(RFC-0007).
+
 ---
 
 # 13. Build Profiles
@@ -418,7 +423,7 @@ performance reports
 
 incremental builds
 
-parallel compilation
+parallel compilation, on every core by default and capped with `-j`
 
 artifact caching
 
