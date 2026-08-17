@@ -7,6 +7,7 @@
 #include <molto/commands/init_command.h>
 #include <molto/commands/lint_command.h>
 #include <molto/commands/login_command.h>
+#include <molto/commands/metadata_command.h>
 #include <molto/commands/new_command.h>
 #include <molto/commands/publish_command.h>
 #include <molto/commands/run_command.h>
@@ -109,6 +110,15 @@ static const cli_option fmt_options[] = {
      "Format every file again instead of skipping what did not change", NULL},
     {"--jobs", 'j', cli_opt_value, "<n>", "Format at most n files at once (default: every core)",
      NULL},
+};
+
+/* `molto metadata` takes no profile: a profile decides which defines and flags
+   a compile line carries, and none of that changes which packages the graph
+   contains. An option that cannot change the output should not exist. */
+static const cli_option metadata_options[] = {
+    {"--output", 'o', cli_opt_value, "<path>", "Write to this file instead of stdout", NULL},
+    {"--include-dev", 0, cli_opt_flag, NULL,
+     "Include what only [dev-deps] reaches, marked as not shipping", NULL},
 };
 
 /* --- command handlers: thin adapters over the *_command_run functions --- */
@@ -256,6 +266,11 @@ static int handle_publish(const cli_args *args) {
                                cli_args_flag(args, "--dry-run"));
 }
 
+static int handle_metadata(const cli_args *args) {
+    return metadata_command_run(cli_args_option(args, "--output"),
+                                cli_args_flag(args, "--include-dev"));
+}
+
 static int handle_unimplemented(const cli_args *args) {
     fprintf(stderr,
             "molto: '%s' is not implemented yet "
@@ -282,6 +297,8 @@ static const cli_command commands[] = {
     {"bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented},
     {"lint", "Run diagnostics and static checks", NULL, lint_options,
      sizeof lint_options / sizeof lint_options[0], handle_lint},
+    {"metadata", "Write a CycloneDX bill of materials", NULL, metadata_options,
+     sizeof metadata_options / sizeof metadata_options[0], handle_metadata},
     {"add", "Add a dependency", "<dep>[@<version>]", add_options,
      sizeof add_options / sizeof add_options[0], handle_add},
     {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_remove},

@@ -1,9 +1,14 @@
 #include <moltest.h>
 
 #include <molto/cli.h>
+#include <molto/commands/metadata_command.h>
 #include <molto/exit_code.h>
+#include <molto/services/fs_service.h>
+#include <molto/util/json.h>
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 /* Exercises molto's real command table, as opposed to test_cli.c, which
    exercises the CLI framework with a synthetic app. */
@@ -52,4 +57,41 @@ MOLTEST(molto_without_a_command_prints_help) {
     char program[] = "molto";
     char *argv[] = { program };
     EXPECT_EQ(exit_ok, cli_run(1, argv));
+}
+
+MOLTEST(molto_metadata_writes_a_bill_of_materials) {
+    /* Driven through metadata_command_run rather than the argv table, for the
+       reason `lint` and `fmt` are left out above: this runs in Molto's own
+       workspace, and the document belongs in a temporary file rather than in
+       the middle of the test output.
+     *
+     * Molto declares no dependencies, so this resolves an empty graph and
+     * reaches no network — and an empty graph is the case an emitter is most
+     * likely to turn into a broken array, which is why it is worth running end
+     * to end and not only in test_sbom_cyclonedx.c. */
+    char path[] = "/tmp/molto_bom_XXXXXX";
+    const int fd = mkstemp(path);
+    ASSERT_TRUE(fd >= 0);
+    close(fd);
+
+    EXPECT_EQ(exit_ok, metadata_command_run(path, false));
+
+    char *text = fs_read_file(path);
+    ASSERT_NOT_NULL(text);
+    json_document *parsed = json_parse(text);
+    ASSERT_NOT_NULL(parsed);
+
+    const json_value root = json_root(parsed);
+    EXPECT_STREQ("CycloneDX", json_string(json_get(root, "bomFormat")));
+    /* Whatever workspace this ran in, the document is about a package. */
+    const json_value self = json_get(json_get(root, "metadata"), "component");
+    EXPECT_NOT_NULL(json_string(json_get(self, "name")));
+
+    json_free(parsed);
+    free(text);
+    remove(path);
+}
+
+MOLTEST(molto_metadata_refuses_a_file_it_cannot_write) {
+    EXPECT_EQ(exit_build_failure, metadata_command_run("/nonexistent_dir/sbom.json", false));
 }
