@@ -180,6 +180,38 @@ MOLTEST(deps_prepare_reports_a_source_the_recipe_names_but_does_not_contain) {
     sandbox_close(&at);
 }
 
+/* A directory is not a translation unit, and left to pass through it reaches
+   the compiler as an input — which reports it as an unused linker argument,
+   naming neither the recipe nor the key that put it there. `sources` names
+   files one by one because it fails closed (RFC-0009). */
+MOLTEST(deps_prepare_reports_a_directory_where_a_source_was_named) {
+    static const char *const directory = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                         "name = \"yyjson\"\nversion = \"0.10.0\"\n"
+                                         "target = \"any\"\n"
+                                         "\n[artifacts]\ntype = \"source\"\n"
+                                         "sources = [\"vendor\"]\n";
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, directory));
+
+    char vendor[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(vendor, sizeof vendor, "%s/yyjson/vendor", at.root));
+    ASSERT_TRUE(fs_make_dirs(vendor));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_dep(&at, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    EXPECT_FALSE(deps_prepare(&ctx, &deps, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "vendor"));
+    EXPECT_NOT_NULL(strstr(err, "directory"));
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
 MOLTEST(deps_prepare_refuses_an_artifact_it_cannot_consume) {
     /* A prebuilt library needs ar, -fPIC and a link step molto does not have. */
     static const char *const prebuilt = "schema = 1\nform = \"source\"\nkind = \"package\"\n"

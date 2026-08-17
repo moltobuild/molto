@@ -161,6 +161,15 @@ typedef struct {
                                           const dep_resolve_options *options, dep_graph **out,
                                           dep_conflict *conflict, char *err, size_t err_size);
 
+/* Which kind of origin a `dep_node.source` (or a lock file's `source`) names,
+   read back from the scheme it was composed with.
+
+   An unrecognised string answers `dep_source_path`: a package nobody can go
+   back for is what a path dependency is, and the one answer that would be
+   wrong is `dep_source_version`, whose version and checksum are claims someone
+   is expected to be able to verify. */
+[[nodiscard]] dep_source dep_graph_source_kind(const char *source);
+
 /* Nodes, sorted by name. The order is the lock file's, and it is sorted rather
    than resolution-ordered so the diff of a lock file is worth reading. */
 [[nodiscard]] size_t dep_graph_count(const dep_graph *graph);

@@ -145,6 +145,33 @@ MOLTEST(src_may_not_include_a_development_dependency) {
     sandbox_close(&at);
 }
 
+/* And it may not under `molto test` either, which is the harder half: the test
+   build is the one that has those include directories in hand. They belong to
+   the command line that compiles tests/ and to no other, so a src/ file that
+   reaches for one fails here exactly as it does under `molto build`. */
+MOLTEST(src_may_not_include_a_development_dependency_under_test_either) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_package(&at, "helper", NULL));
+
+    char manifest[PATH_MAX_LEN * 2];
+    dev_manifest(&at, manifest, sizeof manifest);
+    ASSERT_TRUE(make_project(&at, manifest,
+                             "#include <helper.h>\n"
+                             "int lib_answer(void) { return helper_answer(); }\n",
+                             "#include <helper.h>\n"
+                             "int main(void) { return helper_answer() == 1 ? 0 : 1; }\n"));
+
+    char app[PATH_MAX_LEN];
+    app_path(&at, app, sizeof app);
+    str_list binaries;
+    str_list_init(&binaries);
+    EXPECT_EQ(exit_build_failure, build_tests(app, profile_debug, false, 0, &binaries, NULL));
+
+    str_list_free(&binaries);
+    sandbox_close(&at);
+}
+
 /* A runtime dependency reaches both, which is the other half of the same
    claim: the failure above is about the scope, not about the mechanism. */
 MOLTEST(src_may_include_a_runtime_dependency) {

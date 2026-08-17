@@ -487,3 +487,24 @@ MOLTEST(a_node_carries_what_its_recipe_says_about_itself) {
     dep_graph_free(graph);
     sandbox_close(&at);
 }
+
+/* Reading a source string back. What composes these lives one function away
+   from what parses them, and both spell the scheme from the same constant —
+   but the mapping is what a report and a lock file both depend on, so it is
+   pinned here rather than assumed. */
+MOLTEST(a_source_string_says_which_kind_of_origin_it_names) {
+    EXPECT_EQ(dep_source_version, dep_graph_source_kind("registry+https://molto.dev"));
+    EXPECT_EQ(dep_source_git, dep_graph_source_kind("git+https://example.test/x.git#5a1e8ff"));
+    EXPECT_EQ(dep_source_path, dep_graph_source_kind("path+/home/someone/modules/net"));
+    EXPECT_EQ(dep_source_archive, dep_graph_source_kind("archive+https://example.test/x.tar.gz"));
+}
+
+/* Anything unreadable is a path: bytes nobody can go back for. Answering
+   "registry" would be the one wrong answer, because that is the kind whose
+   version and checksum are claims someone is expected to verify. */
+MOLTEST(an_unreadable_source_is_not_taken_for_a_registry_package) {
+    EXPECT_EQ(dep_source_path, dep_graph_source_kind(""));
+    EXPECT_EQ(dep_source_path, dep_graph_source_kind("https://example.test/x.tar.gz"));
+    EXPECT_EQ(dep_source_path, dep_graph_source_kind("registry"));
+    EXPECT_EQ(dep_source_path, dep_graph_source_kind(NULL));
+}

@@ -1,6 +1,7 @@
 #include <molto/commands/build_command.h>
 
 #include <molto/build/profile.h>
+#include <molto/build/report.h>
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/workspace/workspace.h>
@@ -18,14 +19,15 @@ int build_command_run(const char *requested_profile, bool refresh_toolchain, siz
         fprintf(stderr, "molto: not inside a molto workspace (no Project.toml found)\n");
         return exit_invalid_manifest;
     }
-    /* Progress goes to stderr, next to the diagnostics it is interleaved with.
-       On stdout it would be buffered separately and could surface after the
-       error it was supposed to precede — and it would also pollute the output
-       of anyone redirecting a build. */
-    const char *label = profile_name(profile);
-    fprintf(stderr, "Compiling (%s)\n", label);
-    int code = build_project(root, profile, refresh_toolchain, jobs, NULL, 0);
-    if(code == exit_ok)
-        fprintf(stderr, "Finished %s -> build/%s\n", label, label);
+    /* The report goes to stderr, next to the diagnostics it is interleaved
+       with. On stdout it would be buffered separately and could surface after
+       the error it was supposed to precede — and it would also pollute the
+       output of anyone redirecting a build. */
+    build_report *report = build_report_create(stderr);
+    int code = build_project_with(root, profile, refresh_toolchain, jobs, NULL, 0, report);
+    /* After the link and not before it: what the line reports is how long the
+       whole command took, and the link is part of the command. */
+    build_report_finish(report, profile_name(profile), code == exit_ok);
+    build_report_destroy(report);
     return code;
 }

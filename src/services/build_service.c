@@ -4,6 +4,7 @@
 #include <molto/build/compile_flags.h>
 #include <molto/build/depfile.h>
 #include <molto/build/profile.h>
+#include <molto/build/report.h>
 #include <molto/exit_code.h>
 #include <molto/project/lockfile.h>
 #include <molto/project/project_ctx.h>
@@ -54,6 +55,11 @@
 
 /* Size of the small buffer holding the "-O<n>" flag. */
 #define OPT_FLAG_SIZE 16
+
+/* The project's own code, and the code that tests it. Neither is a package, so
+   neither carries a name or a version: a line about one names the source. */
+static const build_unit_label project_label = {.origin = build_origin_project};
+static const build_unit_label tests_label = {.origin = build_origin_tests};
 
 /* Compose the output executable path for a package. */
 [[nodiscard]] static bool compose_binary_path(const char *root, build_profile profile,
@@ -246,6 +252,10 @@ typedef struct {
     /* Applied last, so it can add to the rest. Absent when there is none. */
     const project_options *extra_opts;
     const str_list *include_flags;
+    /* Who this unit belongs to, for the report. One label is shared by every
+       unit of a package, so naming forty sources costs one struct. Nothing
+       here reads it: it is carried, not used. */
+    const build_unit_label *label;
 } compile_unit;
 
 /* Build the full compile command for one unit into `argv` (a str_list):
@@ -326,20 +336,6 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
             return false;
     }
     return true;
-}
-
-/* Build the current compile command for a unit as a heap string, for the
-   fingerprint comparison (caller frees). NULL on allocation failure. */
-static char *compile_command_string(const char *root, const compile_unit *unit, const char *object,
-                                    const manifest_profile *settings, const project_env *env,
-                                    const resolved_toolchain *chain) {
-    str_list argv;
-    str_list_init(&argv);
-    char *command = NULL;
-    if(unit_argv(&argv, root, unit, object, settings, chain))
-        command = command_fingerprint(&argv, env);
-    str_list_free(&argv);
-    return command;
 }
 
 /* Compile a single translation unit to `object`. gcc writes the header
@@ -432,34 +428,75 @@ typedef struct {
     compile_db *cdb;
 } pass_options;
 
-/* One parallel compilation task: compile `unit` into `object`, recording a
-   shared failure flag. Runs on a task_pool worker. */
+/*
+ * Everything a pass compiles against that is not one of its units.
+ *
+ * It is carried by value, or at least by pointers to things that outlive the
+ * build, because a plan is made before anything is compiled and the answers it
+ * was made from have to still be there when they are. `settings` used to be a
+ * pointer into the frame that read the manifest; that frame now returns before
+ * the first compiler runs.
+ */
 typedef struct {
     const char *root;
-    const compile_unit *unit;
-    const char *object;
-    const manifest_profile *settings;
+    build_profile profile;
+    manifest_profile settings;
     const project_env *env;
     const resolved_toolchain *chain;
+    wsdb *db;
+    const pass_options *options;
+} build_pass_env;
+
+/*
+ * One translation unit, and what asking about it cost.
+ *
+ * `command` is the fingerprint of its command line: what decided the unit was
+ * stale, and what will be recorded once it compiles. It is kept rather than
+ * recomputed because between those two moments the whole rest of the build
+ * happens, and a second composition would be describing whatever the world
+ * looks like by then. It is only kept for a unit that will be compiled — for
+ * the others it has already answered its one question.
+ */
+typedef struct {
+    const compile_unit *unit; /* borrows an arena the plan owns */
+    const char *object;       /* borrows the str_list it was pushed into */
+    char *command;            /* owned; NULL when nothing will be compiled */
+    bool needs_compile;
+} planned_unit;
+
+typedef struct {
+    build_pass_env env;
+    planned_unit *units;
+    size_t count;
+    size_t to_build;
+} compile_pass;
+
+/* One parallel compilation task: compile a planned unit, recording a shared
+   failure flag. Runs on a task_pool worker. */
+typedef struct {
+    const build_pass_env *env;
+    const planned_unit *planned;
     atomic_bool *failed;
+    build_report *report;
     bool succeeded;     /* written only by the worker owning this task */
     uint64_t signature; /* what the source was when this compilation began */
 } compile_task;
 
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
-    task->succeeded =
-        compile_one(task->root, task->unit, task->object, task->settings, task->env, task->chain);
+    const build_pass_env *env = task->env;
+    task->succeeded = compile_one(env->root, task->planned->unit, task->planned->object,
+                                  &env->settings, env->env, env->chain);
     if(!task->succeeded) {
-        fprintf(stderr, "molto: failed to compile '%s'\n", task->unit->source);
+        /* Through the report rather than straight to stderr: with a bar up,
+           anything written beside it lands in the middle of it. */
+        build_report_message(task->report, "molto: failed to compile '%s'\n",
+                             task->planned->unit->source);
         atomic_store(task->failed, true);
     }
+    build_report_unit_done(task->report);
 }
 
-/* Compile every source. Phase 1 (sequential) resolves object paths and asks the
-   WSDB which units are stale; phase 2 compiles them in parallel; phase 3 (back
-   on this thread) records the results into the WSDB. Reports whether C++ is
-   present and whether anything was recompiled. */
 /* Take a dependency's object out of the shared cache, and record it as if it
    had just been compiled — because as far as anything downstream can tell, it
    was. False when there is nothing to take. */
@@ -502,7 +539,8 @@ static void share_in_object_cache(const char *source, const char *object, const 
 [[nodiscard]] static compile_unit *units_from(const str_list *sources, const project_target *target,
                                               const project_options *profile_opts,
                                               const project_options *extra_opts,
-                                              const str_list *include_flags) {
+                                              const str_list *include_flags,
+                                              const build_unit_label *label) {
     compile_unit *units = calloc(str_list_count(sources), sizeof *units);
     if(units == NULL)
         return NULL;
@@ -513,44 +551,53 @@ static void share_in_object_cache(const char *source, const char *object, const 
             .profile_opts = profile_opts,
             .extra_opts = extra_opts,
             .include_flags = include_flags,
+            .label = label,
         };
     }
     return units;
 }
 
-static int compile_units(const char *root, build_profile profile, const manifest_profile *settings,
-                         const project_env *env, const resolved_toolchain *chain, wsdb *db,
-                         const pass_options *options, const compile_unit *units, size_t count,
-                         str_list *objects, bool *any_cpp, bool *any_compiled) {
-    /* `objects` accumulates across the passes a build makes — dependencies
-       first, then the project — so this call's entries begin where the list
-       already stood. Indexing it from zero would hand one source another's
-       object, and the second pass would overwrite what the first produced. */
-    const size_t objects_base = str_list_count(objects);
-    bool *needs = calloc(count, sizeof(bool));
-    if(needs == NULL)
+/*
+ * Phase 1, and now a pass of its own: work out what this pass would compile
+ * without compiling any of it.
+ *
+ * It is separate because the report needs a number nobody can give it
+ * otherwise. A bar has to know its denominator before the first unit starts,
+ * and a build makes up to four passes — so every one of them is planned, and
+ * only then does anything run. The question each unit is asked is unchanged;
+ * what changed is that the answers are kept instead of acted on immediately.
+ */
+[[nodiscard]] static int plan_pass(compile_pass *pass, const build_pass_env *env,
+                                   const compile_unit *units, size_t count, str_list *objects,
+                                   bool *any_cpp) {
+    pass->env = *env;
+    pass->units = calloc(count, sizeof *pass->units);
+    if(pass->units == NULL)
         return exit_build_failure;
+    pass->count = count;
 
-    /* Phase 1: resolve object paths and ask the WSDB what is stale. Finishing
-       all str_list_push here keeps the object pointers stable for phase 2. */
     for(size_t i = 0; i < count; i++) {
         const char *source = units[i].source;
         if(source_is_cpp(source))
             *any_cpp = true;
         char object[PATH_BUFFER_SIZE];
-        if(!object_path_for(root, profile_name(profile), source, object, sizeof object)) {
-            free(needs);
+        if(!object_path_for(env->root, profile_name(env->profile), source, object, sizeof object))
             return exit_build_failure;
-        }
         if(!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
-            free(needs);
             return exit_build_failure;
         }
-        if(!str_list_push(objects, object)) {
-            free(needs);
+        /* `objects` accumulates across every pass a build makes, and each unit
+           keeps the pointer its own entry was pushed as. That stays valid
+           however much the list grows afterwards: str_list reallocates the
+           array of pointers and never the strings they point at. */
+        if(!str_list_push(objects, object))
             return exit_build_failure;
-        }
+
+        planned_unit *planned = &pass->units[i];
+        planned->unit = &units[i];
+        planned->object = str_list_get(objects, str_list_count(objects) - 1);
+
         /* One argv answers both questions asked here: whether this unit is
            stale, and what it compiles as. The second is recorded for every
            unit and not only the stale ones — an editor asks what a file
@@ -558,62 +605,71 @@ static int compile_units(const char *root, build_profile profile, const manifest
         str_list argv;
         str_list_init(&argv);
         char *command = NULL;
-        if(unit_argv(&argv, root, &units[i], object, settings, chain)) {
-            command = command_fingerprint(&argv, env);
+        if(unit_argv(&argv, env->root, &units[i], planned->object, &env->settings, env->chain)) {
+            command = command_fingerprint(&argv, env->env);
             str_list described;
             str_list_init(&described);
             if(!described_argv(&described, &argv) ||
-               !compile_db_add(options->cdb, source, object, &described))
+               !compile_db_add(env->options->cdb, source, planned->object, &described))
                 fprintf(stderr, "molto: warning: could not describe '%s' for the editor\n", source);
             str_list_free(&described);
         }
         str_list_free(&argv);
-        needs[i] = command == NULL || !wsdb_object_fresh(db, object, command);
+        planned->needs_compile =
+            command == NULL || !wsdb_object_fresh(env->db, planned->object, command);
 
         /* A stale object that another project already compiled the same way is
            not compiled again: it is copied out of the shared cache and
            recorded as if it had been. Only a dependency qualifies, because
            only a dependency's tree is immutable enough for a coordinate to
            answer for its contents. */
-        if(needs[i] && command != NULL)
-            needs[i] = !take_from_object_cache(db, source, object, command);
-        free(command);
-    }
+        if(planned->needs_compile && command != NULL)
+            planned->needs_compile =
+                !take_from_object_cache(env->db, source, planned->object, command);
 
-    size_t to_build = 0;
-    for(size_t i = 0; i < count; i++)
-        to_build += needs[i] ? 1 : 0;
-    if(to_build == 0) {
-        *any_compiled = false;
-        free(needs);
+        /* Kept only where it has something left to say. A unit nothing will
+           compile has already spent its fingerprint on the one question it
+           was built to answer. */
+        if(planned->needs_compile) {
+            planned->command = command;
+        } else {
+            free(command);
+        }
+        pass->to_build += planned->needs_compile ? 1 : 0;
+    }
+    return exit_ok;
+}
+
+/* Phases 2 and 3: compile what the plan marked stale, in parallel, and record
+   what actually got built. Reports whether anything was compiled at all, which
+   is what decides whether the link has to run again. */
+static int run_pass(const compile_pass *pass, build_report *report, bool *any_compiled) {
+    if(pass->to_build == 0)
         return exit_ok;
-    }
 
-    /* Phase 2: compile the stale units concurrently (no WSDB access here). */
-    compile_task *tasks = calloc(to_build, sizeof(compile_task));
-    task_pool *pool = task_pool_create(options->jobs);
+    compile_task *tasks = calloc(pass->to_build, sizeof *tasks);
+    task_pool *pool = task_pool_create(pass->env.options->jobs);
     if(tasks == NULL || pool == NULL) {
         free(tasks);
         task_pool_destroy(pool);
-        free(needs);
         return exit_build_failure;
     }
 
     atomic_bool failed = false;
     int result = exit_ok;
     size_t queued = 0;
-    for(size_t i = 0; i < count && result == exit_ok; i++) {
-        if(!needs[i])
+    for(size_t i = 0; i < pass->count && result == exit_ok; i++) {
+        if(!pass->units[i].needs_compile)
             continue;
         tasks[queued] = (compile_task){
-            .root = root,
-            .unit = &units[i],
-            .object = str_list_get(objects, objects_base + i),
-            .settings = settings,
-            .env = env,
-            .chain = chain,
+            .env = &pass->env,
+            .planned = &pass->units[i],
             .failed = &failed,
-            .signature = fs_signature(units[i].source),
+            .report = report,
+            /* Sampled here rather than when the pass was planned: it stands
+               for what the compiler is about to read, and planning happened
+               before every other pass of this build ran. */
+            .signature = fs_signature(pass->units[i].unit->source),
         };
         if(!task_pool_submit(pool, compile_task_run, &tasks[queued]))
             result = exit_build_failure;
@@ -630,31 +686,30 @@ static int compile_units(const char *root, build_profile profile, const manifest
        recompiled on the next run. */
     for(size_t i = 0; i < queued; i++) {
         const compile_task *task = &tasks[i];
+        const planned_unit *planned = task->planned;
         if(!task->succeeded) {
-            discard_depfile(task->object);
+            discard_depfile(planned->object);
             continue;
         }
         /* A source edited while it was being compiled would otherwise be
            recorded under the signature of content the object does not contain,
            and nothing would rebuild it afterwards: the stale object simply gets
            linked. Leaving it unrecorded costs one recompilation. */
-        const char *source = task->unit->source;
+        const char *source = planned->unit->source;
         if(fs_signature(source) != task->signature) {
-            discard_depfile(task->object);
+            discard_depfile(planned->object);
             continue;
         }
-        char *command =
-            compile_command_string(root, task->unit, task->object, settings, env, chain);
-        if(command == NULL || !wsdb_absorb_object(db, source, task->object, command))
-            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", source);
-        if(command != NULL)
-            share_in_object_cache(source, task->object, command);
-        free(command);
+        if(planned->command == NULL ||
+           !wsdb_absorb_object(pass->env.db, source, planned->object, planned->command))
+            build_report_message(report, "molto: warning: could not record '%s' as up to date\n",
+                                 source);
+        if(planned->command != NULL)
+            share_in_object_cache(source, planned->object, planned->command);
     }
 
     *any_compiled = true;
     free(tasks);
-    free(needs);
     return result;
 }
 
@@ -811,7 +866,8 @@ typedef struct {
     project_options *options; /* one per dependency */
     str_list *include_flags;  /* one per dependency */
     project_target *targets;  /* one per dependency: the language standard */
-    size_t package_count;     /* how many of the three above are initialised */
+    build_unit_label *labels; /* one per dependency: how the report names it */
+    size_t package_count;     /* how many of the four above are initialised */
 } dep_pass;
 
 static void dep_pass_free(dep_pass *pass) {
@@ -820,6 +876,7 @@ static void dep_pass_free(dep_pass *pass) {
     free(pass->include_flags);
     free(pass->options);
     free(pass->targets);
+    free(pass->labels);
     free(pass->units);
     memset(pass, 0, sizeof *pass);
 }
@@ -842,6 +899,22 @@ static project_target target_for(const project_target *base, const prepared_unit
     return target;
 }
 
+/* How the report names one dependency. It borrows the package's own strings,
+   which is sound for exactly the reason the pass is: both die with the
+   `prepared_deps` they were built from.
+
+   Only two answers reach a line — a registry package states a version someone
+   can verify, and everything else is a module whose bytes are wherever the
+   manifest said. Which of git, path or archive it was stays in the lock, where
+   it can be acted on. */
+static build_unit_label label_for(const prepared_unit *unit) {
+    return (build_unit_label){
+        .origin = unit->origin == dep_source_version ? build_origin_registry : build_origin_module,
+        .name = unit->name,
+        .version = unit->version[0] != '\0' ? unit->version : NULL,
+    };
+}
+
 [[nodiscard]] static bool dep_pass_build(dep_pass *pass, const prepared_deps *deps,
                                          const project_target *base) {
     memset(pass, 0, sizeof *pass);
@@ -855,9 +928,10 @@ static project_target target_for(const project_target *base, const prepared_unit
     pass->options = calloc(deps->unit_count, sizeof *pass->options);
     pass->include_flags = calloc(deps->unit_count, sizeof *pass->include_flags);
     pass->targets = calloc(deps->unit_count, sizeof *pass->targets);
+    pass->labels = calloc(deps->unit_count, sizeof *pass->labels);
     pass->units = calloc(total, sizeof *pass->units);
     if(pass->options == NULL || pass->include_flags == NULL || pass->targets == NULL ||
-       pass->units == NULL)
+       pass->labels == NULL || pass->units == NULL)
         return false;
     pass->package_count = deps->unit_count;
 
@@ -865,6 +939,7 @@ static project_target target_for(const project_target *base, const prepared_unit
         const prepared_unit *unit = &deps->units[i];
         str_list_init(&pass->include_flags[i]);
         pass->targets[i] = target_for(base, unit);
+        pass->labels[i] = label_for(unit);
         if(!collect_unit_options(unit, &pass->options[i], &pass->include_flags[i]))
             return false;
         for(size_t j = 0; j < str_list_count(&unit->sources); j++) {
@@ -880,6 +955,7 @@ static project_target target_for(const project_target *base, const prepared_unit
                 .profile_opts = NULL,
                 .extra_opts = &pass->options[i],
                 .include_flags = &pass->include_flags[i],
+                .label = &pass->labels[i],
             };
         }
     }
@@ -1040,19 +1116,139 @@ static void watch_registry(size_t frame, void *context) {
     return ok;
 }
 
-/* Load the manifest and compile every source under `root/src` into `objects`
-   (caller-initialised, caller-freed). Reports whether C++ is present and whether
-   anything was recompiled. Shared by build_project and build_tests. */
-static int compile_project(const char *root, build_profile profile, wsdb *db,
-                           bool refresh_toolchain, const pass_options *options,
-                           project_ctx *ctx_out, resolved_toolchain *chain_out,
-                           str_list *objects_out, str_list *include_flags_out, bool *any_cpp_out,
-                           bool *any_compiled_out, prepared_deps *dev_out) {
+/*
+ * Everything a build is going to do, worked out before it does any of it.
+ *
+ * The plan exists so that one question has an answer: how many units this
+ * build will compile. Nothing can say that until every pass has been planned —
+ * a test build makes four — and nothing should print a bar until something
+ * can.
+ *
+ * It owns the arenas its units borrow from, which is the whole difference from
+ * what came before. Each of these used to be freed the moment its own pass
+ * finished; now the last pass runs long after the first was planned, so they
+ * all have to outlive the plan itself.
+ */
+#define BUILD_MAX_PASSES 4
+
+typedef struct {
+    compile_pass passes[BUILD_MAX_PASSES];
+    size_t pass_count;
+    size_t to_build; /* across every pass: what the bar counts */
+    bool any_cpp;
+
+    prepared_deps deps; /* runtime dependencies */
+    prepared_deps dev;  /* development dependencies, resolved with them */
+    dep_pass runtime_units;
+    dep_pass dev_units;
+    str_list sources;
+    str_list test_sources;
+    compile_unit *project_units;
+    compile_unit *test_units;
+} build_plan;
+
+static void build_plan_init(build_plan *plan) {
+    memset(plan, 0, sizeof *plan);
+    prepared_deps_init(&plan->deps);
+    prepared_deps_init(&plan->dev);
+    str_list_init(&plan->sources);
+    str_list_init(&plan->test_sources);
+}
+
+static void build_plan_free(build_plan *plan) {
+    for(size_t i = 0; i < plan->pass_count; i++) {
+        for(size_t j = 0; j < plan->passes[i].count; j++)
+            free(plan->passes[i].units[j].command);
+        free(plan->passes[i].units);
+    }
+    free(plan->project_units);
+    free(plan->test_units);
+    str_list_free(&plan->test_sources);
+    str_list_free(&plan->sources);
+    dep_pass_free(&plan->dev_units);
+    dep_pass_free(&plan->runtime_units);
+    prepared_deps_free(&plan->dev);
+    prepared_deps_free(&plan->deps);
+    memset(plan, 0, sizeof *plan);
+}
+
+/* One more pass, planned onto the end. Nothing to compile is not a pass: a
+   dependency-free project would otherwise carry an empty one. */
+[[nodiscard]] static int plan_add(build_plan *plan, const build_pass_env *env,
+                                  const compile_unit *units, size_t count, str_list *objects) {
+    if(count == 0)
+        return exit_ok;
+    if(plan->pass_count >= BUILD_MAX_PASSES)
+        return exit_build_failure;
+    compile_pass *pass = &plan->passes[plan->pass_count++];
+    const int result = plan_pass(pass, env, units, count, objects, &plan->any_cpp);
+    plan->to_build += pass->to_build;
+    return result;
+}
+
+/* Compile the plan, pass by pass, stopping at the first one that failed — so a
+   dependency that would not build still prevents the code that includes it
+   from being compiled against it. */
+static int run_plan(const build_plan *plan, build_report *report, bool *any_compiled) {
+    int result = exit_ok;
+    for(size_t i = 0; i < plan->pass_count && result == exit_ok; i++)
+        result = run_pass(&plan->passes[i], report, any_compiled);
+    return result;
+}
+
+/* Portion of `path` relative to `root` (drops a leading "root/"), or `path`
+   unchanged if it is not under root. */
+static const char *relative_to_root(const char *root, const char *path) {
+    size_t root_len = strlen(root);
+    if(strncmp(path, root, root_len) == 0 && path[root_len] == '/')
+        return path + root_len + 1;
+    return path;
+}
+
+/* How a source is named on a line: relative to the directory it was discovered
+   in, so `src/net/http.c` reads as `net/http.c` and the column stays about the
+   file rather than about where the project happens to live.
+
+   Not the base name, which would print two different files as one line. A
+   source that is under neither directory — a framework a manifest pointed
+   `[test].sources` at — keeps its path from the project root. */
+static const char *display_source(const char *root, const char *source) {
+    const char *relative = relative_to_root(root, source);
+    if(strncmp(relative, DIR_SRC "/", sizeof(DIR_SRC "/") - 1) == 0)
+        return relative + sizeof(DIR_SRC "/") - 1;
+    if(strncmp(relative, DIR_TESTS "/", sizeof(DIR_TESTS "/") - 1) == 0)
+        return relative + sizeof(DIR_TESTS "/") - 1;
+    return relative;
+}
+
+/* Tell the report what the build is about to do: the work, unit by unit, and
+   a count of everything that turned out not to be work at all. */
+static void report_plan(const build_plan *plan, const char *root, build_report *report) {
+    for(size_t p = 0; p < plan->pass_count; p++) {
+        const compile_pass *pass = &plan->passes[p];
+        for(size_t i = 0; i < pass->count; i++) {
+            const planned_unit *planned = &pass->units[i];
+            if(planned->needs_compile)
+                build_report_will_compile(report, planned->unit->label,
+                                          display_source(root, planned->unit->source));
+            else
+                build_report_skipped(report);
+        }
+    }
+}
+
+/* Load the manifest, resolve what it depends on, and work out every unit the
+   project's own build would compile — without compiling any of them. `objects`
+   and `include_flags` are caller-initialised and caller-freed; everything the
+   units borrow belongs to `plan`. Shared by build_project and build_tests. */
+[[nodiscard]] static int plan_project(const char *root, build_profile profile, wsdb *db,
+                                      bool refresh_toolchain, const pass_options *options,
+                                      project_ctx *ctx_out, resolved_toolchain *chain_out,
+                                      str_list *objects_out, str_list *include_flags_out,
+                                      build_plan *plan) {
     int result = load_project(root, ctx_out);
     if(result != exit_ok)
         return result;
-
-    manifest_profile settings = profile_settings(ctx_out, profile);
 
     char src_dir[PATH_BUFFER_SIZE];
     if(!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
@@ -1069,42 +1265,26 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
        list before the toolchain question is asked — a dependency written in
        C++ decides which driver this build needs as much as the project's own
        code does. */
-    prepared_deps deps;
-    prepared_deps_init(&deps);
     char deps_err[512] = "";
-    if(!prepare_and_lock(root, ctx_out, &deps, dev_out, deps_err, sizeof deps_err)) {
+    if(!prepare_and_lock(root, ctx_out, &plan->deps, &plan->dev, deps_err, sizeof deps_err)) {
         fprintf(stderr, "molto: %s\n", deps_err);
-        prepared_deps_free(&deps);
         return exit_dependency_failure;
     }
 
-    str_list sources;
-    str_list_init(&sources);
-    if(!source_discovery_collect(src_dir, &sources)) {
+    if(!source_discovery_collect(src_dir, &plan->sources)) {
         fprintf(stderr, "molto: could not read the sources under '%s'\n", src_dir);
-        str_list_free(&sources);
-        prepared_deps_free(&deps);
         return exit_build_failure;
     }
 
     /* The interface of the dependencies folds into `[target]`; what each of
-       them compiles itself with becomes a pass of its own units. `deps` has to
-       outlive that pass, because the units point into it. */
-    dep_pass pass = {0};
-    const bool merged = merge_deps(ctx_out, &deps) &&
-                        compose_include_flags(src_dir, &deps.includes, include_flags_out) &&
-                        dep_pass_build(&pass, &deps, &ctx_out->target);
-    if(!merged) {
-        dep_pass_free(&pass);
-        prepared_deps_free(&deps);
-        str_list_free(&sources);
+       them compiles itself with becomes a pass of its own units. */
+    if(!merge_deps(ctx_out, &plan->deps) ||
+       !compose_include_flags(src_dir, &plan->deps.includes, include_flags_out) ||
+       !dep_pass_build(&plan->runtime_units, &plan->deps, &ctx_out->target))
         return exit_dependency_failure;
-    }
-    if(str_list_count(&sources) == 0) {
+
+    if(str_list_count(&plan->sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
-        dep_pass_free(&pass);
-        prepared_deps_free(&deps);
-        str_list_free(&sources);
         return exit_build_failure;
     }
 
@@ -1112,52 +1292,39 @@ static int compile_project(const char *root, build_profile profile, wsdb *db,
        known: a project with C++ in it needs a toolchain that has a C++ driver,
        and that is part of the question. */
     bool needs_cpp = false;
-    for(size_t i = 0; i < str_list_count(&sources); i++)
-        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&sources, i));
-    for(size_t i = 0; i < pass.count; i++)
-        needs_cpp = needs_cpp || source_is_cpp(pass.units[i].source);
+    for(size_t i = 0; i < str_list_count(&plan->sources); i++)
+        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->sources, i));
+    for(size_t i = 0; i < plan->runtime_units.count; i++)
+        needs_cpp = needs_cpp || source_is_cpp(plan->runtime_units.units[i].source);
     result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
-    if(result != exit_ok) {
-        dep_pass_free(&pass);
-        prepared_deps_free(&deps);
-        str_list_free(&sources);
+    if(result != exit_ok)
         return result;
-    }
 
-    *any_cpp_out = false;
-    *any_compiled_out = false;
+    const build_pass_env env = {
+        .root = root,
+        .profile = profile,
+        .settings = profile_settings(ctx_out, profile),
+        .env = &ctx_out->env,
+        .chain = chain_out,
+        .db = db,
+        .options = options,
+    };
 
     /* Dependencies first, and in one pass of their own: each is compiled
        against the language standard and its own recipe, so what reaches the
        compiler is the same in every project that depends on it — which is what
        makes one compiled object worth sharing. */
-    if(pass.count > 0) {
-        bool dep_cpp = false;
-        bool dep_compiled = false;
-        result = compile_units(root, profile, &settings, &ctx_out->env, chain_out, db, options,
-                               pass.units, pass.count, objects_out, &dep_cpp, &dep_compiled);
-        *any_cpp_out = *any_cpp_out || dep_cpp;
-        *any_compiled_out = *any_compiled_out || dep_compiled;
-    }
-    dep_pass_free(&pass);
-    prepared_deps_free(&deps);
+    result =
+        plan_add(plan, &env, plan->runtime_units.units, plan->runtime_units.count, objects_out);
+    if(result != exit_ok)
+        return result;
 
-    if(result == exit_ok) {
-        bool project_cpp = false;
-        bool project_compiled = false;
-        compile_unit *units =
-            units_from(&sources, &ctx_out->target, profile_options_for(ctx_out, profile), NULL,
-                       include_flags_out);
-        result = units == NULL ? exit_build_failure
-                               : compile_units(root, profile, &settings, &ctx_out->env, chain_out,
-                                               db, options, units, str_list_count(&sources),
-                                               objects_out, &project_cpp, &project_compiled);
-        free(units);
-        *any_cpp_out = *any_cpp_out || project_cpp;
-        *any_compiled_out = *any_compiled_out || project_compiled;
-    }
-    str_list_free(&sources);
-    return result;
+    plan->project_units =
+        units_from(&plan->sources, &ctx_out->target, profile_options_for(ctx_out, profile), NULL,
+                   include_flags_out, &project_label);
+    if(plan->project_units == NULL)
+        return exit_build_failure;
+    return plan_add(plan, &env, plan->project_units, str_list_count(&plan->sources), objects_out);
 }
 
 /* Write out what this build compiled, for whoever parses this code without
@@ -1177,6 +1344,12 @@ static void publish_compile_db(const compile_db *cdb, const char *root) {
 
 int build_project(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
                   char *out_binary, size_t out_binary_size) {
+    return build_project_with(root, profile, refresh_toolchain, jobs, out_binary, out_binary_size,
+                              NULL);
+}
+
+int build_project_with(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
+                       char *out_binary, size_t out_binary_size, build_report *report) {
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -1189,18 +1362,23 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     str_list include_flags;
     str_list_init(&objects);
     str_list_init(&include_flags);
-    bool any_cpp = false;
     bool any_compiled = false;
-    /* Development dependencies are resolved here too — they share the graph and
-       the version check — but this build links none of them. */
-    prepared_deps dev;
-    prepared_deps_init(&dev);
+    /* The plan resolves development dependencies too — they share the graph and
+       the version check — but this build compiles and links none of them. */
+    build_plan plan;
+    build_plan_init(&plan);
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result = compile_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
-                                 &objects, &include_flags, &any_cpp, &any_compiled, &dev);
-    prepared_deps_free(&dev);
+    int result = plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
+                              &objects, &include_flags, &plan);
+    if(result == exit_ok) {
+        report_plan(&plan, root, report);
+        build_report_begin(report, plan.to_build);
+        result = run_plan(&plan, report, &any_compiled);
+    }
+    const bool any_cpp = plan.any_cpp;
     publish_compile_db(options.cdb, root);
     compile_db_destroy(options.cdb);
+    build_plan_free(&plan);
 
     if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
@@ -1232,15 +1410,6 @@ int build_project(const char *root, build_profile profile, bool refresh_toolchai
     str_list_free(&include_flags);
     warn_if_not_saved(db);
     return result;
-}
-
-/* Portion of `path` relative to `root` (drops a leading "root/"), or `path`
-   unchanged if it is not under root. */
-static const char *relative_to_root(const char *root, const char *path) {
-    size_t root_len = strlen(root);
-    if(strncmp(path, root, root_len) == 0 && path[root_len] == '/')
-        return path + root_len + 1;
-    return path;
 }
 
 /* Output path of a test executable: build/<profile>/tests/<name>, mirroring the
@@ -1380,6 +1549,12 @@ static int link_tests_single(const test_link_context *context, const str_list *t
 
 int build_tests(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
                 str_list *test_binaries_out, project_env *env_out) {
+    return build_tests_with(root, profile, refresh_toolchain, jobs, test_binaries_out, env_out,
+                            NULL);
+}
+
+int build_tests_with(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
+                     str_list *test_binaries_out, project_env *env_out, build_report *report) {
     /* Cleared up front so a caller that keeps going after a failure runs
        nothing in a half-read environment. */
     if(env_out != NULL)
@@ -1397,19 +1572,18 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     str_list include_flags;
     str_list_init(&objects);
     str_list_init(&include_flags);
-    bool any_cpp = false;
     bool any_compiled = false;
-    prepared_deps dev;
-    prepared_deps_init(&dev);
+    build_plan plan;
+    build_plan_init(&plan);
     /* One database for the whole command, so what it describes is everything a
        test build compiles: the project, its dependencies, and tests/ — which is
        what makes `molto test` the command that leaves an editor able to follow
        a test into the code it exercises. */
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result = compile_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
-                                 &objects, &include_flags, &any_cpp, &any_compiled, &dev);
+    int result = plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
+                              &objects, &include_flags, &plan);
     if(result != exit_ok) {
-        prepared_deps_free(&dev);
+        build_plan_free(&plan);
         publish_compile_db(options.cdb, root);
         compile_db_destroy(options.cdb);
         str_list_free(&objects);
@@ -1420,7 +1594,15 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     if(env_out != NULL)
         *env_out = ctx.env;
 
-    manifest_profile settings = profile_settings(&ctx, profile);
+    const build_pass_env env = {
+        .root = root,
+        .profile = profile,
+        .settings = profile_settings(&ctx, profile),
+        .env = &ctx.env,
+        .chain = &chain,
+        .db = db,
+        .options = &options,
+    };
     const project_options *profile_opts = profile_options_for(&ctx, profile);
     const char *profile_dir = profile_name(profile);
 
@@ -1435,6 +1617,7 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
        !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) ||
        !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
         (void)fs_report_long_path(root);
+        build_plan_free(&plan);
         publish_compile_db(options.cdb, root);
         compile_db_destroy(options.cdb);
         str_list_free(&objects);
@@ -1455,28 +1638,40 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
      * Their defines and flags land in `[test].options` and their libraries in
      * this `ctx`'s link list — both local to this function, so the binary
      * `molto build` produces never sees them.
+     *
+     * The include directories go into a list of their own, and never into
+     * `include_flags` with more pushed onto it: the units that compile `src/`
+     * hold a pointer to that one, and adding to it here would put a
+     * development dependency's headers on their command line — the separation
+     * above, undone by the list it is written next to.
      */
-    if(result == exit_ok && str_list_count(&dev.includes) > 0) {
+    str_list test_include_flags;
+    str_list_init(&test_include_flags);
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&include_flags); i++) {
+        if(!str_list_push(&test_include_flags, str_list_get(&include_flags, i)))
+            result = exit_build_failure;
+    }
+    if(result == exit_ok && str_list_count(&plan.dev.includes) > 0) {
         char flag[PATH_BUFFER_SIZE + 4];
-        for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.includes); i++) {
-            const char *directory = str_list_get(&dev.includes, i);
+        for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.includes); i++) {
+            const char *directory = str_list_get(&plan.dev.includes, i);
             if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory) ||
-               !str_list_push(&include_flags, flag))
+               !str_list_push(&test_include_flags, flag))
                 result = exit_build_failure;
         }
     }
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.defines); i++) {
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.defines); i++) {
         if(!append_option(ctx.test.options.defines, &ctx.test.options.define_count,
-                          PROJECT_MAX_OPTS, str_list_get(&dev.defines, i), "[test].defines"))
+                          PROJECT_MAX_OPTS, str_list_get(&plan.dev.defines, i), "[test].defines"))
             result = exit_build_failure;
     }
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.flags); i++) {
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.flags); i++) {
         if(!append_option(ctx.test.options.flags, &ctx.test.options.flag_count, PROJECT_MAX_OPTS,
-                          str_list_get(&dev.flags, i), "[test].flags"))
+                          str_list_get(&plan.dev.flags, i), "[test].flags"))
             result = exit_build_failure;
     }
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&dev.links); i++) {
-        const char *library = str_list_get(&dev.links, i);
+    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.links); i++) {
+        const char *library = str_list_get(&plan.dev.links, i);
         if(ctx.target.link_count >= PROJECT_MAX_LINK ||
            !fs_format_path(ctx.target.link[ctx.target.link_count], PROJECT_LINK_NAME_MAX, "%s",
                            library)) {
@@ -1502,23 +1697,15 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
     /* A development dependency's own sources are compiled in their own pass,
        each against its own options, exactly as a runtime one's are — and their
        objects join the test link rather than the project's. */
-    if(result == exit_ok && dev.unit_count > 0) {
-        dep_pass pass = {0};
-        bool dev_cpp = false;
-        bool dev_compiled = false;
-        if(!dep_pass_build(&pass, &dev, &ctx.target))
+    if(result == exit_ok && plan.dev.unit_count > 0) {
+        if(!dep_pass_build(&plan.dev_units, &plan.dev, &ctx.target))
             result = exit_build_failure;
-        else if(pass.count > 0)
-            result = compile_units(root, profile, &settings, &ctx.env, &chain, db, &options,
-                                   pass.units, pass.count, &lib_objects, &dev_cpp, &dev_compiled);
-        dep_pass_free(&pass);
-        any_cpp = any_cpp || dev_cpp;
-        any_compiled = any_compiled || dev_compiled;
+        else
+            result =
+                plan_add(&plan, &env, plan.dev_units.units, plan.dev_units.count, &lib_objects);
     }
 
-    str_list test_sources;
-    str_list_init(&test_sources);
-    if(result == exit_ok && !collect_test_sources(root, &ctx, tests_dir, &test_sources))
+    if(result == exit_ok && !collect_test_sources(root, &ctx, tests_dir, &plan.test_sources))
         result = exit_build_failure;
 
     /* Compiled through the same path as the project's own sources, so tests get
@@ -1526,16 +1713,22 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
        instead of a second implementation of all three. */
     str_list test_objects;
     str_list_init(&test_objects);
-    bool tests_cpp = false;
-    bool tests_compiled = false;
-    if(result == exit_ok && str_list_count(&test_sources) > 0) {
-        compile_unit *units =
-            units_from(&test_sources, &ctx.target, profile_opts, &ctx.test.options, &include_flags);
-        result = units == NULL ? exit_build_failure
-                               : compile_units(root, profile, &settings, &ctx.env, &chain, db,
-                                               &options, units, str_list_count(&test_sources),
-                                               &test_objects, &tests_cpp, &tests_compiled);
-        free(units);
+    if(result == exit_ok && str_list_count(&plan.test_sources) > 0) {
+        plan.test_units = units_from(&plan.test_sources, &ctx.target, profile_opts,
+                                     &ctx.test.options, &test_include_flags, &tests_label);
+        result = plan.test_units == NULL
+                     ? exit_build_failure
+                     : plan_add(&plan, &env, plan.test_units, str_list_count(&plan.test_sources),
+                                &test_objects);
+    }
+
+    /* Everything is planned, so the report can finally say how much there is —
+       and only now does anything compile. The four passes run in the order
+       they were planned, and the first that fails stops the rest. */
+    if(result == exit_ok) {
+        report_plan(&plan, root, report);
+        build_report_begin(report, plan.to_build);
+        result = run_plan(&plan, report, &any_compiled);
     }
 
     if(result == exit_ok) {
@@ -1546,14 +1739,15 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             .profile_opts = profile_opts,
             .chain = &chain,
             .lib_objects = &lib_objects,
-            .any_cpp = any_cpp || tests_cpp,
-            .force = any_compiled || tests_compiled,
+            .any_cpp = plan.any_cpp,
+            .force = any_compiled,
             .db = db,
         };
         result =
             ctx.test.mode == test_mode_single
-                ? link_tests_single(&context, &test_sources, &test_objects, test_binaries_out)
-                : link_tests_per_file(&context, &test_sources, &test_objects, test_binaries_out);
+                ? link_tests_single(&context, &plan.test_sources, &test_objects, test_binaries_out)
+                : link_tests_per_file(&context, &plan.test_sources, &test_objects,
+                                      test_binaries_out);
     }
 
     /* A deleted test leaves behind an object and an executable that `molto test`
@@ -1568,13 +1762,13 @@ int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
             wsdb_prune(db, test_binaries_out, prefix);
     }
 
-    prepared_deps_free(&dev);
+    build_plan_free(&plan);
     publish_compile_db(options.cdb, root);
     compile_db_destroy(options.cdb);
     str_list_free(&test_objects);
-    str_list_free(&test_sources);
     str_list_free(&lib_objects);
     str_list_free(&objects);
+    str_list_free(&test_include_flags);
     str_list_free(&include_flags);
     warn_if_not_saved(db);
     return result;

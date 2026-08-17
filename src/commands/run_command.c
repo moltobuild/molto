@@ -1,6 +1,7 @@
 #include <molto/commands/run_command.h>
 
 #include <molto/build/profile.h>
+#include <molto/build/report.h>
 #include <molto/exit_code.h>
 #include <molto/project/project_ctx.h>
 #include <molto/services/build_service.h>
@@ -29,7 +30,11 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
         return exit_invalid_manifest;
     }
     char binary[4096];
-    int code = build_project(root, profile, refresh_toolchain, jobs, binary, sizeof binary);
+    build_report *report = build_report_create(stderr);
+    int code =
+        build_project_with(root, profile, refresh_toolchain, jobs, binary, sizeof binary, report);
+    build_report_finish(report, profile_name(profile), code == exit_ok);
+    build_report_destroy(report);
     if(code != exit_ok)
         return code;
 

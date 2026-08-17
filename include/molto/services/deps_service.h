@@ -39,6 +39,12 @@
  * megabyte to hold what a handful of strings holds. */
 typedef struct {
     char name[DEP_NAME_MAX];
+    /* What the package is, for anything that has to name it rather than
+       compile it — a build's report, above all. The version is empty for an
+       origin that carries none, which is a path dependency: its bytes are
+       whatever is on disk. */
+    char version[DEP_VERSION_MAX];
+    dep_source origin;
     str_list sources;  /* .c files the consumer compiles as its own */
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */

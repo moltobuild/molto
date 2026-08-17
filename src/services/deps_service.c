@@ -62,6 +62,8 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     out->units = grown;
     prepared_unit *unit = &out->units[out->unit_count++];
     snprintf(unit->name, sizeof unit->name, "%s", node->name);
+    snprintf(unit->version, sizeof unit->version, "%s", node->version);
+    unit->origin = dep_graph_source_kind(node->source);
     /* Copied rather than composed: a standard is one value the recipe either
        named or did not, and an empty one means the consumer's applies. */
     snprintf(unit->std, sizeof unit->std, "%s", node->artifacts.std);
@@ -116,6 +118,18 @@ static bool collect_sources(const recipe_artifacts *artifacts, const char *root,
                 return set_error(err, err_size,
                                  "the recipe names '%s', which the source does not "
                                  "contain",
+                                 artifacts->sources[i]);
+            /* A directory is not a translation unit. Left to pass through, it
+               would reach the compiler as an input and be reported by the
+               compiler — as an unused linker argument, which names neither the
+               recipe nor the key that put it there. `sources` names files one
+               by one on purpose: it fails closed, so a file added upstream
+               tomorrow does not join the build by itself (RFC-0009). */
+            if(fs_is_dir(path))
+                return set_error(err, err_size,
+                                 "the recipe names '%s', which is a directory; "
+                                 "[artifacts].sources names files one by one — drop the key "
+                                 "to compile everything the source contains",
                                  artifacts->sources[i]);
             if(!str_list_push(out, path))
                 return set_error(err, err_size, "out of memory collecting dependencies");

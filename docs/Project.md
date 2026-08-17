@@ -409,6 +409,56 @@ Inside `[deps]` and `[dev-deps]` the trade is already closed: those two tables
 is specified but not implemented is an error naming the dependency, because a
 dependency read wrong is a dependency that silently is not there.
 
+## What a build prints
+
+```
+ ◆ registry   sqlite3 v3.50.3
+ ◇ modules    network
+ ● project    main.c
+ ● project    game.c
+ ○ cached     20 files
+
+ ████████████████████████████████ 100%
+
+ ✓ Finished `debug` build in 1.82s
+```
+
+Every line is work this build did.
+
+| Glyph | Column | What it is |
+|---|---|---|
+| ◆ | `registry` | a dependency a registry answered for, at the version in `Molto.lock` |
+| ◇ | `modules` | a dependency you gave the location of: `path`, `git` or `archive` |
+| ● | `project` | one of your own sources under `src/`, recompiled |
+| ◐ | `tests` | a source compiled into the test binaries (`molto test` only) |
+| ○ | `cached` | how many units were already up to date, or came out of the shared object cache |
+
+A dependency gets **one line however many sources it has** — a package is one
+piece of work. Your own files get one line each, because that is what you just
+edited. Nothing that did not have to be compiled is listed; it is counted on
+the `cached` line. So a rebuild with nothing to do is three lines and no bar:
+
+```
+ ○ cached     60 files
+
+ ✓ Finished `debug` build in 0.04s
+```
+
+The bar's denominator is the number of units this build is going to compile,
+counted before the first compiler starts — which is why `molto test` shows one
+bar and not four, even though it compiles its dependencies, `src/`, its
+development dependencies and `tests/` in four separate passes.
+
+All of it goes to **stderr**, so `molto build > log` still shows you the build
+and `molto run > out.txt` captures only your program. Redirect stderr instead
+— a pipe, a file, a CI job — and the bar and the colour go away while the lines
+stay. `NO_COLOR=1` turns the colour off on a terminal too.
+
+A build that fails prints no `Finished` line: the compiler has already said the
+thing worth reading. You may see one torn line where a compiler diagnostic
+landed on top of the bar; the next frame repairs it, and the diagnostic itself
+is never touched.
+
 ## Your editor, and how much of the machine a build takes
 
 Neither of these is a manifest key. Both belong to the invocation, which is

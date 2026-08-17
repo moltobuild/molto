@@ -31,6 +31,46 @@
 /* Whether anything drawn on `out` would be seen by a person. */
 [[nodiscard]] bool progress_is_interactive(FILE *out);
 
+/*
+ * A bar, for the one thing that does have an honest total.
+ *
+ * The reservation above applies to a search, not to a compilation: a build
+ * works out which translation units are stale before it compiles any of them,
+ * so the denominator is counted rather than invented. That is the whole reason
+ * the build plans every pass before running one.
+ *
+ * These two are pure — they compose bytes and answer a question, and neither
+ * decides whether anyone should see them. Colour, placement and the choice to
+ * draw at all belong to the caller.
+ */
+
+/* Bytes needed to hold a bar of `cells` columns. A cell is a three-byte glyph,
+   so a column is not a byte and sizing a buffer by the column count would
+   truncate it two thirds of the way along. */
+#define PROGRESS_BAR_SIZE(cells) ((cells) * 3 + 1)
+
+/* Write a bar of `cells` columns for `done` out of `total` into `out`, and
+   return the bytes written, excluding the terminator.
+
+   Nothing else goes in: no percentage, no escapes, no leading space. A total of
+   zero is a full bar — a build with nothing to compile is a build that is
+   done — and `done` beyond `total` is clamped rather than overflowing the
+   buffer. Returns 0 and writes an empty string when `out` is too small for
+   PROGRESS_BAR_SIZE(cells). */
+size_t progress_bar_render(char *out, size_t size, size_t done, size_t total, size_t cells);
+
+/* `done` out of `total` as a whole percentage, floored, so 100 is reached only
+   when the last unit is done. A total of zero is 100. */
+[[nodiscard]] size_t progress_bar_percent(size_t done, size_t total);
+
+/* Erase the line the cursor is on and return to its start.
+
+   Unlike progress_clear this writes an escape sequence rather than a run of
+   spaces, because the run assumes the terminal is at least as wide as the run
+   is long. It is not: a bar redrawn twenty times a second on an eighty-column
+   terminal would scroll the display on every frame. */
+void progress_erase_line(FILE *out);
+
 /* One frame of the spinner, with a label and no figure. `frame` may grow
    without bound; it is taken modulo the frame count. */
 void spinner_wait(FILE *out, const char *label, size_t frame);
