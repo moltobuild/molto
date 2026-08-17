@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/build/profile.h>
+#include <molto/build/report.h>
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
@@ -186,6 +187,91 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
 
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+/* What the reader is left with when a unit does not compile.
+ *
+ * The compiler's output is captured rather than inherited, which is what lets
+ * it be framed — and which means nothing reaches the terminal unless this code
+ * puts it there. That makes the two cases below the whole contract: a unit that
+ * failed says so, and a unit that merely warned says that instead. */
+MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
+    char root[] = "/tmp/molto_framed_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"framed\"\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "struct user { int id; };\n"
+                                    "int main(void) {\n"
+                                    "    struct user u = {0};\n"
+                                    "    return u.name;\n"
+                                    "}\n"));
+
+    FILE *said = tmpfile();
+    ASSERT_NOT_NULL(said);
+    build_report *report = build_report_create(said);
+    ASSERT_NOT_NULL(report);
+    EXPECT_EQ(exit_build_failure,
+              build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+
+    char text[8192] = "";
+    (void)fflush(said);
+    rewind(said);
+    text[fread(text, 1, sizeof text - 1, said)] = '\0';
+
+    EXPECT_NOT_NULL(strstr(text, "✗ Failed to compile `main.c`"));
+    EXPECT_NOT_NULL(strstr(text, "src/main.c:4"));
+    EXPECT_NOT_NULL(strstr(text, "return u.name;")); /* the line, read back off disk */
+    EXPECT_NOT_NULL(strstr(text, "^"));
+    EXPECT_NOT_NULL(strstr(text, "= compiler: "));
+
+    build_report_destroy(report);
+    (void)fclose(said);
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+/* A build that succeeds still has to hand over what the compiler said about
+   it. Capturing the output and printing it only on failure would make every
+   warning in every green build disappear. */
+MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
+    char root[] = "/tmp/molto_warned_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"warned\"\n"
+                                    "\n[target]\nflags = [\"-Wall\"]\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) {\n    int tmp = 0;\n    return 0;\n}\n"));
+
+    FILE *said = tmpfile();
+    ASSERT_NOT_NULL(said);
+    build_report *report = build_report_create(said);
+    ASSERT_NOT_NULL(report);
+    EXPECT_EQ(exit_ok, build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+
+    char text[8192] = "";
+    (void)fflush(said);
+    rewind(said);
+    text[fread(text, 1, sizeof text - 1, said)] = '\0';
+
+    EXPECT_NOT_NULL(strstr(text, "⚠ Warnings compiling `main.c`"));
+    EXPECT_NOT_NULL(strstr(text, "unused variable"));
+    EXPECT_NULL(strstr(text, "✗"));
+
+    build_report_destroy(report);
+    (void)fclose(said);
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);

@@ -3,6 +3,7 @@
 #include <molto/build/compile_db.h>
 #include <molto/build/compile_flags.h>
 #include <molto/build/depfile.h>
+#include <molto/build/diagnostic_view.h>
 #include <molto/build/profile.h>
 #include <molto/build/report.h>
 #include <molto/exit_code.h>
@@ -55,6 +56,20 @@
 
 /* Size of the small buffer holding the "-O<n>" flag. */
 #define OPT_FLAG_SIZE 16
+
+/* How much of what one tool says about one file is kept. Everything gcc has to
+   say about a thoroughly broken translation unit fits several times over, and
+   a unit that says more than this is told so. One of these exists per worker
+   and only while that worker's compiler runs. */
+#define BUILD_OUTPUT_SIZE 65536
+
+/* Room for "gcc 12.3.0", or for the name of a binary chosen by hand. */
+#define TOOLCHAIN_DESCRIPTION_MAX 128
+
+/* What a run reports for a child killed by signal N, following the usual shell
+   convention (see process_service.h). Above it, the compiler did not choose to
+   stop and there is no diagnostic to look for. */
+#define SIGNAL_EXIT_BASE 128
 
 /* The project's own code, and the code that tests it. Neither is a package, so
    neither carries a name or a version: a line about one names the source. */
@@ -217,8 +232,15 @@ static char *command_fingerprint(const str_list *argv, const project_env *env) {
 }
 
 /* Run a command held in a str_list argv (adds the NULL terminator), exporting
-   the project's [env] variables to the child. */
-static int run_str_argv(const str_list *argv, const project_env *env) {
+   the project's [env] variables to the child.
+
+   `capture` is where everything the child writes to either stream is kept, or
+   NULL to let it inherit Molto's own and write straight to the terminal. A
+   compile is captured, because a diagnostic has to be read and framed before
+   it is shown, and because a compiler writing beside a progress bar lands in
+   the middle of it. A link is captured for the first of those reasons. */
+static int run_str_argv(const str_list *argv, const project_env *env, char *capture,
+                        size_t capture_size, bool *truncated) {
     size_t count = str_list_count(argv);
     const char **cargv = (const char **)malloc((count + 1) * sizeof(char *));
     if(cargv == NULL)
@@ -229,7 +251,9 @@ static int run_str_argv(const str_list *argv, const project_env *env) {
 
     process_env_var vars[PROJECT_MAX_ENV];
     size_t var_count = project_env_to_vars(env, vars, PROJECT_MAX_ENV);
-    int status = process_run_env(cargv, vars, var_count);
+    int status = capture != NULL
+                     ? process_capture_all(cargv, vars, var_count, capture, capture_size, truncated)
+                     : process_run_env(cargv, vars, var_count);
     free((void *)cargv);
     return status;
 }
@@ -338,21 +362,26 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
     return true;
 }
 
-/* Compile a single translation unit to `object`. gcc writes the header
-   dependency file (`-MMD -MF <object>.d`) as a side effect; it is absorbed into
-   the WSDB afterwards, on the main thread. */
-static bool compile_one(const char *root, const compile_unit *unit, const char *object,
-                        const manifest_profile *settings, const project_env *env,
-                        const resolved_toolchain *chain) {
+/* Compile a single translation unit to `object`, keeping what the compiler
+   said about it in `output`. gcc writes the header dependency file
+   (`-MMD -MF <object>.d`) as a side effect; it is absorbed into the WSDB
+   afterwards, on the main thread.
+
+   Returns the compiler's exit code, so a caller can tell a unit that failed
+   loudly from one that failed without a word. */
+static int compile_one(const char *root, const compile_unit *unit, const char *object,
+                       const manifest_profile *settings, const project_env *env,
+                       const resolved_toolchain *chain, char *output, size_t output_size,
+                       bool *truncated) {
     str_list argv;
     str_list_init(&argv);
     if(!unit_argv(&argv, root, unit, object, settings, chain)) {
         str_list_free(&argv);
-        return false;
+        return -1;
     }
-    bool ok = run_str_argv(&argv, env) == 0;
+    const int status = run_str_argv(&argv, env, output, output_size, truncated);
     str_list_free(&argv);
-    return ok;
+    return status;
 }
 
 /* Record a freshly compiled object into the WSDB: read the prerequisites from
@@ -471,6 +500,85 @@ typedef struct {
     size_t to_build;
 } compile_pass;
 
+/* --- naming a unit --- */
+
+/* Portion of `path` relative to `root` (drops a leading "root/"), or `path`
+   unchanged if it is not under root. */
+static const char *relative_to_root(const char *root, const char *path) {
+    size_t root_len = strlen(root);
+    if(strncmp(path, root, root_len) == 0 && path[root_len] == '/')
+        return path + root_len + 1;
+    return path;
+}
+
+/* The directory a unit's sources are named relative to: its own package's, or
+   the project's for the project's own code. A dependency lives in the shared
+   cache, and naming its sources relative to the project root would print the
+   whole cache path on every line. */
+static const char *naming_root(const compile_unit *unit, const char *root) {
+    if(unit->label != NULL && unit->label->source != NULL && unit->label->source[0] != '\0')
+        return unit->label->source;
+    return root;
+}
+
+/* How a source is named on a line: relative to the directory it was discovered
+   in, so `src/net/http.c` reads as `net/http.c` and the column stays about the
+   file rather than about where the project happens to live.
+
+   Not the base name, which would print two different files as one line. A
+   source that is under neither directory — a framework a manifest pointed
+   `[test].sources` at — keeps its path from the project root. */
+static const char *display_source(const char *root, const char *source) {
+    const char *relative = relative_to_root(root, source);
+    if(strncmp(relative, DIR_SRC "/", sizeof(DIR_SRC "/") - 1) == 0)
+        return relative + sizeof(DIR_SRC "/") - 1;
+    if(strncmp(relative, DIR_TESTS "/", sizeof(DIR_TESTS "/") - 1) == 0)
+        return relative + sizeof(DIR_TESTS "/") - 1;
+    return relative;
+}
+
+/* Where a package's sources are, but only when that is somewhere the reader
+   can go and look. A dependency fetched into the shared cache is named by its
+   coordinate on the line above, and its cache path is eighty columns that say
+   no more than the coordinate already did. */
+static const char *shown_source(const build_unit_label *label, const char *root) {
+    if(label == NULL || label->source == NULL || label->source[0] == '\0')
+        return NULL;
+    const char *relative = fs_relative_to(label->source, root);
+    return relative != label->source ? relative : NULL;
+}
+
+/* Which compiler was asked, as a person would name it.
+ *
+ * Under C_COMPILER there is no vendor and no version to give — the compiler
+ * was chosen by hand and never asked what it was — so the binary itself is the
+ * honest answer, and a better one than an empty line. */
+static void describe_compiler(const resolved_toolchain *chain, bool is_cpp, char *out,
+                              size_t out_size) {
+    if(chain->vendor[0] != '\0' && chain->version[0] != '\0') {
+        snprintf(out, out_size, "%s %s", chain->vendor, chain->version);
+        return;
+    }
+    const char *driver = compile_flags_driver(chain, is_cpp);
+    if(driver == NULL) {
+        snprintf(out, out_size, "%s", chain->vendor);
+        return;
+    }
+    const char *base = strrchr(driver, '/');
+    snprintf(out, out_size, "%s", base != NULL ? base + 1 : driver);
+}
+
+/* --- what the compiler said --- */
+
+/* A diagnostic Molto wrote itself, for what a tool left unsaid. */
+static void push_own(diagnostic_list *found, const char *source, diagnostic_severity severity,
+                     const char *message) {
+    diagnostic item = {.severity = severity};
+    snprintf(item.file, sizeof item.file, "%s", source);
+    snprintf(item.message, sizeof item.message, "%s", message);
+    (void)diagnostic_list_push(found, &item);
+}
+
 /* One parallel compilation task: compile a planned unit, recording a shared
    failure flag. Runs on a task_pool worker. */
 typedef struct {
@@ -482,18 +590,75 @@ typedef struct {
     uint64_t signature; /* what the source was when this compilation began */
 } compile_task;
 
+/* Everything the compiler had to say about one unit, framed and written as a
+   single act — one call, so it is atomic against the bar and against the other
+   workers, and with the text as an argument rather than as a format, because a
+   compiler message is full of per-cent signs.
+ *
+ * Called whether or not the unit compiled: capturing the compiler's output and
+ * then printing it only on failure would make every warning in every green
+ * build disappear. */
+static void report_diagnostics(const compile_task *task, const char *output, bool truncated,
+                               int status) {
+    const build_pass_env *env = task->env;
+    const compile_unit *unit = task->planned->unit;
+
+    diagnostic_list found;
+    diagnostic_list_init(&found);
+    if(!diagnostic_parse(output, &found)) {
+        diagnostic_list_free(&found);
+        return;
+    }
+    if(truncated)
+        push_own(&found, unit->source, diagnostic_severity_note,
+                 "there was more of this than Molto kept");
+    if(status != 0 && diagnostic_count_severity(&found, diagnostic_severity_error) == 0)
+        push_own(&found, unit->source, diagnostic_severity_error,
+                 status > SIGNAL_EXIT_BASE ? "the compiler was killed while compiling this file"
+                                           : "the compiler failed with nothing to say about this "
+                                             "file");
+
+    char compiler[TOOLCHAIN_DESCRIPTION_MAX];
+    describe_compiler(env->chain, source_is_cpp(unit->source), compiler, sizeof compiler);
+    const diagnostic_context ctx = {
+        .unit = display_source(naming_root(unit, env->root), unit->source),
+        .package = unit->label != NULL ? unit->label->name : NULL,
+        .version = unit->label != NULL ? unit->label->version : NULL,
+        .source = shown_source(unit->label, env->root),
+        .compiler = compiler,
+        .root = env->root,
+    };
+    char *block = diagnostic_view_render(&found, &ctx, build_report_wants_colour(task->report));
+    diagnostic_list_free(&found);
+    if(block == NULL)
+        return;
+    build_report_message(task->report, "%s\n", block);
+    free(block);
+}
+
 static void compile_task_run(void *arg) {
     compile_task *task = arg;
     const build_pass_env *env = task->env;
-    task->succeeded = compile_one(env->root, task->planned->unit, task->planned->object,
-                                  &env->settings, env->env, env->chain);
-    if(!task->succeeded) {
-        /* Through the report rather than straight to stderr: with a bar up,
-           anything written beside it lands in the middle of it. */
+
+    /* One buffer per worker, held only while the compiler runs. The whole of
+       what gcc says about a broken translation unit fits in it many times
+       over, and what does not is reported as having been cut. */
+    char *output = malloc(BUILD_OUTPUT_SIZE);
+    bool truncated = false;
+    const int status =
+        compile_one(env->root, task->planned->unit, task->planned->object, &env->settings, env->env,
+                    env->chain, output, output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
+    task->succeeded = status == 0;
+
+    if(output != NULL)
+        report_diagnostics(task, output, truncated, status);
+    else if(!task->succeeded)
         build_report_message(task->report, "molto: failed to compile '%s'\n",
                              task->planned->unit->source);
+    free(output);
+
+    if(!task->succeeded)
         atomic_store(task->failed, true);
-    }
     build_report_unit_done(task->report);
 }
 
@@ -771,7 +936,7 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     bool ok = true;
     if(force || command == NULL || !wsdb_binary_fresh(db, binary, command) ||
        link_needed(objects, binary)) {
-        ok = run_str_argv(&argv, env) == 0;
+        ok = run_str_argv(&argv, env, NULL, 0, NULL) == 0;
         if(ok && (command == NULL || !wsdb_record_binary(db, binary, command)))
             fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", binary);
     }
@@ -1195,41 +1360,6 @@ static int run_plan(const build_plan *plan, build_report *report, bool *any_comp
     for(size_t i = 0; i < plan->pass_count && result == exit_ok; i++)
         result = run_pass(&plan->passes[i], report, any_compiled);
     return result;
-}
-
-/* Portion of `path` relative to `root` (drops a leading "root/"), or `path`
-   unchanged if it is not under root. */
-static const char *relative_to_root(const char *root, const char *path) {
-    size_t root_len = strlen(root);
-    if(strncmp(path, root, root_len) == 0 && path[root_len] == '/')
-        return path + root_len + 1;
-    return path;
-}
-
-/* The directory a unit's sources are named relative to: its own package's, or
-   the project's for the project's own code. A dependency lives in the shared
-   cache, and naming its sources relative to the project root would print the
-   whole cache path on every line. */
-static const char *naming_root(const compile_unit *unit, const char *root) {
-    if(unit->label != NULL && unit->label->source != NULL && unit->label->source[0] != '\0')
-        return unit->label->source;
-    return root;
-}
-
-/* How a source is named on a line: relative to the directory it was discovered
-   in, so `src/net/http.c` reads as `net/http.c` and the column stays about the
-   file rather than about where the project happens to live.
-
-   Not the base name, which would print two different files as one line. A
-   source that is under neither directory — a framework a manifest pointed
-   `[test].sources` at — keeps its path from the project root. */
-static const char *display_source(const char *root, const char *source) {
-    const char *relative = relative_to_root(root, source);
-    if(strncmp(relative, DIR_SRC "/", sizeof(DIR_SRC "/") - 1) == 0)
-        return relative + sizeof(DIR_SRC "/") - 1;
-    if(strncmp(relative, DIR_TESTS "/", sizeof(DIR_TESTS "/") - 1) == 0)
-        return relative + sizeof(DIR_TESTS "/") - 1;
-    return relative;
 }
 
 /* Tell the report what the build is about to do: the work, unit by unit, and
