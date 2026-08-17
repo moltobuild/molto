@@ -528,8 +528,10 @@ The conflict search described above is implemented as well:
   the search will ask is not known until it stops asking.
 
 What is still missing: `molto update` is not coming — `molto add <name>` is the
-upgrade — and there is no progress on downloads or compilation, which would
-need `process_service` to gain a way to poll a running child.
+upgrade — and there is no progress on downloads, which would need
+`process_service` to gain a way to poll a running child. Compilation does have
+one: a build works out every unit it will compile before compiling any of them,
+so the total is counted rather than invented (RFC-0007, *What a build says*).
 
 ## Non-Goals
 

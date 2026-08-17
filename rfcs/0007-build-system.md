@@ -408,6 +408,41 @@ ignores would be a cap in name only.
 The pool is still created and destroyed per batch. That is worth fixing and
 does not change the contract above.
 
+## What a build says
+
+A build is planned in full before any of it runs. Every pass — the runtime
+dependencies, `src/`, the development dependencies, `tests/` — is walked first
+to work out object paths, command lines and which units are stale; only then
+does the first compiler start. The split costs one traversal and buys the only
+number worth printing: how many units this build is going to compile.
+
+That number is why the progress it draws is a bar and not the spinner RFC-0008
+settled for. A resolution cannot say how many questions it will ask until it
+stops asking; a build counts its work before doing any.
+
+What it prints is the work, and only the work:
+
+- one line per dependency package with at least one stale source — a package
+  with forty of them is one piece of work,
+- one line per source of the project's own, because that is the granularity of
+  an edit,
+- and one line counting everything that was already up to date or came out of
+  the shared object cache. A hundred lines saying nothing happened is not a
+  report.
+
+Everything goes to stderr, beside the diagnostics it is interleaved with. The
+bar and the colour are for a person at a terminal: a stream that is not one
+gets the same lines with no bar and no escape sequence, and `NO_COLOR` speaks
+for the person when the terminal cannot. A build that failed prints no summary
+line at all — the compiler has already said the thing worth reading, and a tick
+under it would be the report contradicting it.
+
+One consequence is visible and accepted: the compiler's own stderr is inherited
+rather than captured, so a diagnostic can land on the line the bar occupies.
+The bar is one line, redrawn from column zero, so the next frame repairs it.
+Capturing that output would fix it properly and would also take the colour out
+of every diagnostic gcc emits; that trade is not made here.
+
 ## The compilation database
 
 A build writes `compile_commands.json` at the project root, in the format the
