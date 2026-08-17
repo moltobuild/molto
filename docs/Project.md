@@ -411,32 +411,51 @@ dependency read wrong is a dependency that silently is not there.
 
 ## What a build prints
 
+On a terminal, a build says what it is about to do, then shows what it is doing
+at this instant, and then gets out of the way:
+
 ```
  ◆ registry   sqlite3 v3.50.3
  ◇ modules    network
- ● project    main.c
- ● project    game.c
+ ● project    62 files
  ○ cached     20 files
 
- ████████████████████████████████ 100%
+ ● project    services/build_service.c      ┐
+ ● project    build/report.c                │ the region: redrawn as the work
+ ◆ sqlite3    btree.c                       │ moves, and gone when it stops
+ … and 5 more                               │
+ ████████░░░░░░░░░░░░░░░░  22%  47/210      ┘
+```
+
+and when it finishes, that whole lower block disappears and what is left is:
+
+```
+ ◆ registry   sqlite3 v3.50.3
+ ◇ modules    network
+ ● project    62 files
+ ○ cached     20 files
 
  ✓ Finished `debug` build in 1.82s
 ```
 
-Every line is work this build did.
+Five lines in the scrollback for a build of two hundred files. The names of the
+files are worth reading while they are compiling and worth nothing afterwards,
+so they live in a region at the bottom of the screen rather than in your
+history.
 
 | Glyph | Column | What it is |
 |---|---|---|
 | ◆ | `registry` | a dependency a registry answered for, at the version in `Molto.lock` |
 | ◇ | `modules` | a dependency you gave the location of: `path`, `git` or `archive` |
-| ● | `project` | one of your own sources under `src/`, recompiled |
-| ◐ | `tests` | a source compiled into the test binaries (`molto test` only) |
+| ● | `project` | your own sources under `src/`, recompiled |
+| ◐ | `tests` | sources compiled into the test binaries (`molto test` only) |
 | ○ | `cached` | how many units were already up to date, or came out of the shared object cache |
 
 A dependency gets **one line however many sources it has** — a package is one
-piece of work. Your own files get one line each, because that is what you just
-edited. Nothing that did not have to be compiled is listed; it is counted on
-the `cached` line. So a rebuild with nothing to do is three lines and no bar:
+piece of work. Your own sources and your tests are counted the same way,
+because the region below is about to name each of them as it compiles it.
+Nothing that did not have to be compiled is listed at all; it is counted on the
+`cached` line. So a rebuild with nothing to do is three lines and no region:
 
 ```
  ○ cached     60 files
@@ -444,15 +463,31 @@ the `cached` line. So a rebuild with nothing to do is three lines and no bar:
  ✓ Finished `debug` build in 0.04s
 ```
 
+The region shows up to eight files at once and never more than a third of the
+screen, whatever `-j` you gave it; what does not fit is counted on the `… and N
+more` line. Every row is cut to the width of your terminal — a row that wrapped
+would take two rows of the screen, and the region would lose track of what it
+drew. Resize the window mid-build and the next frame is drawn against the new
+size.
+
 The bar's denominator is the number of units this build is going to compile,
 counted before the first compiler starts — which is why `molto test` shows one
 bar and not four, even though it compiles its dependencies, `src/`, its
-development dependencies and `tests/` in four separate passes.
+development dependencies and `tests/` in four separate passes. On a narrow
+terminal the bar gives up columns rather than the figure beside it: a bar with
+no number is only telling you that something is happening, which its moving
+already said.
 
 All of it goes to **stderr**, so `molto build > log` still shows you the build
 and `molto run > out.txt` captures only your program. Redirect stderr instead
-— a pipe, a file, a CI job — and the bar and the colour go away while the lines
-stay. `NO_COLOR=1` turns the colour off on a terminal too.
+— a pipe, a file, a CI job — and you get **one line per source** with no region,
+no bar and not a single escape sequence, because a region in a log file is
+noise and a region in a pipe is corruption. That is the full record, and it is
+what CI should keep. `NO_COLOR=1` turns the colour off on a terminal too; it
+does not turn the region off, which is about motion rather than colour.
+
+The cursor is never hidden. Ctrl-C during a build leaves your terminal exactly
+as it found it.
 
 A build that fails prints no `Finished` line: what it prints instead is below.
 
