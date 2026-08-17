@@ -184,6 +184,176 @@ MOLTEST(the_size_comes_from_the_environment_when_nothing_else_will_say) {
     EXPECT_EQ((size_t)VIEWPORT_ROWS_MAX, size.rows);
 }
 
+/* The drawing half, captured off a temporary file — which the region is happy
+   to draw on, because it never asks whether anyone is watching. */
+
+static size_t captured(FILE *file, char *out, size_t out_size) {
+    (void)fflush(file);
+    rewind(file);
+    const size_t read = fread(out, 1, out_size - 1, file);
+    out[read] = '\0';
+    return read;
+}
+
+/* How many times `needle` occurs in `text`. */
+static size_t occurrences(const char *text, const char *needle) {
+    size_t found = 0;
+    for(const char *at = strstr(text, needle); at != NULL; at = strstr(at + 1, needle))
+        found++;
+    return found;
+}
+
+static const viewport_size WIDE = {.columns = 80, .rows = 24};
+
+MOLTEST(a_region_repaints_where_the_last_one_was) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const char *rows[] = {"one", "two", "three"};
+    viewport_paint(&view, rows, 3, WIDE);
+    const long mark = ftell(out);
+    ASSERT_TRUE(mark > 0);
+
+    viewport_paint(&view, rows, 3, WIDE);
+
+    char text[2048] = "";
+    ASSERT_TRUE(captured(out, text, sizeof text) > (size_t)mark);
+    /* Two rows up, not three: the cursor is on the last row of the region,
+       not below it. */
+    EXPECT_EQ(0, strncmp(text + mark, "\033[2A\r", 5));
+    EXPECT_EQ(3u, view.drawn);
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
+/* The rows a frame gives up have to be blanked, or they sit under the region
+   for the rest of the build saying something that stopped being true. */
+MOLTEST(a_region_that_shrinks_erases_what_it_no_longer_shows) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const char *three[] = {"one", "two", "three"};
+    viewport_paint(&view, three, 3, WIDE);
+    const long mark = ftell(out);
+
+    const char *one[] = {"one"};
+    viewport_paint(&view, one, 1, WIDE);
+
+    char text[2048] = "";
+    (void)captured(out, text, sizeof text);
+    const char *frame = text + mark;
+
+    /* Three rows reached and then the last live one drawn again on the way
+       back up, so the cursor ends where the region ends. */
+    EXPECT_EQ(4u, occurrences(frame, "\033[2K"));
+    EXPECT_NULL(strstr(frame, "two"));
+    EXPECT_NULL(strstr(frame, "three"));
+    EXPECT_NOT_NULL(strstr(frame, "\033[2A"));
+    EXPECT_EQ(1u, view.drawn);
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
+MOLTEST(a_region_that_grows_writes_the_rows_it_did_not_have) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const char *one[] = {"one"};
+    viewport_paint(&view, one, 1, WIDE);
+    /* A single row is drawn where the cursor already is: nothing to move up. */
+    char text[2048] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NULL(strstr(text, "\033["
+                             "1A"));
+
+    rewind(out);
+    const char *three[] = {"one", "two", "three"};
+    viewport_paint(&view, three, 3, WIDE);
+
+    (void)captured(out, text, sizeof text);
+    EXPECT_NOT_NULL(strstr(text, "two"));
+    EXPECT_NOT_NULL(strstr(text, "three"));
+    EXPECT_EQ(3u, view.drawn);
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
+/* The whole point of the module: a row wider than the terminal would take two
+   rows of it, and every movement after that would land somewhere else. */
+MOLTEST(a_row_wider_than_the_terminal_is_cut_before_it_is_drawn) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const viewport_size narrow = {.columns = 10, .rows = 24};
+    const char *rows[] = {"a source path far longer than ten columns"};
+    viewport_paint(&view, rows, 1, narrow);
+
+    char text[2048] = "";
+    (void)captured(out, text, sizeof text);
+    EXPECT_NOT_NULL(strstr(text, "a source p"));
+    EXPECT_NULL(strstr(text, "columns"));
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
+MOLTEST(a_region_that_drew_nothing_is_not_cleared) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    viewport_clear(&view);
+
+    char text[64] = "";
+    EXPECT_EQ(0u, captured(out, text, sizeof text));
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
+MOLTEST(clearing_takes_the_region_off_and_leaves_the_cursor_on_its_first_row) {
+    FILE *out = tmpfile();
+    ASSERT_NOT_NULL(out);
+    viewport view;
+    viewport_init(&view, out);
+
+    const char *rows[] = {"one", "two"};
+    viewport_paint(&view, rows, 2, WIDE);
+    const long mark = ftell(out);
+
+    viewport_clear(&view);
+    EXPECT_EQ(0u, view.drawn);
+
+    /* And nothing left to clear the second time: the stream does not move. */
+    (void)fflush(out);
+    const long settled = ftell(out);
+    viewport_clear(&view);
+    (void)fflush(out);
+    EXPECT_EQ(settled, ftell(out));
+
+    char text[2048] = "";
+    (void)captured(out, text, sizeof text);
+    const char *frame = text + mark;
+    EXPECT_EQ(2u, occurrences(frame, "\033[2K"));
+    /* Up to the first row to blank them, and up again to sit on it. */
+    EXPECT_EQ(2u, occurrences(frame, "\033[1A"));
+
+    viewport_free(&view);
+    (void)fclose(out);
+}
+
 /* A temporary file is not a terminal, so the ioctl cannot answer and the
    environment is what is left. That fallback is the path the tests above pin,
    and this is what reaches it. */

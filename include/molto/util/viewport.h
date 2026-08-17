@@ -116,4 +116,56 @@ size_t viewport_fit(const char *line, size_t columns, char *out, size_t out_size
  */
 [[nodiscard]] size_t viewport_height(size_t in_flight, size_t rows, size_t maximum);
 
+/*
+ * A block of rows anchored to the bottom of the screen.
+ *
+ * `drawn` is how many rows the last frame occupied, and it is the whole of the
+ * state: the movement back to the top is relative, so the region knows where
+ * it is only for as long as nobody else writes to the stream between two
+ * frames. Guaranteeing that is the caller's job — in a build, everything that
+ * is said already goes through one door behind one lock.
+ */
+typedef struct {
+    FILE *out;
+    size_t drawn;
+    /* Where a frame is composed before it is written. Grown to the largest
+       frame so far and kept, because a region redraws twenty times a second
+       and the size it needs barely moves between one frame and the next. */
+    char *frame;
+    size_t frame_size;
+} viewport;
+
+void viewport_init(viewport *view, FILE *out);
+
+/* Give back the composition buffer. Draws nothing: a region is taken off the
+   screen by `viewport_clear`, and a region freed without one was either never
+   drawn or is being abandoned on purpose. */
+void viewport_free(viewport *view);
+
+/*
+ * Draw `count` rows where the last frame was, each cut to `size.columns`.
+ *
+ * A frame is one write. Composing it in a buffer and putting it out in a
+ * single call is what keeps it from being seen coming apart, and it is why
+ * this does not reach for `progress_erase_line`, which flushes once per call.
+ *
+ * A frame with more rows than the last one scrolls the screen when the region
+ * sits at the bottom, and the region rides up with it, which is exactly why
+ * the movement is relative. A frame with fewer rows blanks the ones it has
+ * given up before stepping back over them: without that they stay on the
+ * screen under the region for the rest of the build.
+ *
+ * The cursor is left at the end of the last row rather than at the start of
+ * the next: nothing is written after a frame except the next frame, and a row
+ * ending in a newline would scroll one row further on every one of them.
+ *
+ * `count` of zero is not a frame — it is `viewport_clear`.
+ */
+void viewport_paint(viewport *view, const char *const *lines, size_t count, viewport_size size);
+
+/* Take the region off the screen and leave the cursor at the start of the
+   first row it held, blank. A region that was never drawn is not cleared: on a
+   stream nothing was drawn on, the clearing would be the only thing written. */
+void viewport_clear(viewport *view);
+
 #endif /* MOLTO_UTIL_VIEWPORT_H */

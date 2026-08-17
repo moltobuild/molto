@@ -182,3 +182,131 @@ size_t viewport_height(size_t in_flight, size_t rows, size_t maximum) {
     const size_t third = rows / 3;
     return wanted < third ? wanted : third;
 }
+
+/* --- the region --- */
+
+/* Erase the row the cursor is on, wherever on it the cursor is. */
+#define ERASE_ROW "\033[2K"
+
+/* Bytes a cursor movement can take: the escape, a row count no terminal will
+   ever exceed, and the letter. */
+#define MOVE_MAX 16
+
+void viewport_init(viewport *view, FILE *out) {
+    view->out = out;
+    view->drawn = 0;
+    view->frame = NULL;
+    view->frame_size = 0;
+}
+
+void viewport_free(viewport *view) {
+    if(view == NULL)
+        return;
+    free(view->frame);
+    view->frame = NULL;
+    view->frame_size = 0;
+}
+
+/* Room for the whole frame, worked out before any of it is written so the
+   appends below cannot be the thing that runs off the end. False when the
+   memory is not there, which draws no frame — a region is decoration, and a
+   build that cannot spare this has worse news to give. */
+static bool frame_room(viewport *view, size_t rows, size_t columns) {
+    const size_t per_row = sizeof ERASE_ROW + VIEWPORT_FIT_SIZE(columns) + 2;
+    /* One row over, for the last live row drawn a second time on the way back
+       up, and two movements with a carriage return apiece. */
+    const size_t needed = (rows + 1) * per_row + 2 * (MOVE_MAX + 1) + 1;
+    if(view->frame_size >= needed)
+        return true;
+    char *grown = realloc(view->frame, needed);
+    if(grown == NULL)
+        return false;
+    view->frame = grown;
+    view->frame_size = needed;
+    return true;
+}
+
+static void put(viewport *view, size_t *used, const char *text) {
+    const size_t bytes = strlen(text);
+    if(*used + bytes >= view->frame_size)
+        return;
+    memcpy(view->frame + *used, text, bytes);
+    *used += bytes;
+}
+
+/* Up `rows` rows and back to the first column. Zero rows still needs the
+   carriage return: the cursor is sitting at the end of whatever was drawn. */
+static void put_up(viewport *view, size_t *used, size_t rows) {
+    char move[MOVE_MAX];
+    if(rows > 0) {
+        (void)snprintf(move, sizeof move, "\033[%zuA", rows);
+        put(view, used, move);
+    }
+    put(view, used, "\r");
+}
+
+static void put_fitted(viewport *view, size_t *used, const char *line, size_t columns) {
+    if(*used + VIEWPORT_FIT_SIZE(columns) >= view->frame_size)
+        return;
+    *used += viewport_fit(line, columns, view->frame + *used, view->frame_size - *used);
+}
+
+static void write_frame(viewport *view, size_t used) {
+    (void)fwrite(view->frame, 1, used, view->out);
+    (void)fflush(view->out);
+}
+
+void viewport_paint(viewport *view, const char *const *lines, size_t count, viewport_size size) {
+    if(view == NULL || view->out == NULL || lines == NULL || count == 0)
+        return;
+    const size_t columns = size.columns > 0 ? size.columns : VIEWPORT_FALLBACK_COLUMNS;
+    /* Every row the last frame reached, whether this one still wants it or
+       not: the ones it has given up are blanked in the same pass. */
+    const size_t rows = count > view->drawn ? count : view->drawn;
+    if(!frame_room(view, rows, columns))
+        return;
+
+    size_t used = 0;
+    put_up(view, &used, view->drawn > 0 ? view->drawn - 1 : 0);
+    for(size_t i = 0; i < rows; i++) {
+        put(view, &used, ERASE_ROW);
+        if(i < count)
+            put_fitted(view, &used, lines[i], columns);
+        /* The carriage return goes before the newline: a row drawn to the last
+           column leaves the terminal with a wrap pending, and a bare newline
+           would spend it. */
+        if(i + 1 < rows)
+            put(view, &used, "\r\n");
+    }
+    if(rows > count) {
+        /* Back over the rows just given up, and the last live row once more,
+           so the cursor finishes at the end of the region rather than under
+           it — which is where the next frame counts from. */
+        put_up(view, &used, rows - count);
+        put(view, &used, ERASE_ROW);
+        put_fitted(view, &used, lines[count - 1], columns);
+    }
+
+    write_frame(view, used);
+    view->drawn = count;
+}
+
+void viewport_clear(viewport *view) {
+    if(view == NULL || view->out == NULL || view->drawn == 0)
+        return;
+    const size_t rows = view->drawn;
+    if(!frame_room(view, rows, 0))
+        return;
+
+    size_t used = 0;
+    put_up(view, &used, rows - 1);
+    for(size_t i = 0; i < rows; i++) {
+        put(view, &used, ERASE_ROW);
+        if(i + 1 < rows)
+            put(view, &used, "\r\n");
+    }
+    put_up(view, &used, rows - 1);
+
+    write_frame(view, used);
+    view->drawn = 0;
+}
