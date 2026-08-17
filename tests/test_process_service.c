@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 
 MOLTEST(process_service) {
     const char *ok[] = { "true", NULL };
@@ -95,6 +96,48 @@ MOLTEST(process_capture_still_leaves_stderr_alone) {
     EXPECT_EQ(0, process_capture(argv, out, sizeof out));
     EXPECT_NOT_NULL(strstr(out, "answer"));
     EXPECT_NULL(strstr(out, "noise"));
+}
+
+/* Hold a capture open for long enough that another one overlaps it. */
+static int hold_a_pipe_open(void *unused) {
+    (void)unused;
+    const char *const argv[] = { "sh", "-c", "sleep 1", NULL };
+    char out[64] = "";
+    return process_capture_all(argv, NULL, 0, out, sizeof out, NULL);
+}
+
+/* How many descriptors a child of this process inherits. Counted rather than
+   listed, and counted the same way both times it is asked, so whatever else
+   the test binary happens to hold open cancels out. */
+static unsigned long inherited_descriptors(void) {
+    const char *const argv[] = { "sh", "-c", "ls /proc/self/fd | wc -l", NULL };
+    char out[64] = "";
+    if(process_capture_all(argv, NULL, 0, out, sizeof out, NULL) != 0)
+        return 0;
+    return strtoul(out, NULL, 10);
+}
+
+/* The pipe one capture opens must not reach another capture's child.
+ *
+ * A pipe reaches EOF when the last copy of its write end is closed, so a
+ * compiler that inherited someone else's pipe holds that capture open for as
+ * long as it runs. Under `-j` that turns a parallel build into a queue behind
+ * whichever unit happens to be slowest — not a deadlock, and all the harder to
+ * see for it. */
+MOLTEST(a_capture_does_not_leak_its_pipe_into_another_child) {
+    const unsigned long alone = inherited_descriptors();
+    ASSERT_TRUE(alone > 0);
+
+    thrd_t holder;
+    ASSERT_EQ(thrd_success, thrd_create(&holder, hold_a_pipe_open, NULL));
+    (void)thrd_sleep(&(struct timespec){ .tv_nsec = 200000000L }, NULL); /* 200 ms */
+
+    const unsigned long beside_a_capture = inherited_descriptors();
+    EXPECT_EQ(alone, beside_a_capture);
+
+    int held = -1;
+    (void)thrd_join(holder, &held);
+    EXPECT_EQ(0, held);
 }
 
 MOLTEST(process_builds_an_argv_from_a_list) {

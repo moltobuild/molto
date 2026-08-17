@@ -1,5 +1,11 @@
+/* For pipe2, which glibc declares only under this macro. It has to be defined
+   before the first header, and it is scoped to this file rather than to the
+   build so nothing else changes which declarations it can see. */
+#define _GNU_SOURCE
+
 #include <molto/services/process_service.h>
 
+#include <fcntl.h>
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -32,6 +38,31 @@ typedef struct {
     bool stderr_captured;
 } child_pipe;
 
+/* A pipe whose ends are closed by exec.
+ *
+ * Without that flag, a pipe opened on one worker thread is inherited by every
+ * child another worker forks in the meantime, and a pipe only reaches EOF once
+ * the last copy of its write end is closed. The capture waiting on that EOF
+ * then sits there for as long as the slowest unrelated compiler runs. It is
+ * not a deadlock — the compilers do finish — but it is a build that serialises
+ * itself under `-j`, and the more cores there are the worse it reads.
+ *
+ * pipe2 sets the flag as part of the same call, so there is no window between
+ * opening the pipe and protecting it. The fallback narrows that window to two
+ * fcntl calls rather than closing it, which is what a platform without pipe2
+ * can have. */
+static bool open_pipe(int fds[2]) {
+#if defined(__linux__)
+    return pipe2(fds, O_CLOEXEC) == 0;
+#else
+    if(pipe(fds) != 0)
+        return false;
+    (void)fcntl(fds[PIPE_READ], F_SETFD, FD_CLOEXEC);
+    (void)fcntl(fds[PIPE_WRITE], F_SETFD, FD_CLOEXEC);
+    return true;
+#endif
+}
+
 /* Fork and exec `argv`, wiring the child's streams as `wiring` says; a stream
    that is not captured stays inherited. Returns the pid, or -1.
    The whole service differs only in how it answers this one question. */
@@ -43,6 +74,10 @@ static pid_t spawn_child(const char *const argv[], const process_env_var *env, s
 
     if(wiring->read_end >= 0)
         close(wiring->read_end);
+    /* dup2 clears close-on-exec on the descriptor it creates, so the streams
+       wired here survive the exec even though the pipe they came from does
+       not. That is the whole arrangement: the child keeps what it was given
+       and drops what it merely inherited. */
     if(wiring->stdout_captured)
         dup2(wiring->write_end, STDOUT_FILENO);
     if(wiring->stderr_captured)
@@ -98,7 +133,7 @@ int process_execute(const char *const argv[], process_spec *spec) {
         spec->capture[0] = '\0';
 
     int output[2] = {-1, -1};
-    if(capturing && pipe(output) != 0)
+    if(capturing && !open_pipe(output))
         return -1;
 
     const child_pipe wiring = {
