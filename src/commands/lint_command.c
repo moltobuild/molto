@@ -28,7 +28,15 @@
 typedef enum { lint_format_text, lint_format_rich, lint_format_json } lint_format;
 
 static bool parse_format(const char *format, lint_format *out) {
-    if(format == NULL || strcmp(format, FORMAT_TEXT) == 0) {
+    if(format == NULL) {
+        /* Unasked: a person at a terminal gets the frame, and anything being
+           redirected gets the line another program can read. `molto lint >
+           report` and every CI job that never passed the flag keep the output
+           they have always had. */
+        *out = progress_is_interactive(stdout) ? lint_format_rich : lint_format_text;
+        return true;
+    }
+    if(strcmp(format, FORMAT_TEXT) == 0) {
         *out = lint_format_text;
         return true;
     }

@@ -71,7 +71,10 @@ static const cli_option lint_options[] = {
      "Ask pickup again which formatter and linter this machine has", NULL},
     {"--refresh-analysis", 0, cli_opt_flag, NULL,
      "Analyse every file again instead of replaying what did not change", NULL},
-    {"--format", 'f', cli_opt_value, "<fmt>", "Output format (text, rich, json)", "text"},
+    /* No default: absent has to stay distinguishable from an explicit
+       `--format text`, because the two mean different things. Absent is
+       whatever suits the stream, and lint_command_run decides that. */
+    {"--format", 'f', cli_opt_value, "<fmt>", "Output format (rich, text, json)", NULL},
     {"--jobs", 'j', cli_opt_value, "<n>", "Analyse at most n files at once (default: every core)",
      NULL},
 };
