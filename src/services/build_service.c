@@ -912,6 +912,7 @@ static build_unit_label label_for(const prepared_unit *unit) {
         .origin = unit->origin == dep_source_version ? build_origin_registry : build_origin_module,
         .name = unit->name,
         .version = unit->version[0] != '\0' ? unit->version : NULL,
+        .source = unit->root,
     };
 }
 
@@ -1205,6 +1206,16 @@ static const char *relative_to_root(const char *root, const char *path) {
     return path;
 }
 
+/* The directory a unit's sources are named relative to: its own package's, or
+   the project's for the project's own code. A dependency lives in the shared
+   cache, and naming its sources relative to the project root would print the
+   whole cache path on every line. */
+static const char *naming_root(const compile_unit *unit, const char *root) {
+    if(unit->label != NULL && unit->label->source != NULL && unit->label->source[0] != '\0')
+        return unit->label->source;
+    return root;
+}
+
 /* How a source is named on a line: relative to the directory it was discovered
    in, so `src/net/http.c` reads as `net/http.c` and the column stays about the
    file rather than about where the project happens to live.
@@ -1229,8 +1240,9 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
         for(size_t i = 0; i < pass->count; i++) {
             const planned_unit *planned = &pass->units[i];
             if(planned->needs_compile)
-                build_report_will_compile(report, planned->unit->label,
-                                          display_source(root, planned->unit->source));
+                build_report_will_compile(
+                    report, planned->unit->label,
+                    display_source(naming_root(planned->unit, root), planned->unit->source));
             else
                 build_report_skipped(report);
         }

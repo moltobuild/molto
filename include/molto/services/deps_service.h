@@ -45,6 +45,11 @@ typedef struct {
        whatever is on disk. */
     char version[DEP_VERSION_MAX];
     dep_source origin;
+    /* Where the fetched source sits, absolute. Every path below is under it,
+       so it is what turns one of them back into the name the package's own
+       author would use — and what a diagnostic quotes when the package is
+       somewhere the reader can go and look. */
+    char root[DEP_GRAPH_PATH_MAX];
     str_list sources;  /* .c files the consumer compiles as its own */
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */

@@ -104,6 +104,13 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     ASSERT_EQ(1u, deps.links.count);
     EXPECT_STREQ("m", deps.links.items[0]);
 
+    /* Where the package sits, kept rather than only used to compose paths:
+       it is what turns one of those absolute sources back into the name its
+       own author would use. Every source is under it. */
+    EXPECT_EQ('/', deps.units[0].root[0]);
+    EXPECT_EQ(0, strncmp(deps.units[0].sources.items[0], deps.units[0].root,
+                         strlen(deps.units[0].root)));
+
     prepared_deps_free(&deps);
     sandbox_close(&at);
 }

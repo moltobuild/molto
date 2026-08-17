@@ -64,6 +64,7 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     snprintf(unit->name, sizeof unit->name, "%s", node->name);
     snprintf(unit->version, sizeof unit->version, "%s", node->version);
     unit->origin = dep_graph_source_kind(node->source);
+    snprintf(unit->root, sizeof unit->root, "%s", node->root);
     /* Copied rather than composed: a standard is one value the recipe either
        named or did not, and an empty one means the consumer's applies. */
     snprintf(unit->std, sizeof unit->std, "%s", node->artifacts.std);

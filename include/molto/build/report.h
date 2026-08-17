@@ -54,6 +54,12 @@ typedef struct {
     build_origin origin;
     const char *name;
     const char *version;
+    /* Where this unit's sources live, absolute. NULL for the project's own
+       code, whose sources live under the root everything is already shown
+       relative to. Nothing on an inventory line uses it: it is what lets a
+       diagnostic name the source relative to the package it belongs to rather
+       than to whoever is building it. */
+    const char *source;
 } build_unit_label;
 
 typedef struct build_report build_report;
