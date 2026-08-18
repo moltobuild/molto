@@ -140,11 +140,16 @@ static int64_t stat_mtime_ns(const struct stat *info) {
     return (int64_t)info->st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info->st_mtim.tv_nsec;
 }
 
-/* FNV-1a 64-bit hash of a file's content; 0 if it cannot be read. */
-static uint64_t hash_file(const char *path) {
+/* FNV-1a 64-bit hash of a file's content, and false when it cannot be read.
+ *
+ * A read that fails halfway leaves the loop the same way the end of the file
+ * does, so the error has to be asked for: hashing the bytes that did arrive
+ * would answer for a file nobody managed to read, and answer it consistently
+ * — which is a stale artifact called fresh for as long as the failure lasts. */
+[[nodiscard]] static bool hash_file(const char *path, uint64_t *out) {
     FILE *file = fopen(path, "rb");
     if(file == NULL)
-        return 0;
+        return false;
     uint64_t hash = 1469598103934665603ULL;
     unsigned char buffer[4096];
     size_t read;
@@ -154,8 +159,11 @@ static uint64_t hash_file(const char *path) {
             hash *= 1099511628211ULL;
         }
     }
-    fclose(file);
-    return hash;
+    const bool ok = ferror(file) == 0;
+    (void)fclose(file);
+    if(ok)
+        *out = hash;
+    return ok;
 }
 
 /* --- freshness --- */
@@ -180,7 +188,9 @@ static uint64_t hash_file(const char *path) {
         return true;
     }
 
-    const uint64_t hash = hash_file(full);
+    uint64_t hash = 0;
+    if(!hash_file(full, &hash))
+        return false;
     if(e == NULL || e->kind != wsdb_input_kind) {
         e = entry_new(wsdb_input_kind);
         if(e == NULL || !str_map_put(db->entries, rel, e)) {
