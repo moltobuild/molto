@@ -428,3 +428,58 @@ MOLTEST(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
                            "-clang-analyzer-security.insecureAPI."
                            "DeprecatedOrUnsafeBufferHandling"));
 }
+
+/* The path-sensitive analyzer, asked for by name. What it covers is the
+   families that say something about C on this platform — not osx, not
+   cplusplus — and not unix.Stream, which reads every `while(fread(...))` in
+   this repository as a read past the end of the file. */
+MOLTEST(translate_asks_the_analyzer_only_for_what_says_something_about_c) {
+    lint_config config;
+    lint_config_defaults(&config);
+    config.preset = style_preset_molto;
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "dataflow");
+    config.rules[0].severity = lint_severity_warn;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+                                          err, sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "clang-analyzer-core.*"));
+    EXPECT_NOT_NULL(strstr(text, "clang-analyzer-unix.*"));
+    EXPECT_NOT_NULL(strstr(text, "clang-analyzer-valist.*"));
+    EXPECT_NOT_NULL(strstr(text, "clang-analyzer-deadcode.*"));
+    EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-unix.Stream"));
+    /* Families that describe another language or another platform stay out. */
+    EXPECT_NULL(strstr(text, "clang-analyzer-osx"));
+    EXPECT_NULL(strstr(text, "clang-analyzer-cplusplus"));
+}
+
+/* Turning a rule off means every check it names, one minus each. A single
+   minus in front of the list would negate its first element and leave the rest
+   running — and the check the rule already subtracts must not come back on,
+   which is what re-emitting it without its minus would do. */
+MOLTEST(translate_turns_a_rule_off_check_by_check) {
+    lint_config config;
+    lint_config_defaults(&config);
+    config.preset = style_preset_none;
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "dataflow");
+    config.rules[0].severity = lint_severity_off;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+                                          err, sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-core.*"));
+    EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-unix.*"));
+    EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-valist.*"));
+    EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-deadcode.*"));
+    /* The one the rule subtracts is off either way, so it is not mentioned at
+       all — mentioned without its minus, it would be the only one left on. */
+    EXPECT_NULL(strstr(text, "Stream"));
+}

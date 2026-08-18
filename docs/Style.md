@@ -209,7 +209,7 @@ The rule names are Molto's, not the backend's:
 |---|---|
 | `bugprone` | Patterns that are usually a bug |
 | `performance`, `portability`, `modernize`, `readability` | The families of the same name |
-| `security` | The path-sensitive security analyzer (slow; see below) |
+| `dataflow`, `security` | The path-sensitive analyzer, by half (slow; see below) |
 | `naming_snake_case` | Identifier naming |
 | `readability_magic_numbers`, `identifier_length` | Individual readability checks |
 | `swappable_parameters`, `spurious_wakeup` | Two `bugprone` checks, named so they can be refused on their own |
@@ -256,10 +256,22 @@ default is its own to change, would enable a different set on the next machine.
 
 The path-sensitive analyzer is deliberately not in the default: it is dozens of
 times slower — 0.16 s against 8.3 s over three of this project's larger sources
-— and pays for it with a handful of findings. Ask for it with
-`"security": "warn"`, which covers its security family minus the check that
-demands the C11 Annex K functions (`snprintf_s` and friends) that glibc does not
-ship; that one fires on every call to the C library and buries the rest.
+— and pays for it with a handful of findings. Two rules ask for it:
+
+`"dataflow": "warn"` walks paths rather than syntax, and finds what that buys:
+a null dereference, a leak, a use of an uninitialized field, a dead store. It
+covers the analyzer's `core`, `unix`, `valist` and `deadcode` families — not
+`osx` or `cplusplus`, which describe another platform and another language, and
+not `unix.Stream`, which reads the ordinary `while((n = fread(...)) > 0)` loop
+as a read past the end of the file.
+
+`"security": "warn"` adds its security family, minus the check that demands the
+C11 Annex K functions (`snprintf_s` and friends) that glibc does not ship; that
+one fires on every call to the C library and buries the rest.
+
+Expect false positives from either: the analyzer does not inline variadic
+functions, so a codebase that writes `ok = set_error(...)` — this one does —
+gets told the failure branch continues.
 
 **`exclude`** — glob patterns matched against the path relative to the project
 root. A star crosses a slash, so `vendor/*` matches `vendor/a/b.c`; a trailing

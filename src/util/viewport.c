@@ -215,7 +215,7 @@ static bool frame_room(viewport *view, size_t rows, size_t columns) {
     const size_t per_row = sizeof ERASE_ROW + VIEWPORT_FIT_SIZE(columns) + 2;
     /* One row over, for the last live row drawn a second time on the way back
        up, and two movements with a carriage return apiece. */
-    const size_t needed = (rows + 1) * per_row + 2 * (MOVE_MAX + 1) + 1;
+    const size_t needed = (rows + 1) * per_row + (size_t)2 * (MOVE_MAX + 1) + 1;
     if(view->frame_size >= needed)
         return true;
     char *grown = realloc(view->frame, needed);
