@@ -70,6 +70,15 @@ typedef struct {
 [[nodiscard]] char *diagnostic_view_render(const diagnostic_list *list,
                                            const diagnostic_context *ctx, bool colour);
 
+/* The same drawing over a list covering several files: one block per file,
+   blank-line separated, each naming the file it is about. `ctx` supplies
+   everything but the unit, which every block reads off its own findings.
+   Entries carrying no file of their own — an "In file included from" step is
+   what that looks like — introduce the block below rather than closing the one
+   above. NULL when there was nothing worth drawing. */
+[[nodiscard]] char *diagnostic_view_render_by_file(const diagnostic_list *list,
+                                                   const diagnostic_context *ctx, bool colour);
+
 /* The same block, written to `out`. Nothing is written when there is nothing
    to draw. */
 void diagnostic_view_write(FILE *out, const diagnostic_list *list, const diagnostic_context *ctx,

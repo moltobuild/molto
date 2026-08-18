@@ -48,6 +48,20 @@ static char *render(const char *text, const diagnostic_context *ctx, bool colour
     return render_counted(text, ctx, diagnostic_columns_display, colour);
 }
 
+/* Parse `text` and draw it the way `molto lint` does: one block per file, over
+   findings about however many files a whole run produced. */
+static char *render_by_file(const char *text, const diagnostic_context *ctx) {
+    diagnostic_list list;
+    diagnostic_list_init(&list);
+    if(!diagnostic_parse(text, &list)) {
+        diagnostic_list_free(&list);
+        return NULL;
+    }
+    char *block = diagnostic_view_render_by_file(&list, ctx, false);
+    diagnostic_list_free(&list);
+    return block;
+}
+
 /* What gcc 12 says about a member that does not exist, caret lines and all. */
 #define GCC_MISSING_MEMBER(path)                                                                   \
     path ": In function ‘lookup’:\n" path                                                \
@@ -518,4 +532,116 @@ MOLTEST(one_report_can_hold_two_tools_that_counted_columns_differently) {
     free(block);
     diagnostic_list_free(&list);
     (void)remove(path);
+}
+
+/* --- one block per file --- */
+
+/* The chain of includes that reached a broken header is written before the
+   diagnostic it explains, on lines carrying no file of their own. It belongs
+   to the file below it: attached to the one above, it would name the wrong
+   source and never be drawn, since a chain is only shown when a frame opens. */
+MOLTEST(an_include_chain_opens_the_block_of_the_file_it_leads_to) {
+    const char *text = "src/main.c:4:9: warning: unused variable 'x' [-Wunused-variable]\n"
+                       "In file included from src/deep/uses.c:1:\n"
+                       "include/broken.h:2:11: error: expected ';' at end of declaration\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    /* Two files, two blocks, and neither of them nameless. */
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/main.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Errors in `include/broken.h`"));
+    EXPECT_NULL(strstr(block, "in ``"));
+
+    /* And the chain survives, under the frame it explains. */
+    const char *chain = strstr(block, "included from src/deep/uses.c:1");
+    ASSERT_NOT_NULL(chain);
+    EXPECT_TRUE(chain > strstr(block, "Errors in `include/broken.h`"));
+
+    free(block);
+}
+
+/* The same, when there is no block above for it to be swallowed by: a run
+   that opens without a file is named by the first finding that has one. */
+MOLTEST(a_run_that_opens_without_a_file_is_named_by_what_it_introduces) {
+    const char *text = "In file included from src/deep/uses.c:1:\n"
+                       "include/broken.h:2:11: error: expected ';' at end of declaration\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "Errors in `include/broken.h`"));
+    /* Neither nameless nor named after nothing: `this unit` is what the view
+       falls back to when the caller supplied no name and the findings carry
+       none either. */
+    EXPECT_NULL(strstr(block, "in ``"));
+    EXPECT_NULL(strstr(block, "this unit"));
+    EXPECT_NOT_NULL(strstr(block, "included from src/deep/uses.c:1"));
+
+    free(block);
+}
+
+/* One blank line between blocks, and none before the first: the separator
+   belongs between two drawings and nowhere else. */
+MOLTEST(blocks_are_separated_from_each_other_and_not_from_the_top) {
+    const char *text = "src/a.c:1:1: warning: first\n"
+                       "src/b.c:1:1: warning: second\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_TRUE(block[0] != '\n');
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/a.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/b.c`"));
+    EXPECT_NULL(strstr(block, "\n\n\n"));
+
+    free(block);
+}
+
+/* Findings about one file that arrive in two runs — the compiler pass, then
+   the linter pass — are two blocks about that file rather than one, because
+   what came between them was about another file. Each still names itself. */
+MOLTEST(a_file_named_again_after_another_opens_a_second_block) {
+    const char *text = "src/a.c:1:1: warning: from the compiler\n"
+                       "src/b.c:1:1: warning: from the compiler\n"
+                       "src/a.c:1:1: warning: from the linter [bugprone-branch-clone]\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    const char *first = strstr(block, "Findings in `src/a.c`");
+    ASSERT_NOT_NULL(first);
+    EXPECT_NOT_NULL(strstr(first + 1, "Findings in `src/a.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/b.c`"));
+
+    free(block);
+}
+
+/* A suggestion is written under the caret it belongs to, and a tool's aside
+   about the file it just processed comes after the findings in it. Both carry
+   no file of their own, and reading every such entry as a preamble would hand
+   the tail of one block to the next one. */
+MOLTEST(a_suggestion_stays_with_the_finding_it_follows) {
+    const char *text = "include/broken.h:2:11: error: expected ';' at end of declaration\n"
+                       "    2 |         int x = 1\n"
+                       "      |                  ^\n"
+                       "      |                  ;\n"
+                       "Error while processing src/deep/uses.c.\n"
+                       "src/main.c:4:9: warning: unused variable 'x' [-Wunused-variable]\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    const char *opens_the_next_block = strstr(block, "Findings in `src/main.c`");
+    ASSERT_NOT_NULL(opens_the_next_block);
+
+    const char *help = strstr(block, "= help: try `;`");
+    ASSERT_NOT_NULL(help);
+    EXPECT_TRUE(help < opens_the_next_block);
+
+    const char *aside = strstr(block, "Error while processing src/deep/uses.c.");
+    ASSERT_NOT_NULL(aside);
+    EXPECT_TRUE(aside < opens_the_next_block);
+
+    free(block);
 }

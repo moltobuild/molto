@@ -635,6 +635,80 @@ char *diagnostic_view_render(const diagnostic_list *list, const diagnostic_conte
     return text.data;
 }
 
+/* --- one block per file --- */
+
+/* The file a run of findings is about: the first entry that names one. What
+   comes before it carries no file of its own, which is what an "In file
+   included from" step looks like — and a compiler writes those before the
+   diagnostic they explain, never after. */
+static const char *file_of_run(const diagnostic_list *list, size_t start) {
+    for(size_t i = start; i < list->count; i++) {
+        if(list->items[i].file[0] != '\0')
+            return list->items[i].file;
+    }
+    return "";
+}
+
+/* Where that run ends: before the chain introducing the next file, and after
+   everything else.
+ *
+ * An entry carrying no file either introduces what comes below it or continues
+ * what came above, and only the include chain does the former — a caret, a
+ * suggestion and a tool's aside about the file it just processed all belong to
+ * the diagnostic they follow. Always past `start`, since the entry naming the
+ * file is itself part of the run. */
+static size_t end_of_run(const diagnostic_list *list, size_t start) {
+    const char *file = file_of_run(list, start);
+    for(size_t i = start; i < list->count; i++) {
+        const char *next = list->items[i].file;
+        if(next[0] == '\0' || strcmp(next, file) == 0)
+            continue;
+        size_t end = i;
+        char ignored[DIAGNOSTIC_PATH_MAX];
+        while(end > start + 1 && list->items[end - 1].file[0] == '\0' &&
+              included_from(&list->items[end - 1], ignored, sizeof ignored))
+            end--;
+        return end;
+    }
+    return list->count;
+}
+
+char *diagnostic_view_render_by_file(const diagnostic_list *list, const diagnostic_context *ctx,
+                                     bool colour) {
+    if(list == NULL || ctx == NULL || list->count == 0)
+        return NULL;
+
+    view_text text;
+    text_init(&text);
+    for(size_t start = 0; start < list->count;) {
+        const size_t end = end_of_run(list, start);
+        const diagnostic_list run = {.items = list->items + start, .count = end - start};
+        /* The slice borrows the list's own items rather than copying them: the
+           view only ever reads. */
+        const char *file = file_of_run(list, start);
+        diagnostic_context about = *ctx;
+        if(file[0] != '\0')
+            about.unit = ctx->root != NULL ? fs_relative_to(file, ctx->root) : file;
+
+        char *block = diagnostic_view_render(&run, &about, colour);
+        if(block != NULL) {
+            /* Separated only from a block that was actually drawn: a run the
+               view had nothing to say about must not leave a gap behind. */
+            if(text.used > 0)
+                text_add(&text, "\n");
+            text_add(&text, "%s", block);
+            free(block);
+        }
+        start = end;
+    }
+
+    if(text.failed || text.used == 0) {
+        text_free(&text);
+        return NULL;
+    }
+    return text.data;
+}
+
 void diagnostic_view_write(FILE *out, const diagnostic_list *list, const diagnostic_context *ctx,
                            bool colour) {
     char *block = diagnostic_view_render(list, ctx, colour);
