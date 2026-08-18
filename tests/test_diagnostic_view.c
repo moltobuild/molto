@@ -27,15 +27,37 @@ static bool write_source(char *path, size_t path_size, const char *content) {
     return fs_write_file(path, content);
 }
 
-/* Parse `text` and render it, with the excerpt taken from `path`. */
-static char *render(const char *text, const diagnostic_context *ctx, bool colour) {
+/* Parse `text` and render it, saying which model the tool that wrote it
+   counted its columns in. The parser cannot tell, so every caller does. */
+static char *render_counted(const char *text, const diagnostic_context *ctx,
+                            diagnostic_column_unit counted, bool colour) {
     diagnostic_list list;
     diagnostic_list_init(&list);
     if(!diagnostic_parse(text, &list)) {
         diagnostic_list_free(&list);
         return NULL;
     }
+    diagnostic_list_set_columns(&list, counted);
     char *block = diagnostic_view_render(&list, ctx, colour);
+    diagnostic_list_free(&list);
+    return block;
+}
+
+/* Parse `text` and render it, with the excerpt taken from `path`. */
+static char *render(const char *text, const diagnostic_context *ctx, bool colour) {
+    return render_counted(text, ctx, diagnostic_columns_display, colour);
+}
+
+/* Parse `text` and draw it the way `molto lint` does: one block per file, over
+   findings about however many files a whole run produced. */
+static char *render_by_file(const char *text, const diagnostic_context *ctx) {
+    diagnostic_list list;
+    diagnostic_list_init(&list);
+    if(!diagnostic_parse(text, &list)) {
+        diagnostic_list_free(&list);
+        return NULL;
+    }
+    char *block = diagnostic_view_render_by_file(&list, ctx, false);
     diagnostic_list_free(&list);
     return block;
 }
@@ -455,11 +477,10 @@ MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
     char from_clang[512];
     snprintf(from_clang, sizeof from_clang, "%s:1:10: error: undeclared identifier\n", path);
 
-    const diagnostic_context gcc_ctx = {.unit = "main.c", .columns = diagnostic_columns_display};
-    const diagnostic_context clang_ctx = {.unit = "main.c", .columns = diagnostic_columns_byte};
+    const diagnostic_context ctx = {.unit = "main.c"};
 
-    char *painted_by_gcc = render(from_gcc, &gcc_ctx, false);
-    char *painted_by_clang = render(from_clang, &clang_ctx, false);
+    char *painted_by_gcc = render_counted(from_gcc, &ctx, diagnostic_columns_display, false);
+    char *painted_by_clang = render_counted(from_clang, &ctx, diagnostic_columns_byte, false);
     ASSERT_NOT_NULL(painted_by_gcc);
     ASSERT_NOT_NULL(painted_by_clang);
 
@@ -473,4 +494,154 @@ MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
     free(painted_by_gcc);
     free(painted_by_clang);
     (void)remove(path);
+}
+
+/* One list, two tools, two ways of counting the same character. `molto lint`
+   runs a compiler pass and a clang-tidy pass over every file, and clang-tidy
+   counts bytes whichever compiler the project builds with — so the model
+   belongs to the diagnostic and not to the report that holds it. */
+MOLTEST(one_report_can_hold_two_tools_that_counted_columns_differently) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "\treturn nope;\n"));
+
+    char text[1024];
+    snprintf(text, sizeof text,
+             "%s:1:16: error: ‘nope’ undeclared\n"
+             "%s:1:9: error: use of undeclared identifier [clang-diagnostic-error]\n",
+             path, path);
+
+    diagnostic_list list;
+    diagnostic_list_init(&list);
+    ASSERT_TRUE(diagnostic_parse(text, &list));
+    ASSERT_EQ(2, diagnostic_list_count(&list));
+    list.items[0].columns = diagnostic_columns_display;
+    list.items[1].columns = diagnostic_columns_byte;
+
+    const diagnostic_context ctx = {.unit = "src/main.c", .action = diagnostic_view_checking};
+    char *block = diagnostic_view_render(&list, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    /* A tab is eight columns and "return " is seven more, so both carets sit
+       under the `n` of `nope`, at column 16. */
+    char caret[64];
+    snprintf(caret, sizeof caret, "   │%*s^ ", 16, "");
+    const char *first = strstr(block, caret);
+    ASSERT_NOT_NULL(first);
+    EXPECT_NOT_NULL(strstr(first + 1, caret));
+
+    free(block);
+    diagnostic_list_free(&list);
+    (void)remove(path);
+}
+
+/* --- one block per file --- */
+
+/* The chain of includes that reached a broken header is written before the
+   diagnostic it explains, on lines carrying no file of their own. It belongs
+   to the file below it: attached to the one above, it would name the wrong
+   source and never be drawn, since a chain is only shown when a frame opens. */
+MOLTEST(an_include_chain_opens_the_block_of_the_file_it_leads_to) {
+    const char *text = "src/main.c:4:9: warning: unused variable 'x' [-Wunused-variable]\n"
+                       "In file included from src/deep/uses.c:1:\n"
+                       "include/broken.h:2:11: error: expected ';' at end of declaration\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    /* Two files, two blocks, and neither of them nameless. */
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/main.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Errors in `include/broken.h`"));
+    EXPECT_NULL(strstr(block, "in ``"));
+
+    /* And the chain survives, under the frame it explains. */
+    const char *chain = strstr(block, "included from src/deep/uses.c:1");
+    ASSERT_NOT_NULL(chain);
+    EXPECT_TRUE(chain > strstr(block, "Errors in `include/broken.h`"));
+
+    free(block);
+}
+
+/* The same, when there is no block above for it to be swallowed by: a run
+   that opens without a file is named by the first finding that has one. */
+MOLTEST(a_run_that_opens_without_a_file_is_named_by_what_it_introduces) {
+    const char *text = "In file included from src/deep/uses.c:1:\n"
+                       "include/broken.h:2:11: error: expected ';' at end of declaration\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "Errors in `include/broken.h`"));
+    /* Neither nameless nor named after nothing: `this unit` is what the view
+       falls back to when the caller supplied no name and the findings carry
+       none either. */
+    EXPECT_NULL(strstr(block, "in ``"));
+    EXPECT_NULL(strstr(block, "this unit"));
+    EXPECT_NOT_NULL(strstr(block, "included from src/deep/uses.c:1"));
+
+    free(block);
+}
+
+/* One blank line between blocks, and none before the first: the separator
+   belongs between two drawings and nowhere else. */
+MOLTEST(blocks_are_separated_from_each_other_and_not_from_the_top) {
+    const char *text = "src/a.c:1:1: warning: first\n"
+                       "src/b.c:1:1: warning: second\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_TRUE(block[0] != '\n');
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/a.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/b.c`"));
+    EXPECT_NULL(strstr(block, "\n\n\n"));
+
+    free(block);
+}
+
+/* Findings about one file that arrive in two runs — the compiler pass, then
+   the linter pass — are two blocks about that file rather than one, because
+   what came between them was about another file. Each still names itself. */
+MOLTEST(a_file_named_again_after_another_opens_a_second_block) {
+    const char *text = "src/a.c:1:1: warning: from the compiler\n"
+                       "src/b.c:1:1: warning: from the compiler\n"
+                       "src/a.c:1:1: warning: from the linter [bugprone-branch-clone]\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    const char *first = strstr(block, "Findings in `src/a.c`");
+    ASSERT_NOT_NULL(first);
+    EXPECT_NOT_NULL(strstr(first + 1, "Findings in `src/a.c`"));
+    EXPECT_NOT_NULL(strstr(block, "Findings in `src/b.c`"));
+
+    free(block);
+}
+
+/* A suggestion is written under the caret it belongs to, and a tool's aside
+   about the file it just processed comes after the findings in it. Both carry
+   no file of their own, and reading every such entry as a preamble would hand
+   the tail of one block to the next one. */
+MOLTEST(a_suggestion_stays_with_the_finding_it_follows) {
+    const char *text = "include/broken.h:2:11: error: expected ';' at end of declaration\n"
+                       "    2 |         int x = 1\n"
+                       "      |                  ^\n"
+                       "      |                  ;\n"
+                       "Error while processing src/deep/uses.c.\n"
+                       "src/main.c:4:9: warning: unused variable 'x' [-Wunused-variable]\n";
+    const diagnostic_context ctx = {.action = diagnostic_view_checking};
+    char *block = render_by_file(text, &ctx);
+    ASSERT_NOT_NULL(block);
+
+    const char *opens_the_next_block = strstr(block, "Findings in `src/main.c`");
+    ASSERT_NOT_NULL(opens_the_next_block);
+
+    const char *help = strstr(block, "= help: try `;`");
+    ASSERT_NOT_NULL(help);
+    EXPECT_TRUE(help < opens_the_next_block);
+
+    const char *aside = strstr(block, "Error while processing src/deep/uses.c.");
+    ASSERT_NOT_NULL(aside);
+    EXPECT_TRUE(aside < opens_the_next_block);
+
+    free(block);
 }

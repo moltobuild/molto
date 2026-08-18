@@ -83,6 +83,10 @@ typedef struct {
     const char *tool;   /* what to blame when the run itself fails */
     const str_list *argv;
     const project_env *env;
+    /* How this pass counts the columns it reports, which the parser cannot
+       tell and the caret needs: the compiler answers for its own vendor, and
+       clang-tidy counts bytes whichever compiler the project builds with. */
+    diagnostic_column_unit columns;
     int status;
     bool truncated;
     diagnostic_list found;
@@ -392,6 +396,7 @@ static void lint_task_run(void *argument) {
     task->status =
         process_capture_all(argv, vars, var_count, output, LINT_OUTPUT_SIZE, &task->truncated);
     (void)diagnostic_parse(output, &task->found);
+    diagnostic_list_set_columns(&task->found, task->columns);
 
     free(output);
     free((void *)argv);
@@ -540,6 +545,7 @@ static bool build_tasks(const char *root, const lint_setup *setup, build_profile
             .tool = setup->chain.cc,
             .argv = &argvs[compiler_at],
             .env = &setup->ctx.env,
+            .columns = diagnostic_columns_of_vendor(setup->chain.vendor),
         };
         diagnostic_list_init(&tasks[compiler_at].found);
         if(setup->has_linter) {
@@ -548,6 +554,7 @@ static bool build_tasks(const char *root, const lint_setup *setup, build_profile
                 .tool = setup->linter.path,
                 .argv = &argvs[linter_at],
                 .env = &setup->ctx.env,
+                .columns = diagnostic_columns_byte,
             };
             diagnostic_list_init(&tasks[linter_at].found);
         }

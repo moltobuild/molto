@@ -77,6 +77,22 @@ const char *diagnostic_severity_name(diagnostic_severity severity) {
     }
 }
 
+/* Only clang counts bytes. gcc counts display columns, and so does anything
+   that answers for no vendor at all — a compiler named in C_COMPILER was never
+   asked what it was, and guessing the rarer model would misplace every caret
+   on a line holding a tab. */
+#define VENDOR_CLANG "clang"
+
+diagnostic_column_unit diagnostic_columns_of_vendor(const char *vendor) {
+    return vendor != NULL && strstr(vendor, VENDOR_CLANG) != NULL ? diagnostic_columns_byte
+                                                                  : diagnostic_columns_display;
+}
+
+void diagnostic_list_set_columns(diagnostic_list *list, diagnostic_column_unit unit) {
+    for(size_t i = 0; i < list->count; i++)
+        list->items[i].columns = unit;
+}
+
 /* What a tool calls each severity. "fatal error" is two words, which is why
    this is a table over the text between two colons and not a word compare. */
 static const struct {
@@ -435,8 +451,11 @@ void diagnostic_write_json(FILE *stream, const diagnostic_list *list, const char
 
 /* --- storage form (RFC-0006) --- */
 
-/* Fields per record, in the order to_values writes them. */
-#define FIELD_COUNT 7
+/* Fields per record, in the order to_values writes them. A record written by
+   an older Molto has seven and is rejected rather than read: from_values only
+   accepts a whole number of records, and the fields that would have to be
+   numbers are text. Rejecting it costs that file one analysis. */
+#define FIELD_COUNT 8
 
 /* The widest a long prints as, plus sign and terminator. */
 #define NUMBER_TEXT_MAX 24
@@ -464,7 +483,7 @@ bool diagnostic_list_to_values(const diagnostic_list *list, str_list *out) {
         if(!str_list_push(out, item->file) || !push_number(out, item->line) ||
            !push_number(out, item->column) || !push_number(out, (long)item->severity) ||
            !str_list_push(out, item->rule) || !str_list_push(out, item->rule_native) ||
-           !str_list_push(out, item->message))
+           !str_list_push(out, item->message) || !push_number(out, (long)item->columns))
             return false;
     }
     return true;
@@ -476,6 +495,12 @@ bool diagnostic_list_to_values(const diagnostic_list *list, str_list *out) {
 static bool severity_is_known(long value) {
     return value == diagnostic_severity_note || value == diagnostic_severity_warning ||
            value == diagnostic_severity_error || value == diagnostic_severity_unknown;
+}
+
+/* Likewise for the column model: replaying the wrong one draws the caret
+   somewhere the tool was not pointing. */
+static bool column_unit_is_known(long value) {
+    return value == diagnostic_columns_display || value == diagnostic_columns_byte;
 }
 
 bool diagnostic_list_from_values(const str_list *values, diagnostic_list *out) {
@@ -490,15 +515,18 @@ bool diagnostic_list_from_values(const str_list *values, diagnostic_list *out) {
         long line = 0;
         long column = 0;
         long severity = 0;
+        long columns = 0;
         if(!read_stored_number(str_list_get(values, at + 1), &line) ||
            !read_stored_number(str_list_get(values, at + 2), &column) ||
            !read_stored_number(str_list_get(values, at + 3), &severity) ||
-           !severity_is_known(severity))
+           !read_stored_number(str_list_get(values, at + 7), &columns) ||
+           !severity_is_known(severity) || !column_unit_is_known(columns))
             return false;
 
         item.line = line;
         item.column = column;
         item.severity = (diagnostic_severity)severity;
+        item.columns = (diagnostic_column_unit)columns;
         const char *file = str_list_get(values, at);
         const char *rule = str_list_get(values, at + 4);
         const char *native = str_list_get(values, at + 5);

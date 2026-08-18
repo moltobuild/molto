@@ -3,7 +3,6 @@
 #include <molto/build/diagnostic_view.h>
 #include <molto/build/profile.h>
 #include <molto/exit_code.h>
-#include <molto/services/fs_service.h>
 #include <molto/services/lint_service.h>
 #include <molto/util/progress.h>
 #include <molto/workspace/workspace.h>
@@ -51,40 +50,19 @@ static bool parse_format(const char *format, lint_format *out) {
     return false;
 }
 
-/* Where a run of findings about one file ends.
- *
- * A frame is about a file: it names the source at the top and quotes lines out
- * of it below. Findings arrive in source order, so a run of consecutive entries
- * is one file's worth — and the ones carrying no file of their own, which is
- * what an unparsed line looks like, belong to whichever file came before. */
-static size_t run_of_one_file(const diagnostic_list *found, size_t start) {
-    const char *file = found->items[start].file;
-    size_t end = start + 1;
-    while(end < found->count) {
-        const char *next = found->items[end].file;
-        if(next[0] != '\0' && strcmp(next, file) != 0)
-            break;
-        end++;
-    }
-    return end;
-}
-
-/* Every finding, framed, one block per file. The slices borrow the list's own
-   items rather than copying them: the view only reads. */
+/* Every finding, framed, one block per file. Which findings belong to which
+   file is the view's own reading of them, since it is the view that knows what
+   an entry carrying no file of its own is doing there. */
 static void write_rich(FILE *out, const diagnostic_list *found, const char *root, bool colour) {
-    for(size_t start = 0; start < found->count;) {
-        const size_t end = run_of_one_file(found, start);
-        const diagnostic_list slice = {.items = found->items + start, .count = end - start};
-        const diagnostic_context ctx = {
-            .unit = fs_relative_to(found->items[start].file, root),
-            .action = diagnostic_view_checking,
-            .root = root,
-        };
-        if(start > 0)
-            (void)fputc('\n', out);
-        diagnostic_view_write(out, &slice, &ctx, colour);
-        start = end;
-    }
+    const diagnostic_context ctx = {
+        .action = diagnostic_view_checking,
+        .root = root,
+    };
+    char *block = diagnostic_view_render_by_file(found, &ctx, colour);
+    if(block == NULL)
+        return;
+    (void)fputs(block, out);
+    free(block);
 }
 
 int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool refresh_tools,
