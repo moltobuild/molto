@@ -27,17 +27,25 @@ static bool write_source(char *path, size_t path_size, const char *content) {
     return fs_write_file(path, content);
 }
 
-/* Parse `text` and render it, with the excerpt taken from `path`. */
-static char *render(const char *text, const diagnostic_context *ctx, bool colour) {
+/* Parse `text` and render it, saying which model the tool that wrote it
+   counted its columns in. The parser cannot tell, so every caller does. */
+static char *render_counted(const char *text, const diagnostic_context *ctx,
+                            diagnostic_column_unit counted, bool colour) {
     diagnostic_list list;
     diagnostic_list_init(&list);
     if(!diagnostic_parse(text, &list)) {
         diagnostic_list_free(&list);
         return NULL;
     }
+    diagnostic_list_set_columns(&list, counted);
     char *block = diagnostic_view_render(&list, ctx, colour);
     diagnostic_list_free(&list);
     return block;
+}
+
+/* Parse `text` and render it, with the excerpt taken from `path`. */
+static char *render(const char *text, const diagnostic_context *ctx, bool colour) {
+    return render_counted(text, ctx, diagnostic_columns_display, colour);
 }
 
 /* What gcc 12 says about a member that does not exist, caret lines and all. */
@@ -455,11 +463,10 @@ MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
     char from_clang[512];
     snprintf(from_clang, sizeof from_clang, "%s:1:10: error: undeclared identifier\n", path);
 
-    const diagnostic_context gcc_ctx = {.unit = "main.c", .columns = diagnostic_columns_display};
-    const diagnostic_context clang_ctx = {.unit = "main.c", .columns = diagnostic_columns_byte};
+    const diagnostic_context ctx = {.unit = "main.c"};
 
-    char *painted_by_gcc = render(from_gcc, &gcc_ctx, false);
-    char *painted_by_clang = render(from_clang, &clang_ctx, false);
+    char *painted_by_gcc = render_counted(from_gcc, &ctx, diagnostic_columns_display, false);
+    char *painted_by_clang = render_counted(from_clang, &ctx, diagnostic_columns_byte, false);
     ASSERT_NOT_NULL(painted_by_gcc);
     ASSERT_NOT_NULL(painted_by_clang);
 
@@ -472,5 +479,43 @@ MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
 
     free(painted_by_gcc);
     free(painted_by_clang);
+    (void)remove(path);
+}
+
+/* One list, two tools, two ways of counting the same character. `molto lint`
+   runs a compiler pass and a clang-tidy pass over every file, and clang-tidy
+   counts bytes whichever compiler the project builds with — so the model
+   belongs to the diagnostic and not to the report that holds it. */
+MOLTEST(one_report_can_hold_two_tools_that_counted_columns_differently) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "\treturn nope;\n"));
+
+    char text[1024];
+    snprintf(text, sizeof text,
+             "%s:1:16: error: ‘nope’ undeclared\n"
+             "%s:1:9: error: use of undeclared identifier [clang-diagnostic-error]\n",
+             path, path);
+
+    diagnostic_list list;
+    diagnostic_list_init(&list);
+    ASSERT_TRUE(diagnostic_parse(text, &list));
+    ASSERT_EQ(2, diagnostic_list_count(&list));
+    list.items[0].columns = diagnostic_columns_display;
+    list.items[1].columns = diagnostic_columns_byte;
+
+    const diagnostic_context ctx = {.unit = "src/main.c", .action = diagnostic_view_checking};
+    char *block = diagnostic_view_render(&list, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    /* A tab is eight columns and "return " is seven more, so both carets sit
+       under the `n` of `nope`, at column 16. */
+    char caret[64];
+    snprintf(caret, sizeof caret, "   │%*s^ ", 16, "");
+    const char *first = strstr(block, caret);
+    ASSERT_NOT_NULL(first);
+    EXPECT_NOT_NULL(strstr(first + 1, caret));
+
+    free(block);
+    diagnostic_list_free(&list);
     (void)remove(path);
 }

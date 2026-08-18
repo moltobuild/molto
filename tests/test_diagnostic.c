@@ -279,6 +279,9 @@ MOLTEST(diagnostics_survive_a_round_trip_through_the_store) {
                                  "      | int    x = 1;\t/* a tab and  spaces */\n",
                                  &original));
     ASSERT_EQ(3, diagnostic_list_count(&original));
+    /* The model the tool counted its columns in is part of what was recorded:
+       replaying the other one would draw the caret somewhere else. */
+    diagnostic_list_set_columns(&original, diagnostic_columns_byte);
 
     str_list values;
     str_list_init(&values);
@@ -301,6 +304,7 @@ MOLTEST(diagnostics_survive_a_round_trip_through_the_store) {
         EXPECT_STREQ(was->message, is->message);
         EXPECT_STREQ(was->rule, is->rule);
         EXPECT_STREQ(was->rule_native, is->rule_native);
+        EXPECT_EQ((int)was->columns, (int)is->columns);
     }
 
     /* Severity decides the exit code, and `unknown` must not come back as the
@@ -348,7 +352,7 @@ MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
        severity is what decides whether the command fails. */
     str_list bad_severity;
     str_list_init(&bad_severity);
-    const char *fields[] = {"src/a.c", "12", "5", "99", "rule", "rule", "message"};
+    const char *fields[] = {"src/a.c", "12", "5", "99", "rule", "rule", "message", "0"};
     for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++)
         ASSERT_TRUE(str_list_push(&bad_severity, fields[i]));
     EXPECT_FALSE(diagnostic_list_from_values(&bad_severity, &out));
@@ -356,14 +360,42 @@ MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
     /* A number that is not one. */
     str_list bad_line;
     str_list_init(&bad_line);
-    const char *junk[] = {"src/a.c", "12x", "5", "1", "rule", "rule", "message"};
+    const char *junk[] = {"src/a.c", "12x", "5", "1", "rule", "rule", "message", "0"};
     for (size_t i = 0; i < sizeof junk / sizeof junk[0]; i++)
         ASSERT_TRUE(str_list_push(&bad_line, junk[i]));
     EXPECT_FALSE(diagnostic_list_from_values(&bad_line, &out));
 
+    /* A column model outside the enum, which decides where the caret lands. */
+    str_list bad_columns;
+    str_list_init(&bad_columns);
+    const char *counted[] = {"src/a.c", "12", "5", "1", "rule", "rule", "message", "7"};
+    for (size_t i = 0; i < sizeof counted / sizeof counted[0]; i++)
+        ASSERT_TRUE(str_list_push(&bad_columns, counted[i]));
+    EXPECT_FALSE(diagnostic_list_from_values(&bad_columns, &out));
+
     str_list_free(&truncated);
     str_list_free(&bad_severity);
     str_list_free(&bad_line);
+    str_list_free(&bad_columns);
+    diagnostic_list_free(&out);
+}
+
+/* An entry recorded before the column model was stored has one field too few.
+   Reading it as if it were the current shape would take the next diagnostic's
+   file for a number, so it is refused and that file analysed again — which is
+   what every unreadable entry costs, and it costs it once. */
+MOLTEST(a_record_from_an_older_molto_is_refused_rather_than_misread) {
+    str_list older;
+    str_list_init(&older);
+    const char *fields[] = {"src/a.c", "12", "5", "1", "rule", "rule", "message"};
+    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++)
+        ASSERT_TRUE(str_list_push(&older, fields[i]));
+
+    diagnostic_list out;
+    diagnostic_list_init(&out);
+    EXPECT_FALSE(diagnostic_list_from_values(&older, &out));
+
+    str_list_free(&older);
     diagnostic_list_free(&out);
 }
 

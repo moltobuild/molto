@@ -573,15 +573,6 @@ static void describe_compiler(const resolved_toolchain *chain, bool is_cpp, char
     snprintf(out, out_size, "%s", base != NULL ? base + 1 : driver);
 }
 
-/* Which model the compiler counted its columns in. clang counts bytes;
-   everything else, gcc included, counts what a terminal counts — and a
-   compiler chosen by hand, which answers for no vendor at all, is taken to be
-   the more common of the two. */
-static diagnostic_column_unit columns_of(const resolved_toolchain *chain) {
-    return strstr(chain->vendor, "clang") != NULL ? diagnostic_columns_byte
-                                                  : diagnostic_columns_display;
-}
-
 /* --- what the compiler said --- */
 
 /* A diagnostic Molto wrote itself, for what a tool left unsaid. */
@@ -623,6 +614,8 @@ static void report_diagnostics(const compile_task *task, const char *output, boo
         diagnostic_list_free(&found);
         return;
     }
+    /* Said once for the whole unit: one compiler produced all of it. */
+    diagnostic_list_set_columns(&found, diagnostic_columns_of_vendor(env->chain->vendor));
     if(truncated)
         push_own(&found, unit->source, diagnostic_severity_note,
                  "there was more of this than Molto kept");
@@ -636,7 +629,6 @@ static void report_diagnostics(const compile_task *task, const char *output, boo
     describe_compiler(env->chain, source_is_cpp(unit->source), compiler, sizeof compiler);
     const diagnostic_context ctx = {
         .unit = display_source(naming_root(unit, env->root), unit->source),
-        .columns = columns_of(env->chain),
         .package = unit->label != NULL ? unit->label->name : NULL,
         .version = unit->label != NULL ? unit->label->version : NULL,
         .source = shown_source(unit->label, env->root),
@@ -964,6 +956,7 @@ static void report_link_diagnostics(const link_env *where, const char *output, b
         diagnostic_list_free(&found);
         return;
     }
+    diagnostic_list_set_columns(&found, diagnostic_columns_of_vendor(where->chain->vendor));
     if(truncated)
         push_own(&found, where->binary, diagnostic_severity_note,
                  "there was more of this than Molto kept");

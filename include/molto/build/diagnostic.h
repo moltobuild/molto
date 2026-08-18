@@ -39,10 +39,34 @@ typedef enum {
     diagnostic_severity_unknown,
 } diagnostic_severity;
 
+/* How the tool counted the column it reported.
+ *
+ * gcc counts what a terminal counts: a tab advances to the next stop of eight,
+ * and a character outside ASCII is one column however many bytes it took.
+ * clang counts bytes, and so does clang-tidy whichever compiler the project
+ * builds with. Both are defensible, they disagree on any line holding a tab or
+ * anything outside ASCII, and a caret placed under the wrong model lands
+ * somewhere the tool was not pointing.
+ *
+ * It belongs to the diagnostic rather than to the report that holds it, because
+ * one report can hold both: `molto lint` runs a compiler pass and a clang-tidy
+ * pass over the same file, and with gcc as the compiler the two count
+ * differently about the same line.
+ *
+ * The default is gcc's, which is also the one to assume for a compiler chosen
+ * by hand, which answers for no vendor at all. */
+typedef enum {
+    diagnostic_columns_display, /* gcc */
+    diagnostic_columns_byte,    /* clang, and clang-tidy always */
+} diagnostic_column_unit;
+
 typedef struct {
     char file[DIAGNOSTIC_PATH_MAX]; /* "" when the line carried no location */
     long line;                      /* 0 when absent */
     long column;                    /* 0 when absent */
+    /* Which model counted `column`. The parser cannot tell — the number reads
+       the same either way — so whoever ran the tool says so afterwards. */
+    diagnostic_column_unit columns;
     diagnostic_severity severity;
     char message[DIAGNOSTIC_TEXT_MAX];
     /* The rule twice: canonical for reading, native for acting on. Someone who
@@ -66,6 +90,14 @@ void diagnostic_list_init(diagnostic_list *list);
 /* Append every item of `other`, in order. */
 [[nodiscard]] bool diagnostic_list_append(diagnostic_list *list, const diagnostic_list *other);
 void diagnostic_list_free(diagnostic_list *list);
+
+/* Which model a compiler counts its columns in, from the vendor pickup
+   reported. Everything that is not clang counts what a terminal counts. */
+[[nodiscard]] diagnostic_column_unit diagnostic_columns_of_vendor(const char *vendor);
+
+/* Say that every diagnostic in `list` came from a tool counting `unit`. Called
+   by whoever ran that tool, since the parser has no way of knowing. */
+void diagnostic_list_set_columns(diagnostic_list *list, diagnostic_column_unit unit);
 
 /* Parse one line. Always succeeds: see diagnostic_severity_unknown. */
 void diagnostic_parse_line(const char *line, diagnostic *out);

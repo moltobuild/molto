@@ -405,18 +405,17 @@ static bool write_excerpt(view_state *view, const diagnostic *item, char *line, 
 /* Where the caret goes: the column the tool named, in the columns a terminal
    counts. A tool that already counted those needs no conversion; one that
    counted bytes needs the line walked to find out what they came to. */
-static size_t caret_column(const view_state *view, const diagnostic *item, const char *line) {
+static size_t caret_column(const diagnostic *item, const char *line) {
     if(item->column <= 0)
         return 0;
     const size_t named = (size_t)item->column - 1;
-    return view->ctx->columns == diagnostic_columns_byte
-               ? text_column_of_byte(line, named, TAB_WIDTH)
-               : named;
+    return item->columns == diagnostic_columns_byte ? text_column_of_byte(line, named, TAB_WIDTH)
+                                                    : named;
 }
 
 /* The caret, under the character the compiler named, carrying what it said. */
 static void write_caret(view_state *view, const diagnostic *item, const char *line) {
-    const size_t at = caret_column(view, item, line);
+    const size_t at = caret_column(item, line);
     char message[DIAGNOSTIC_TEXT_MAX];
     strip_csi(item->message, message, sizeof message);
     text_add(view->text, "%s%*s %s%s %*s%s^%s %s\n", view->style->dim, (int)view->gutter, "",
