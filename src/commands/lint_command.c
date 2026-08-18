@@ -122,6 +122,7 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
         .refresh_tools = refresh_tools,
         .refresh_analysis = refresh_analysis,
         .jobs = jobs,
+        .progress = !as_json,
     };
 
     diagnostic_list found;
