@@ -98,6 +98,13 @@ A `rich` block covers one file, names it at the top, and draws up to ten
 findings in a frame before the rest fall back to the `text` line. The frame is
 described in [Project.md](Project.md#what-a-build-says-when-something-is-wrong).
 
+Which file a block is about is read off the findings themselves, and a compiler
+says more than one thing about that. A diagnostic inside a header belongs to the
+header, so that is the file the block names — and the `In file included from`
+chain that reached it, written on lines naming no file at all, opens that block
+rather than closing the one before it, because it is what says which source of
+yours pulled the header in.
+
 While the analysis runs, a terminal gets one row saying so — a braille spinner
 and the word `analyzing` — drawn where the first diagnostic is about to go and
 taken away before it arrives. It says nothing about how far along the work is,
