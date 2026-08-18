@@ -216,6 +216,14 @@ static const struct {
        Annex K functions — memcpy_s, snprintf_s — which are optional in the
        standard and absent from glibc, so it fires on every call to the C
        library and buries the rest of the family. */
+    /* The analyzer's own families, minus the ones that say nothing about C on
+       this platform: osx, cplusplus, webkit and fuchsia. `unix.Stream` is left
+       out too — it reads `while((n = fread(...)) > 0)` as a read past the end
+       of the file, which is the idiom every loop in this repository uses.
+       Slow: this is the pass that walks paths rather than syntax, and it is
+       opt-in for that reason. */
+    {"dataflow", "clang-analyzer-core.*,clang-analyzer-unix.*,-clang-analyzer-unix.Stream,"
+                 "clang-analyzer-valist.*,clang-analyzer-deadcode.*"},
     {"security", "clang-analyzer-security.*,"
                  "-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling"},
     {"naming_snake_case", "readability-identifier-naming"},
@@ -263,6 +271,28 @@ static bool check_list_has(const char *list, const char *item) {
     return false;
 }
 
+/* Turn a whole rule off, one check at a time.
+ *
+ * A rule can name several checks, and one of them can already be subtracted —
+ * a family with its noisiest member taken out. Emitting a minus in front of
+ * the list as a whole would negate only its first element and leave the rest
+ * enabled; emitting one per element would turn the already-subtracted check
+ * back on, which is the opposite of what `off` asks for. So the positives are
+ * negated and the negatives are dropped: off either way. */
+static bool append_negated(char *out, size_t out_size, size_t *used, const char *checks) {
+    for(const char *at = checks; *at != '\0';) {
+        const char *comma = strchr(at, ',');
+        const size_t length = comma != NULL ? (size_t)(comma - at) : strlen(at);
+        if(length > 0 && at[0] != '-' &&
+           !append(out, out_size, used, "%s-%.*s", *used > 0 ? "," : "", (int)length, at))
+            return false;
+        if(comma == NULL)
+            break;
+        at = comma + 1;
+    }
+    return true;
+}
+
 /* Build the two comma-separated lists clang-tidy takes: everything that is on,
    and the subset that is fatal. An `off` rule is listed with a minus, which is
    how clang-tidy subtracts it from what the preset enabled.
@@ -301,9 +331,11 @@ static bool compose_check_lists(const lint_config *config, char *checks, size_t 
            carries meaning even when the plain check is already listed. */
         const bool subtract = rule->severity == lint_severity_off;
         bool ok = true;
-        if(subtract || !check_list_has(checks, native))
-            ok = append(checks, checks_size, &checks_used, "%s%s%s", checks_used > 0 ? "," : "",
-                        subtract ? "-" : "", native);
+        if(subtract)
+            ok = append_negated(checks, checks_size, &checks_used, native);
+        else if(!check_list_has(checks, native))
+            ok = append(checks, checks_size, &checks_used, "%s%s", checks_used > 0 ? "," : "",
+                        native);
         if(ok && rule->severity == lint_severity_error && !check_list_has(fatal, native))
             ok = append(fatal, fatal_size, &fatal_used, "%s%s", fatal_used > 0 ? "," : "", native);
         if(!ok) {
