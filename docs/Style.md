@@ -98,6 +98,13 @@ A `rich` block covers one file, names it at the top, and draws up to ten
 findings in a frame before the rest fall back to the `text` line. The frame is
 described in [Project.md](Project.md#what-a-build-says-when-something-is-wrong).
 
+While the analysis runs, a terminal gets one row saying so — a braille spinner
+and the word `analyzing` — drawn where the first diagnostic is about to go and
+taken away before it arrives. It says nothing about how far along the work is,
+because there is no honest figure to say: a run that replays most of its files
+from the cache would be counting a denominator nobody waits for. A pipe, a file
+and `--format json` get no row and no escape sequence, exactly as before.
+
 Two passes over every source under `src/`:
 
 1. **The compiler** declared in `[target]`, in a syntax-only pass. No object
