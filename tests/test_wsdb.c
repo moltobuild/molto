@@ -462,3 +462,35 @@ MOLTEST(wsdb_carries_per_object_prerequisites_across_a_reopen) {
     wsdb_close(reopened);
     fixture_teardown(&fixture);
 }
+
+/* A prerequisite that cannot be read must not hash to something stable.
+ *
+ * A directory is the fixture: it opens like a file and fails on the first
+ * read, the same shape as a permission that changed or a device that gave up.
+ * Hashing whatever arrived before the failure would answer for a file nobody
+ * read — and answer it identically next time, which is a stale object called
+ * fresh for as long as the failure lasts. */
+MOLTEST(wsdb_rebuilds_when_a_prerequisite_cannot_be_read) {
+    workspace_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture));
+
+    char directory[300];
+    snprintf(directory, sizeof directory, "%s/src", fixture.root);
+
+    str_list prereqs;
+    str_list_init(&prereqs);
+    ASSERT_TRUE(str_list_push(&prereqs, fixture.main_c));
+    ASSERT_TRUE(str_list_push(&prereqs, directory));
+
+    wsdb *db = wsdb_open(fixture.root);
+    ASSERT_NOT_NULL(db);
+    wsdb_record_object(db, fixture.object, "cmd-v1", &prereqs);
+
+    /* Rebuilt rather than trusted: an incomplete baseline costs a compilation,
+       and a wrong one costs a build that ships what the source no longer says. */
+    EXPECT_FALSE(wsdb_object_fresh(db, fixture.object, "cmd-v1"));
+
+    wsdb_close(db);
+    str_list_free(&prereqs);
+    fixture_teardown(&fixture);
+}
