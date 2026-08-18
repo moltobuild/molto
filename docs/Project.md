@@ -539,6 +539,26 @@ chose one by hand and nothing asked it what it was.
    = compiler: gcc 12.3.0
 ```
 
+**A compiler that knows what should have been written there says so**, on a
+`= help:` line under the frame:
+
+```
+   ┌─ src/main.c:11:29
+   │
+11 │     printf("Vector {%d}\n", vec.size);
+   │                             ^ format specifies type 'int' but the argument
+   │                               has type 'size_t'
+   │
+   = help: try `%zu`
+   = compiler: clang 20.1.2
+```
+
+The suggestion is the compiler's, unchanged — it arrives as bare text placed
+under the column it applies to, and all Molto does is say what it is, because a
+`%zu` floating in whitespace is not something a reader can be expected to
+recognise as an edit. Where the compiler proposes several edits to one line,
+each gets its own `help` line.
+
 `error: build failed` closes a build that failed — once, however many units
 broke — and nothing closes one that merely warned. A failure before any
 compiler ran, like a manifest that would not parse, says only its own message:
