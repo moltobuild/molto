@@ -349,6 +349,100 @@ MOLTEST(a_link_is_reported_as_a_link) {
     diagnostic_list_free(&found);
 }
 
+/* A compiler that knows what should have been written there says so under the
+   caret, as bare text at the column it belongs to. Nothing on that line says
+   it is a suggestion, and a reader who has not seen one before cannot tell
+   `%zu` from noise. */
+MOLTEST(a_fix_it_is_stated_as_a_suggestion) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "    printf(\"Vector {%d}\\n\", vec.size);\n"));
+    char text[1024];
+    snprintf(text, sizeof text,
+             "%s:1:22: warning: format specifies type 'int' but the argument has type "
+             "'size_t' [-Wformat]\n"
+             "    1 |     printf(\"Vector {%%d}\\n\", vec.size);\n"
+             "      |                     ~~      ^~~~~~~~\n"
+             "      |                     %%zu\n",
+             path);
+
+    const diagnostic_context ctx = {.unit = "src/main.c", .compiler = "clang 22.1.8"};
+    char *block = render(text, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "= help: try `%zu`\n"));
+    /* And it is no longer printed as the fragment the compiler drew. */
+    EXPECT_NULL(strstr(block, "|                     %zu"));
+    /* The suggestion belongs to the finding, so it comes before the footer. */
+    EXPECT_TRUE(strstr(block, "= help:") < strstr(block, "= compiler:"));
+
+    free(block);
+    (void)remove(path);
+}
+
+/* gcc draws the same thing in the same place, gutter and all. */
+MOLTEST(a_fix_it_is_read_out_of_gccs_gutter_too) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "    strcpy(dst, src);\n"));
+    char text[1024];
+    snprintf(text, sizeof text,
+             "%s:1:5: warning: ‘strcpy’ writes past the end of ‘dst’ [-Wstringop-overflow=]\n"
+             "    1 |     strcpy(dst, src);\n"
+             "      |     ^~~~~~\n"
+             "      |     strncpy\n",
+             path);
+
+    const diagnostic_context ctx = {.unit = "src/copy.c", .compiler = "gcc 12.3.0"};
+    char *block = render(text, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "= help: try `strncpy`\n"));
+
+    free(block);
+    (void)remove(path);
+}
+
+/* Two edits to one line arrive on one line, each under the column it applies
+   to. They are two suggestions and they are said as two, because "( )" with
+   eight spaces in it is not something anyone can type. */
+MOLTEST(several_edits_on_one_line_are_said_one_by_one) {
+    char path[64];
+    ASSERT_TRUE(write_source(path, sizeof path, "    if (a = b) {\n"));
+    char text[1024];
+    snprintf(text, sizeof text,
+             "%s:1:11: warning: using the result of an assignment as a condition "
+             "[-Wparentheses]\n"
+             "    1 |     if (a = b) {\n"
+             "      |         ~~^~~\n"
+             "      |         (     )\n",
+             path);
+
+    const diagnostic_context ctx = {.unit = "src/main.c"};
+    char *block = render(text, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NOT_NULL(strstr(block, "= help: try `(`\n"));
+    EXPECT_NOT_NULL(strstr(block, "= help: try `)`\n"));
+
+    free(block);
+    (void)remove(path);
+}
+
+/* Only the caret above says that a line is a suggestion. Text that follows
+   anything else is prose, and prose read out as an edit would be an invention
+   the compiler never made. */
+MOLTEST(an_indented_line_that_follows_no_caret_is_not_a_suggestion) {
+    const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: broken\n"
+                       "    while compiling the template instantiated here\n";
+    const diagnostic_context ctx = {.unit = "src/main.c"};
+    char *block = render(text, &ctx, false);
+    ASSERT_NOT_NULL(block);
+
+    EXPECT_NULL(strstr(block, "= help:"));
+    EXPECT_NOT_NULL(strstr(block, "while compiling the template instantiated here"));
+
+    free(block);
+}
+
 /* The two compilers count the column they report differently, and a caret
    placed under the wrong model lands where the compiler was not pointing.
    Same source, same character, two numbers — and one caret column. */
