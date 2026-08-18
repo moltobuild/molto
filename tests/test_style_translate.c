@@ -401,3 +401,30 @@ MOLTEST(translate_clears_the_default_even_with_no_preset_and_no_rules) {
 
     EXPECT_NOT_NULL(strstr(text, "Checks: '-*'"));
 }
+
+/* The analyzer separates its families with a dot. Spelled with the hyphen the
+   rest of clang-tidy uses, the pattern matches no check at all, and the rule
+   this project documents turns nothing on. */
+MOLTEST(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
+    lint_config config;
+    lint_config_defaults(&config);
+    config.preset = style_preset_none;
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "security");
+    config.rules[0].severity = lint_severity_warn;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+                                          err, sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "clang-analyzer-security.*"));
+    EXPECT_NULL(strstr(text, "clang-analyzer-security-*"));
+
+    /* And without the check that asks for the C11 Annex K functions glibc does
+       not ship, which fires on every call to the C library. */
+    EXPECT_NOT_NULL(strstr(text,
+                           "-clang-analyzer-security.insecureAPI."
+                           "DeprecatedOrUnsafeBufferHandling"));
+}

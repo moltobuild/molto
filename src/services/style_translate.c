@@ -210,7 +210,14 @@ static const struct {
     {"portability", "portability-*"},
     {"modernize", "modernize-*"},
     {"readability", "readability-*"},
-    {"security", "clang-analyzer-security-*"},
+    /* The analyzer separates its families with a dot, not with the hyphen the
+       rest of clang-tidy uses: `clang-analyzer-security-*` matches nothing at
+       all. Its buffer-handling check is subtracted because it asks for the C11
+       Annex K functions — memcpy_s, snprintf_s — which are optional in the
+       standard and absent from glibc, so it fires on every call to the C
+       library and buries the rest of the family. */
+    {"security", "clang-analyzer-security.*,"
+                 "-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling"},
     {"naming_snake_case", "readability-identifier-naming"},
     {"readability_magic_numbers", "readability-magic-numbers"},
     {"identifier_length", "readability-identifier-length"},
