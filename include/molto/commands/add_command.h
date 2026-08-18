@@ -13,11 +13,22 @@
  * means.
  */
 
+/*
+ * Whether this invocation has to ask a registry anything.
+ *
+ * The only slow step `molto add` has, and so the only one worth announcing: a
+ * name with nothing behind it is a question for the network, and every other
+ * form of the command is a line rewritten in a file. Naming the condition is
+ * what keeps the request and the spinner in step — one that turned for a
+ * `--path` dependency would be animating a `snprintf`.
+ */
+[[nodiscard]] bool add_command_asks_registry(const char *version, const char *source);
+
 /* `source` is a `git`/`path`/`archive` location, or NULL for a registry
-   dependency named by version. `version` may be NULL only for a source that
-   carries its own bytes — a registry dependency without one would have to ask
-   what the newest release is, which is `molto update`'s job and needs a
-   version comparator that does not exist yet. */
+   dependency named by version. `version` may be NULL: for a source carrying
+   its own bytes there is nothing to ask, and for a registry dependency it
+   means the newest release — asked for once, here, and written into the
+   manifest as an exact number like any other. */
 [[nodiscard]] int add_command_run(const char *name, const char *version, const char *source_key,
                                   const char *source, const char *registry, bool development);
 

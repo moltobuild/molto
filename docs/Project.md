@@ -366,6 +366,14 @@ Adding a name you already have is how you upgrade it — the same move as
 release is and **writes that number into the manifest**, so the choice is made
 once, in a diff you can read, and never again behind your back.
 
+That question is the only slow thing `molto add` does, so a terminal gets one
+row while it is out — a braille spinner and `resolving <name>`, taken away
+before the line saying what was added arrives. It carries no figure, because a
+single request has no honest one. Every other form of the command rewrites a
+line in a file and finishes before there is anything to say: `@<version>`,
+`--path`, `--git` and `--archive` reach no registry and draw nothing. Neither
+does a pipe or a log file, which get no row and no escape sequence.
+
 They edit lines rather than rewriting the file, so your comments, alignment and
 key order survive — and re-adding a name at a new version replaces it where it
 already sits, keeping any comment beside it. Every edit is parsed before it is

@@ -8,6 +8,7 @@
 #include <molto/services/manifest_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/resolve_service.h>
+#include <molto/util/loader.h>
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
@@ -20,6 +21,11 @@
 /* Room for the right-hand side an entry gets: an inline table with a URL in
    it, plus the keys around it. */
 #define VALUE_BUFFER_SIZE 1536
+
+/* What the spinner turns under. The name goes in because `molto add` is about
+   one package: "resolving" alone would be true of any command that reaches a
+   registry, and the person watching already knows which one they typed. */
+#define LOADER_LABEL_FORMAT "resolving %s ..."
 
 /* Find the manifest of the workspace this was run in. */
 static bool manifest_path(char *out, size_t out_size) {
@@ -93,6 +99,30 @@ static bool compose_value(const char *version, const char *source_key, const cha
     return written > 0 && (size_t)written < out_size;
 }
 
+bool add_command_asks_registry(const char *version, const char *source) {
+    return source == NULL && (version == NULL || version[0] == '\0');
+}
+
+/*
+ * Ask the registry for the newest release of `name`, turning a spinner at it.
+ *
+ * The loader owns stderr for exactly as long as the request lasts, and takes
+ * its row away before anything else is written. Nothing has to lock for that:
+ * curl is captured whole by `registry_service`, and what this command says it
+ * says afterwards. On a pipe or a log file there is no loader and no row, and
+ * this reads exactly as the bare call it wraps.
+ */
+static bool ask_for_newest(const char *url, const char *name, char *out, size_t out_size,
+                           char *reason, size_t reason_size) {
+    char label[LOADER_LABEL_MAX];
+    snprintf(label, sizeof label, LOADER_LABEL_FORMAT, name);
+
+    loader *spinner = loader_start(stderr, label);
+    const bool ok = resolve_latest_version(url, name, out, out_size, reason, reason_size);
+    loader_stop(spinner);
+    return ok;
+}
+
 int add_command_run(const char *name, const char *version, const char *source_key,
                     const char *source, const char *registry, bool development) {
     if(name == NULL || name[0] == '\0') {
@@ -108,10 +138,14 @@ int add_command_run(const char *name, const char *version, const char *source_ke
        is still exactly what the file says — "newest" is decided once, here,
        and never again behind the user's back. */
     char newest[DEP_VERSION_MAX] = "";
-    if(source == NULL && (version == NULL || version[0] == '\0')) {
+    if(add_command_asks_registry(version, source)) {
+        /* Resolved before the spinner starts rather than inside the call it
+           labels: this one reads the manifest, and the loader is only safe to
+           run over work that says nothing of its own. */
+        const char *url = registry_url(registry);
+
         char reason[512] = "";
-        if(!resolve_latest_version(registry_url(registry), name, newest, sizeof newest, reason,
-                                   sizeof reason)) {
+        if(!ask_for_newest(url, name, newest, sizeof newest, reason, sizeof reason)) {
             fprintf(stderr, "molto: %s\n", reason);
             return exit_dependency_failure;
         }
