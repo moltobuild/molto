@@ -1,7 +1,10 @@
 /* For pipe2, which glibc declares only under this macro. It has to be defined
    before the first header, and it is scoped to this file rather than to the
-   build so nothing else changes which declarations it can see. */
-#define _GNU_SOURCE
+   build so nothing else changes which declarations it can see. The name is the
+   implementation's to give, which is why the reserved-identifier check is
+   answered on the line rather than obeyed: renamed, this compiles without
+   pipe2. */
+#define _GNU_SOURCE /* NOLINT(bugprone-reserved-identifier) */
 
 #include <molto/services/process_service.h>
 
