@@ -821,7 +821,11 @@ bool dep_graph_resolve_with(const project_ctx *ctx, const dep_resolve_options *o
         return false;
     }
 
-    qsort((void *)graph->nodes, graph->count, sizeof *graph->nodes, by_name);
+    /* A project with no dependencies resolves to a graph whose array was
+       never allocated. qsort declares its first parameter nonnull, and passing
+       NULL is undefined however few elements it is told there are. */
+    if(graph->count > 1)
+        qsort((void *)graph->nodes, graph->count, sizeof *graph->nodes, by_name);
     *out = graph;
     return true;
 }
