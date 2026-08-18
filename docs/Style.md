@@ -249,10 +249,17 @@ compiler for `-Wall -Wextra -Wpedantic` and the linter for `clang-diagnostic-*`
 and `bugprone-*`. `kernel` and `gnu` are named in RFC-0005 but not implemented;
 declaring one is an error rather than a silent substitution.
 
-The path-sensitive analyzer is deliberately not in the default: its security
-checks demand the C11 Annex K functions (`snprintf_s` and friends) that glibc
-does not ship, so it would bury real findings under hundreds of unfixable
-warnings. Ask for it explicitly with `"security": "warn"`.
+The generated `Checks` list opens with `-*`. clang-tidy composes what it is
+given on top of its own default rather than replacing it, so without that the
+file would enable checks nobody configured — and a different clang-tidy, whose
+default is its own to change, would enable a different set on the next machine.
+
+The path-sensitive analyzer is deliberately not in the default: it is dozens of
+times slower — 0.16 s against 8.3 s over three of this project's larger sources
+— and pays for it with a handful of findings. Ask for it with
+`"security": "warn"`, which covers its security family minus the check that
+demands the C11 Annex K functions (`snprintf_s` and friends) that glibc does not
+ship; that one fires on every call to the C library and buries the rest.
 
 **`exclude`** — glob patterns matched against the path relative to the project
 root. A star crosses a slash, so `vendor/*` matches `vendor/a/b.c`; a trailing

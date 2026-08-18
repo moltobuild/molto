@@ -32,6 +32,15 @@
    project that wants it asks for it by name, with the `security` rule. */
 #define PRESET_MOLTO_CHECKS "clang-diagnostic-*,bugprone-*"
 
+/* What every translated check list opens with.
+ *
+ * clang-tidy composes what it is given on top of its own default, which is
+ * clang-analyzer-*. A list that does not begin by clearing that enables checks
+ * the manifest never asked for — and a different clang-tidy, whose default is
+ * its own to change, enables a different set on the next machine. Clearing it
+ * first is what makes the generated file say exactly what linter.json says. */
+#define CHECKS_NONE "-*"
+
 static void set_err(char *err, size_t size, const char *format, ...)
     __attribute__((format(printf, 3, 4)));
 
@@ -201,7 +210,14 @@ static const struct {
     {"portability", "portability-*"},
     {"modernize", "modernize-*"},
     {"readability", "readability-*"},
-    {"security", "clang-analyzer-security-*"},
+    /* The analyzer separates its families with a dot, not with the hyphen the
+       rest of clang-tidy uses: `clang-analyzer-security-*` matches nothing at
+       all. Its buffer-handling check is subtracted because it asks for the C11
+       Annex K functions — memcpy_s, snprintf_s — which are optional in the
+       standard and absent from glibc, so it fires on every call to the C
+       library and buries the rest of the family. */
+    {"security", "clang-analyzer-security.*,"
+                 "-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling"},
     {"naming_snake_case", "readability-identifier-naming"},
     {"readability_magic_numbers", "readability-magic-numbers"},
     {"identifier_length", "readability-identifier-length"},
@@ -262,8 +278,10 @@ static bool compose_check_lists(const lint_config *config, char *checks, size_t 
     checks[0] = '\0';
     fatal[0] = '\0';
 
-    if(config->preset == style_preset_molto &&
-       !append(checks, checks_size, &checks_used, "%s", PRESET_MOLTO_CHECKS)) {
+    bool opened = append(checks, checks_size, &checks_used, "%s", CHECKS_NONE);
+    if(opened && config->preset == style_preset_molto)
+        opened = append(checks, checks_size, &checks_used, ",%s", PRESET_MOLTO_CHECKS);
+    if(!opened) {
         set_err(err, err_size, "linter.json: the translated check list is too long");
         return false;
     }
