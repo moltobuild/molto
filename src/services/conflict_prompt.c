@@ -50,10 +50,9 @@ void conflict_prompt_render(const dep_conflict *conflict, char *out, size_t out_
                   second);
 
     if(conflict->has_proposal) {
-        used = append(out, out_size, used,
-                      "\n  Upgrading %s to %s requires %s %s and resolves this.\n",
-                      conflict->change_name, conflict->change_to, conflict->name,
-                      conflict->settles_on);
+        (void)append(
+            out, out_size, used, "\n  Upgrading %s to %s requires %s %s and resolves this.\n",
+            conflict->change_name, conflict->change_to, conflict->name, conflict->settles_on);
     } else {
         /* No proposal is not a dead end: the user still has two versions they
            declared and can change either one. Saying so is the message's job. */
