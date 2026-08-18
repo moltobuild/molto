@@ -20,6 +20,11 @@ typedef struct {
        (RFC-0006). Needing it routinely means the cache is wrong, not that the
        flag is useful. */
     bool refresh_analysis;
+    /* Whether to say, while it happens, that the analysis is happening. The
+       command decides it: `--format json` writes a document and nothing else,
+       and a spinner is for a person rather than for a parser. Where it is drawn
+       and whether anybody is watching are settled below it. */
+    bool progress;
 } lint_request;
 
 /*

@@ -12,6 +12,7 @@
 #include <molto/services/style_translate.h>
 #include <molto/services/tool_service.h>
 #include <molto/services/toolchain_service.h>
+#include <molto/util/loader.h>
 #include <molto/util/task_pool.h>
 #include <molto/workspace/wsdb.h>
 
@@ -68,6 +69,11 @@ static const char *const preset_molto_warnings[PRESET_MOLTO_WARNINGS_COUNT] = {
 
 /* Size of the buffer receiving a configuration error. */
 #define CONFIG_ERROR_SIZE 512
+
+/* What the spinner says it is doing while the pool runs. Not "linting": the
+   compiler pass runs whether or not a linter was found, and what both passes
+   have in common is that they read the code and produce nothing. */
+#define LINT_LOADER_LABEL "analyzing ..."
 
 /* One pass over one file. The worker runs the tool and parses what it said;
    what a failure means is decided on the main thread, where the order of the
@@ -617,6 +623,13 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     bool ok =
         build_tasks(root, &setup, request->profile, &sources, db, files, tasks, argvs, &count);
     if(ok && count > 0) {
+        /* The spinner turns for exactly as long as the pool does, because this
+           is the only stretch of the command in which nothing else writes to
+           stderr: the workers capture what their processes say into buffers of
+           their own, and everything lint reports — the errors below, the
+           diagnostics, the tally — is said afterwards on this thread. That is
+           what lets the loader own the stream without a lock. */
+        loader *spinner = request->progress ? loader_start(stderr, LINT_LOADER_LABEL) : NULL;
         task_pool *pool = task_pool_create(request->jobs);
         if(pool == NULL) {
             ok = false;
@@ -628,6 +641,7 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
             task_pool_wait(pool);
             task_pool_destroy(pool);
         }
+        loader_stop(spinner);
     }
 
     /* Fold in source order. The pool finishes in whatever order it likes;

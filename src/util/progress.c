@@ -1,5 +1,8 @@
 #include <molto/util/progress.h>
 
+#include <molto/util/ansi.h>
+
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -16,6 +19,12 @@
 #define PERCENT_WHOLE 100
 
 static const char *const spinner_frames[SPINNER_FRAMES] = {"-", "\\", "|", "/"};
+
+/* The dots travelling around the cell, U+280B onwards. Three bytes and one
+   column each, exactly like the bar's blocks. */
+static const char *const braille_frames[SPINNER_BRAILLE_FRAMES] = {
+    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+};
 
 bool progress_is_interactive(FILE *out) { return isatty(fileno(out)) == 1; }
 
@@ -69,6 +78,28 @@ size_t progress_bar_percent(size_t done, size_t total) {
     if(total == 0 || done >= total)
         return PERCENT_WHOLE;
     return (done * PERCENT_WHOLE) / total;
+}
+
+size_t spinner_braille_render(char *out, size_t size, size_t frame, const char *label,
+                              bool colour) {
+    if(out == NULL || size == 0)
+        return 0;
+    out[0] = '\0';
+    if(label == NULL)
+        return 0;
+
+    /* The escape closes before the space, so the label carries none of it. */
+    const char *open = colour ? ANSI_MAGENTA : "";
+    const char *close = colour ? ANSI_RESET : "";
+    const int written = snprintf(out, size, "%s%s%s %s", open,
+                                 braille_frames[frame % SPINNER_BRAILLE_FRAMES], close, label);
+    /* snprintf truncates where this refuses: a line cut in the middle of a
+       glyph or of an escape would be drawn, and drawn wrong. */
+    if(written < 0 || (size_t)written >= size) {
+        out[0] = '\0';
+        return 0;
+    }
+    return (size_t)written;
 }
 
 void progress_erase_line(FILE *out) {

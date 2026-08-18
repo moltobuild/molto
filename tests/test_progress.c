@@ -1,5 +1,6 @@
 #include <moltest.h>
 
+#include <molto/util/ansi.h>
 #include <molto/util/progress.h>
 
 #include <stdio.h>
@@ -95,6 +96,85 @@ MOLTEST(a_line_that_was_never_drawn_on_is_left_alone) {
     EXPECT_FALSE(line.drawn);
 
     (void)fclose(out);
+}
+
+/* The braille spinner, which unlike the one above hands back bytes instead of
+   writing them: a region paints a frame in a single write, and a spinner that
+   wrote itself could not be part of one. */
+
+#define BRAILLE_LABEL "analyzing ..."
+#define BRAILLE_LINE_SIZE SPINNER_BRAILLE_SIZE(sizeof BRAILLE_LABEL)
+
+MOLTEST(the_braille_spinner_cycles_through_ten_frames) {
+    char seen[SPINNER_BRAILLE_FRAMES][BRAILLE_LINE_SIZE];
+    for (size_t frame = 0; frame < SPINNER_BRAILLE_FRAMES; frame++) {
+        EXPECT_TRUE(spinner_braille_render(seen[frame], BRAILLE_LINE_SIZE, frame, BRAILLE_LABEL,
+                                           false) > 0);
+    }
+
+    /* Ten frames, all different, so a stalled one is visible as a stall. */
+    for (size_t frame = 0; frame < SPINNER_BRAILLE_FRAMES; frame++) {
+        for (size_t other = frame + 1; other < SPINNER_BRAILLE_FRAMES; other++)
+            EXPECT_TRUE(strcmp(seen[frame], seen[other]) != 0);
+    }
+
+    /* The counter is a running total, not an index: a drawer increments it for
+       as long as the work lasts and the cell keeps turning. */
+    char wrapped[BRAILLE_LINE_SIZE] = "";
+    (void)spinner_braille_render(wrapped, sizeof wrapped, SPINNER_BRAILLE_FRAMES * 1000,
+                                 BRAILLE_LABEL, false);
+    EXPECT_STREQ(seen[0], wrapped);
+}
+
+MOLTEST(the_braille_line_names_the_work_and_ends_nothing) {
+    char line[BRAILLE_LINE_SIZE] = "";
+    const size_t size = spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, false);
+
+    ASSERT_TRUE(size > 0);
+    EXPECT_EQ(size, strlen(line));
+    EXPECT_NOT_NULL(strstr(line, BRAILLE_LABEL));
+    /* One row of a region is one row: nothing here may end it, and nothing
+       here may claim a figure the analysis never counted. */
+    EXPECT_NULL(strchr(line, '\r'));
+    EXPECT_NULL(strchr(line, '\n'));
+    EXPECT_NULL(strchr(line, '%'));
+    /* Without colour, not one escape — which is what a stream nobody is
+       watching would be given if it were ever given anything. */
+    EXPECT_NULL(strchr(line, '\033'));
+}
+
+/* The glyph is Molto talking; the label is the work's own name. Painting the
+   label would claim it means something it does not. */
+MOLTEST(colour_reaches_the_glyph_and_stops_before_the_label) {
+    char line[BRAILLE_LINE_SIZE] = "";
+    ASSERT_TRUE(spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, true) > 0);
+
+    EXPECT_EQ(0, strncmp(line, ANSI_MAGENTA, strlen(ANSI_MAGENTA)));
+    /* The reset closes before the space, so the label starts in whatever the
+       terminal was already using. */
+    EXPECT_NOT_NULL(strstr(line, ANSI_RESET " " BRAILLE_LABEL));
+
+    const char *label = strstr(line, BRAILLE_LABEL);
+    ASSERT_NOT_NULL(label);
+    EXPECT_NULL(strchr(label, '\033'));
+}
+
+/* A glyph is three bytes and one column, and an escape is bytes and no columns
+   at all. A buffer sized against either count is refused rather than half
+   filled: a line cut through a glyph would be drawn, and drawn wrong. */
+MOLTEST(a_line_that_would_not_fit_whole_is_refused) {
+    char line[sizeof BRAILLE_LABEL];
+
+    EXPECT_EQ(0u, spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, false));
+    EXPECT_STREQ("", line);
+
+    /* Room for the plain line is not room for the painted one. */
+    char plain[BRAILLE_LINE_SIZE];
+    const size_t bare = spinner_braille_render(plain, sizeof plain, 0, BRAILLE_LABEL, false);
+    ASSERT_TRUE(bare > 0);
+    char tight[BRAILLE_LINE_SIZE];
+    EXPECT_EQ(0u, spinner_braille_render(tight, bare + 1, 0, BRAILLE_LABEL, true));
+    EXPECT_STREQ("", tight);
 }
 
 /* The bar, which unlike the spinner does claim a figure — and may, because a
