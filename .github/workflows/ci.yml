@@ -5,27 +5,143 @@ on:
     branches: [main, master]
   pull_request:
 
+# A runner has no pickup, so the toolchain is named by hand. Molto warns when
+# C_COMPILER is used, because a compiler chosen this way was never proved
+# against `[target].requires` — which is correct and is not a problem here,
+# where the runner's compiler is precisely the thing under test.
+#
+# Without these, every test that compiles anything fails with "could not run
+# 'pickup'", which is what CI did from 0.10.0 until this file grew the two
+# lines below.
+env:
+  C_COMPILER: gcc-12
+  CPP_COMPILER: g++-12
+  # The tree is formatted and analysed by LLVM 19. A different major version
+  # disagrees about line breaking, and a formatting gate that disagrees with
+  # the working copy is worse than no gate — so it is pinned rather than taken
+  # from the distribution.
+  LLVM_VERSION: "19"
+
 jobs:
-  build-and-test:
-    runs-on: ubuntu-22.04
+  # The suite, built the way a machine with no molto has to build it.
+  test:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      # The build targets the C23 subset via -std=c2x, which needs GCC 12.
       - name: Install GCC 12
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-12 g++-12
+        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+      - run: make build
+      - run: make test
 
-      - name: Build
+  # Nothing that ships should produce a warning, under either compiler, at
+  # either optimisation level. -O3 matters on its own: GCC's truncation and
+  # use-after-free analyses need value-range propagation and say nothing at
+  # -O0, so an unoptimised -Werror build is half a check.
+  #
+  # `make build` and not `make test`: this covers what ships. The test sources
+  # call `system` and would need their own pass over warn_unused_result first.
+  warnings:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang]
+        opt: ["-O0", "-O3"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 12
+        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+      - name: Install Clang ${{ env.LLVM_VERSION }}
+        if: matrix.compiler == 'clang'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y \
+            "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get install -y clang-${LLVM_VERSION}
+      - name: Build with -Werror
+        run: |
+          cc=${{ matrix.compiler }}
+          [ "$cc" = clang ] && cc=clang-${LLVM_VERSION}
+          make build CC="$cc" EXTRA_CFLAGS="-Werror ${{ matrix.opt }}"
+
+  # The claim the README makes, checked rather than asserted: molto builds
+  # molto, and the molto that comes out builds it again. A bootstrap that
+  # drifts away from the thing it bootstraps is invisible until someone
+  # without a molto tries to get one.
+  self-host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 12
+        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+      - name: Bootstrap
         run: make build
-
-      - name: Test
-        run: make test
-
-      # Nothing above should have produced a warning; treat one as a failure so
-      # the build stays clean over time.
-      - name: Rebuild with warnings as errors
+      - name: molto builds molto
+        run: ./build/molto build
+      # Copied aside before it is asked to work: molto links its output over
+      # build/debug/molto, and a running binary cannot be its own link target
+      # (ETXTBSY). Nothing catches that while the second build has nothing to
+      # do, which is exactly when it would not be caught.
+      - name: Take the molto that molto built
+        run: cp build/debug/molto "${RUNNER_TEMP}/molto-stage2"
+      - name: and let it rebuild the project from clean
         run: |
-          make clean
-          make build CFLAGS="-std=c2x -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -Werror -pthread -Iinclude"
+          "${RUNNER_TEMP}/molto-stage2" clean --all
+          "${RUNNER_TEMP}/molto-stage2" build
+      - name: and run the suite with it
+        run: |
+          "${RUNNER_TEMP}/molto-stage2" test
+      # A stale binary and a broken version injection look identical from the
+      # outside, and `-V` is the one question that tells them apart.
+      - name: and answer -V with what the manifest declares
+        run: |
+          declared=$(sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
+          reported=$("${RUNNER_TEMP}/molto-stage2" --version)
+          echo "manifest: $declared"
+          echo "binary:   $reported"
+          test "$reported" = "molto $declared"
+
+  # The two things molto says about its own source. Both are pinned to the
+  # LLVM the tree was written against; see LLVM_VERSION above.
+  style:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 12 and LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y \
+            "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get install -y gcc-12 g++-12 \
+            clang-format-${LLVM_VERSION} clang-tidy-${LLVM_VERSION}
+      - name: Bootstrap
+        run: make build
+      - name: molto fmt --check
+        env:
+          MOLTO_CLANG_FORMAT: /usr/bin/clang-format-19
+        run: ./build/molto fmt --check
+      - name: molto lint
+        env:
+          MOLTO_CLANG_TIDY: /usr/bin/clang-tidy-19
+        run: ./build/molto lint
+
+  # Pinned while it is green. The suite came back clean under all three of
+  # these on 2026-08-18 — no leak, no overflow, no undefined behaviour — and
+  # that is the cheap moment to hold it there. Found later, the same result
+  # costs an excavation.
+  sanitizers:
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: detect_leaks=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GCC 12
+        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+      - name: Address and undefined behaviour
+        run: |
+          make test \
+            EXTRA_CFLAGS="-g -fsanitize=address,undefined -fno-omit-frame-pointer" \
+            LDFLAGS="-fsanitize=address,undefined"

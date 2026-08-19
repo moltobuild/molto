@@ -16,7 +16,17 @@ STD    ?= c2x
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
 
 CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -pthread -Iinclude
-CFLAGS += -DMOLTO_PKG_VERSION='"$(VERSION)"' 
+CFLAGS += -DMOLTO_PKG_VERSION='"$(VERSION)"'
+
+# For a caller that wants to add to the build rather than replace it: -Werror,
+# sanitizers, an optimisation level. Setting CFLAGS on the command line wins
+# over both lines above, which quietly takes the version define with it — and a
+# binary built that way answers `-V` with 0.0.0-unknown and fails the test that
+# compares the two. Adding through here keeps everything that is not being
+# changed.
+EXTRA_CFLAGS ?=
+CFLAGS += $(EXTRA_CFLAGS)
+
 LDFLAGS ?=
 
 BUILD_DIR := build
