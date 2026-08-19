@@ -2,7 +2,7 @@ Molto — a package manager and build system for C and C++
 Copyright 2026 buziraku
 
 This product includes software developed as part of the Molto project
-(https://github.com/black-redoc/molto).
+(https://github.com/moltobuild/molto).
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file for the
 full terms.
