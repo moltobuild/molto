@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - run: make build
@@ -57,7 +57,7 @@ jobs:
         compiler: [gcc-12, clang]
         opt: ["-O0", "-O3"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Install Clang ${{ env.LLVM_VERSION }}
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Bootstrap
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12 and LLVM ${{ env.LLVM_VERSION }}
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -145,7 +145,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Link it statically
@@ -179,7 +179,7 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
       - name: Install GCC 12
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Address and undefined behaviour
