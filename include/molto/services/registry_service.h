@@ -24,7 +24,7 @@
 
 /* The official registry: where a dependency resolves when neither the manifest
    nor a stored credential names one. */
-#define REGISTRY_DEFAULT_URL "https://molto-registry.joseb-twelve.workers.dev"
+#define REGISTRY_DEFAULT_URL "https://molto-registry.molto-build.workers.dev"
 
 typedef struct {
     long status; /* HTTP status, or 0 when curl never got one */
