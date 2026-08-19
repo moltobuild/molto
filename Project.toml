@@ -13,7 +13,7 @@
 name = "molto"
 version = "0.16.0"
 description = "A package manager and build system for C and C++"
-repository = "https://github.com/black-redoc/molto"
+repository = "https://github.com/moltobuild/molto"
 # The key states a licence; LICENSE and NOTICE at the root grant it. Apache-2.0
 # for the patent grant above all: molto executes other people's compilers and
 # its registry distributes other people's code, so a bare permissive licence

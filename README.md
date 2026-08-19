@@ -32,19 +32,20 @@ states the features the code needs and pickup resolves them.
 ## Install
 
 A static x86-64 Linux binary is attached to every
-[release](https://github.com/black-redoc/molto/releases). It carries no glibc
+[release](https://github.com/moltobuild/molto/releases). It carries no glibc
 requirement and there is nothing to unpack.
 
 ```sh
-base=https://github.com/black-redoc/molto/releases/latest/download
+base=https://github.com/moltobuild/molto/releases/latest/download
 curl -fsSLO $base/SHA256SUMS
 curl -fsSLO $base/molto-0.16.0-x86_64-linux
 sha256sum --check --ignore-missing SHA256SUMS
 sudo install molto-0.16.0-x86_64-linux /usr/local/bin/molto
 ```
 
-**Then name a compiler, for now.** Molto does not choose one: it asks `pickup`,
-and pickup has no release yet. Until it does:
+**Then get a compiler.** Molto does not choose one: it asks
+[`pickup`](https://github.com/moltobuild/pickup), which installs one under
+`~/.pickup` without root. Failing that, name the drivers by hand:
 
 ```sh
 export C_COMPILER=gcc CPP_COMPILER=g++
