@@ -44,8 +44,7 @@ void conflict_prompt_render(const dep_conflict *conflict, char *out, size_t out_
 
     size_t used = 0;
     used = append(out, out_size, used, "molto: %s is required at two versions\n", conflict->name);
-    used = append(out, out_size, used, "    %s  " CONFLICT_ARROW " %s\n", conflict->version,
-                  first);
+    used = append(out, out_size, used, "    %s  " CONFLICT_ARROW " %s\n", conflict->version, first);
     used = append(out, out_size, used, "    %s  " CONFLICT_ARROW " %s\n", conflict->other_version,
                   second);
 
@@ -56,8 +55,9 @@ void conflict_prompt_render(const dep_conflict *conflict, char *out, size_t out_
     } else {
         /* No proposal is not a dead end: the user still has two versions they
            declared and can change either one. Saying so is the message's job. */
-        (void)append(out, out_size, used,
-                     "\n  Nothing molto can change removes this: one of the two versions has to.\n");
+        (void)append(
+            out, out_size, used,
+            "\n  Nothing molto can change removes this: one of the two versions has to.\n");
     }
 }
 

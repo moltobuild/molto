@@ -118,8 +118,7 @@ void spinner_wait(FILE *out, const char *label, size_t frame);
  * whole line, the same contract `progress_bar_render` keeps: a line cut in the
  * middle of a glyph or of an escape is worse than no line.
  */
-size_t spinner_braille_render(char *out, size_t size, size_t frame, const char *label,
-                              bool colour);
+size_t spinner_braille_render(char *out, size_t size, size_t frame, const char *label, bool colour);
 
 /* Blank the line the spinner is on and return to its start. */
 void progress_clear(FILE *out);
