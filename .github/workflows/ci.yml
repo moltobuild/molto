@@ -5,6 +5,12 @@ on:
     branches: [main, master]
   pull_request:
 
+# A push that supersedes another cancels it. Eight jobs per run adds up, and
+# the result of a commit that is no longer the tip settles nothing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # A runner has no pickup, so the toolchain is named by hand. Molto warns when
 # C_COMPILER is used, because a compiler chosen this way was never proved
 # against `[target].requires` — which is correct and is not a problem here,
@@ -14,6 +20,7 @@ on:
 # 'pickup'", which is what CI did from 0.10.0 until this file grew the two
 # lines below.
 env:
+  DEBIAN_FRONTEND: noninteractive
   C_COMPILER: gcc-12
   CPP_COMPILER: g++-12
   # The tree is formatted and analysed by LLVM 19. A different major version
@@ -26,10 +33,11 @@ jobs:
   # The suite, built the way a machine with no molto has to build it.
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 12
-        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+        run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - run: make build
       - run: make test
 
@@ -42,15 +50,16 @@ jobs:
   # call `system` and would need their own pass over warn_unused_result first.
   warnings:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         compiler: [gcc-12, clang]
         opt: ["-O0", "-O3"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 12
-        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+        run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Install Clang ${{ env.LLVM_VERSION }}
         if: matrix.compiler == 'clang'
         run: |
@@ -58,7 +67,7 @@ jobs:
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           sudo add-apt-repository -y \
             "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
-          sudo apt-get install -y clang-${LLVM_VERSION}
+          sudo apt-get install -y -o Acquire::Retries=3 clang-${LLVM_VERSION}
       - name: Build with -Werror
         run: |
           cc=${{ matrix.compiler }}
@@ -71,10 +80,11 @@ jobs:
   # without a molto tries to get one.
   self-host:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 12
-        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+        run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Bootstrap
         run: make build
       - name: molto builds molto
@@ -106,15 +116,16 @@ jobs:
   # LLVM the tree was written against; see LLVM_VERSION above.
   style:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 12 and LLVM ${{ env.LLVM_VERSION }}
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           sudo add-apt-repository -y \
             "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
-          sudo apt-get install -y gcc-12 g++-12 \
+          sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12 \
             clang-format-${LLVM_VERSION} clang-tidy-${LLVM_VERSION}
       - name: Bootstrap
         run: make build
@@ -133,13 +144,14 @@ jobs:
   # costs an excavation.
   sanitizers:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       ASAN_OPTIONS: detect_leaks=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GCC 12
-        run: sudo apt-get update && sudo apt-get install -y gcc-12 g++-12
+        run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Address and undefined behaviour
         run: |
           make test \
