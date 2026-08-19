@@ -242,6 +242,10 @@ static void record(wsdb *db, const char *root, const char *path, const char *fin
     diagnostic_list_free(&said);
 }
 
+/* How much of the backend's path a failure message may spend, leaving room for
+   the words that say what happened to it. */
+#define FMT_PATH_IN_MESSAGE 900
+
 /* Turn a failed run into a diagnostic, so a tool that fails silently still
    fails the command through the same single rule as everything else. */
 static bool report_failure(fmt_result *result, const fmt_task *task, const char *backend_path) {
@@ -249,13 +253,16 @@ static bool report_failure(fmt_result *result, const fmt_task *task, const char 
     memset(&item, 0, sizeof item);
     item.severity = diagnostic_severity_error;
     snprintf(item.file, sizeof item.file, "%s", task->path);
+    /* The path is bounded so the sentence after it survives: a message whose
+       explanation was pushed off the end by a long path explains nothing. */
     if(task->status > 128)
         snprintf(item.message, sizeof item.message,
-                 "%s was killed by signal %d while formatting this file", backend_path,
-                 task->status - 128);
+                 "%.*s was killed by signal %d while formatting this file", FMT_PATH_IN_MESSAGE,
+                 backend_path, task->status - 128);
     else
         snprintf(item.message, sizeof item.message,
-                 "%s exited %d with nothing to say about this file", backend_path, task->status);
+                 "%.*s exited %d with nothing to say about this file", FMT_PATH_IN_MESSAGE,
+                 backend_path, task->status);
     return diagnostic_list_push(&result->diagnostics, &item);
 }
 
