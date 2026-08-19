@@ -9,10 +9,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-/* What a fresh install talks to. Overridden with --registry, which is also how
-   a private registry is reached. */
-#define DEFAULT_REGISTRY "https://molto-registry.joseb-twelve.workers.dev"
-
 /* Name the token carries in the account page's list. */
 #define TOKEN_NAME "molto login"
 
@@ -128,7 +124,7 @@ static int login_with_password(const char *registry, const char *email) {
 }
 
 int login_command_run(const char *registry, const char *email, const char *token) {
-    const char *url = registry != NULL && registry[0] != '\0' ? registry : DEFAULT_REGISTRY;
+    const char *url = registry != NULL && registry[0] != '\0' ? registry : REGISTRY_DEFAULT_URL;
 
     if(token != NULL && token[0] != '\0')
         return login_with_token(url, email, token);
