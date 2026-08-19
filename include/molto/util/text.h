@@ -40,4 +40,21 @@
    rather than refusing. */
 void text_expand_tabs(const char *s, size_t tab_width, char *out, size_t out_size);
 
+/*
+ * Copy `s` into `out`, replacing its middle with `…` when it does not fit.
+ *
+ * A URL and a path both carry what identifies them at their two ends and the
+ * least of it in between: `https://github.com/` and `molto` say which package
+ * this is, and the organisation between them rarely settles anything. Dropping
+ * the tail — which is what an `snprintf` into a short buffer does — keeps the
+ * half that identifies nothing and does it silently, so the reader is not told
+ * that a name they do not recognise is a name they were not shown.
+ *
+ * The cut lands between characters, never inside one. Given less room than an
+ * ellipsis plus a byte on each side, this degrades to a plain prefix rather
+ * than writing a broken ellipsis. `out` is always terminated, and never
+ * written past `out_size`; NULL is the empty string.
+ */
+void text_elide_middle(const char *s, char *out, size_t out_size);
+
 #endif /* MOLTO_UTIL_TEXT_H */

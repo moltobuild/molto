@@ -94,3 +94,74 @@ MOLTEST(a_stray_byte_is_not_a_reason_to_refuse_an_answer) {
 }
 
 MOLTEST(no_text_is_no_columns) { EXPECT_EQ(0u, text_columns(NULL, 8)); }
+
+/*
+ * Eliding the middle.
+ *
+ * A URL and a path both carry their meaning at the two ends — the host and the
+ * repository, the root and the file — and the least of it in between. Cutting
+ * the tail off leaves the half that identifies nothing, which is how a conflict
+ * between two git dependencies came to name neither of them.
+ */
+
+MOLTEST(what_fits_is_copied_whole) {
+    char out[16] = "";
+    text_elide_middle("abc", out, sizeof out);
+    EXPECT_STREQ("abc", out);
+}
+
+/* Exactly the room there is, terminator included, is still not eliding. */
+MOLTEST(a_string_that_exactly_fits_is_not_shortened) {
+    char out[4] = "";
+    text_elide_middle("abc", out, sizeof out);
+    EXPECT_STREQ("abc", out);
+}
+
+/* Both ends survive, and the ellipsis says the middle did not. */
+MOLTEST(a_long_url_keeps_its_host_and_its_repository) {
+    char out[32] = "";
+    text_elide_middle("https://github.com/an-organisation-with-a-long-name/molto", out,
+                      sizeof out);
+    EXPECT_EQ(0, strncmp("https://g", out, 9));
+    EXPECT_NOT_NULL(strstr(out, "\xe2\x80\xa6"));
+    EXPECT_EQ(0, strcmp("molto", out + strlen(out) - 5));
+    EXPECT_TRUE(strlen(out) < sizeof out);
+}
+
+/* The result never outgrows the buffer it was given, whatever the input. */
+MOLTEST(an_elision_never_overruns_its_buffer) {
+    for(size_t size = 1; size <= 24; size++) {
+        char out[32];
+        memset(out, '#', sizeof out);
+        text_elide_middle("https://example.invalid/a/very/long/path/indeed", out, size);
+        EXPECT_TRUE(strlen(out) < size);
+        EXPECT_EQ('#', out[size]);
+    }
+}
+
+/* Too little room for an ellipsis is not a reason to write a broken one: what
+   comes back is a plain prefix, still terminated. */
+MOLTEST(too_small_for_an_ellipsis_falls_back_to_a_prefix) {
+    char out[4] = "";
+    text_elide_middle("abcdefgh", out, sizeof out);
+    EXPECT_STREQ("abc", out);
+}
+
+/* A cut lands between characters, never inside one: a torn UTF-8 sequence is
+   mojibake in the very message that is trying to identify something. */
+MOLTEST(an_elision_cuts_between_characters_and_not_inside_one) {
+    char out[16] = "";
+    text_elide_middle("áéíóúáéíóú", out,
+                      sizeof out);
+    /* Ten two-byte characters into fifteen bytes of room: three bytes go to
+       the ellipsis and the twelve that remain have to divide into whole
+       characters, or a cut landed inside one. */
+    EXPECT_TRUE(strlen(out) < sizeof out);
+    EXPECT_EQ(0u, (strlen(out) - strlen("\xe2\x80\xa6")) % 2);
+}
+
+MOLTEST(no_text_elides_to_nothing) {
+    char out[8] = "x";
+    text_elide_middle(NULL, out, sizeof out);
+    EXPECT_STREQ("", out);
+}
