@@ -1,0 +1,111 @@
+name: Release
+
+# A tag is what publishes. Nothing here runs on a branch, so a release is
+# always something someone decided to make rather than something a merge did.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install GCC 12
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
+
+      # The tag and the manifest are two claims about the same number, and a
+      # binary whose version disagrees with the tag it was published under is
+      # the one failure nobody notices until much later. Same reasoning as
+      # `cli_reports_the_version_the_manifest_declares`, one level up.
+      - name: The tag and the manifest agree
+        run: |
+          declared=$(sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
+          tagged=${GITHUB_REF_NAME#v}
+          echo "manifest: $declared"
+          echo "tag:      $tagged"
+          test "$declared" = "$tagged"
+          echo "VERSION=$declared" >> "$GITHUB_ENV"
+
+      # Static, so the artifact does not carry the runner's glibc with it. A
+      # dynamic build here needs GLIBC_2.34 and rules out Debian 11, Ubuntu
+      # 20.04 and RHEL 8. Molto can afford this because it shells out to curl
+      # and never resolves a hostname itself, so no NSS is linked in.
+      - name: Build the static binary
+        run: |
+          make build LDFLAGS="-static"
+          file build/molto
+          file build/molto | grep -q 'statically linked'
+
+      # The artifact itself is what gets exercised, not a sibling of it.
+      - name: It builds and runs a project
+        env:
+          C_COMPILER: gcc-12
+          CPP_COMPILER: g++-12
+        run: |
+          molto="$PWD/build/molto"
+          test "$("$molto" --version)" = "molto ${VERSION}"
+          cd "$(mktemp -d)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
+      - name: Name it, hash it, and describe it
+        run: |
+          mkdir -p dist
+          name="molto-${VERSION}-x86_64-linux"
+          cp build/molto "dist/$name"
+          ./build/molto metadata -o "dist/molto-${VERSION}.cdx.json"
+          cd dist
+          sha256sum "$name" "molto-${VERSION}.cdx.json" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write the release notes
+        run: |
+          cat > dist/NOTES.md <<NOTES
+          Static x86-64 Linux binary. No glibc requirement, nothing to unpack.
+
+          \`\`\`sh
+          base=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}
+          curl -fsSLO \$base/molto-${VERSION}-x86_64-linux
+          curl -fsSLO \$base/SHA256SUMS
+          sha256sum --check --ignore-missing SHA256SUMS
+          chmod +x molto-${VERSION}-x86_64-linux
+          sudo install molto-${VERSION}-x86_64-linux /usr/local/bin/molto
+          \`\`\`
+
+          **Molto does not choose a compiler**, it asks pickup — which has no
+          release yet. Until it does, name one by hand:
+
+          \`\`\`sh
+          export C_COMPILER=gcc CPP_COMPILER=g++
+          \`\`\`
+
+          Without that, \`new\`, \`init\`, \`add\`, \`remove\` and \`metadata\` work, and
+          \`build\`, \`test\`, \`fmt\` and \`lint\` report that no compiler was resolved.
+
+          \`molto-${VERSION}.cdx.json\` is molto's own CycloneDX bill of materials.
+          NOTES
+          cat dist/NOTES.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "molto ${VERSION}" \
+            --notes-file dist/NOTES.md \
+            --generate-notes \
+            "dist/molto-${VERSION}-x86_64-linux" \
+            "dist/molto-${VERSION}.cdx.json" \
+            dist/SHA256SUMS

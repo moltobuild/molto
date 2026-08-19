@@ -29,7 +29,35 @@ The `Makefile` remains the bootstrap — something has to compile the first
 molto — but it is no longer the only way. Its manifest names no compiler: it
 states the features the code needs and pickup resolves them.
 
+## Install
+
+A static x86-64 Linux binary is attached to every
+[release](https://github.com/black-redoc/molto/releases). It carries no glibc
+requirement and there is nothing to unpack.
+
+```sh
+base=https://github.com/black-redoc/molto/releases/latest/download
+curl -fsSLO $base/SHA256SUMS
+curl -fsSLO $base/molto-0.16.0-x86_64-linux
+sha256sum --check --ignore-missing SHA256SUMS
+sudo install molto-0.16.0-x86_64-linux /usr/local/bin/molto
+```
+
+**Then name a compiler, for now.** Molto does not choose one: it asks `pickup`,
+and pickup has no release yet. Until it does:
+
+```sh
+export C_COMPILER=gcc CPP_COMPILER=g++
+```
+
+Without that, `new`, `init`, `add`, `remove` and `metadata` work, and `build`,
+`test`, `fmt` and `lint` report that no compiler could be resolved. Each release
+also carries `molto-<version>.cdx.json`, molto's own CycloneDX bill of
+materials.
+
 ## Requirements
+
+To build molto from source:
 
 - `gcc-12` or newer (the build targets the C23 subset via `-std=c2x`)
 - GNU Make
