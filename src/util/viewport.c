@@ -188,9 +188,17 @@ size_t viewport_height(size_t in_flight, size_t rows, size_t maximum) {
 /* Erase the row the cursor is on, wherever on it the cursor is. */
 #define ERASE_ROW "\033[2K"
 
-/* Bytes a cursor movement can take: the escape, a row count no terminal will
-   ever exceed, and the letter. */
-#define MOVE_MAX 16
+/* Bytes a cursor movement can take: the escape, the row count, the letter and
+   the terminator.
+
+   Sized for what the *type* can hold — twenty digits of `size_t` — rather than
+   for what a terminal will ever ask for. The two differ by eight bytes twice a
+   frame, and the smaller number was an assumption the compiler could not check
+   and therefore reported: `gcc -O3` reads `snprintf` into sixteen bytes here as
+   a possible truncation, and it is right to, because the bound came from a
+   comment rather than from the code. */
+#define MOVE_DIGITS_MAX 20
+#define MOVE_MAX (sizeof "\033[A" + MOVE_DIGITS_MAX)
 
 void viewport_init(viewport *view, FILE *out) {
     view->out = out;
