@@ -154,7 +154,11 @@ static bool read_std(doc_view doc, const char *key, const char *const *known, si
 
     for(size_t i = 0; i < count; i++) {
         if(strcmp(known[i], value) == 0) {
-            snprintf(out, out_size, "%s", value);
+            /* The match is what proves this fits — every entry in `known` is a
+               standard's name, and `out` is sized for one. The bound is spelled
+               out anyway because the reader of this line cannot see the table
+               from here, and neither can the compiler. */
+            snprintf(out, out_size, "%.*s", (int)(out_size - 1), value);
             return true;
         }
     }

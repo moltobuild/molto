@@ -5,6 +5,7 @@
 #include <molto/services/registry_service.h>
 #include <molto/services/resolve_service.h>
 #include <molto/util/str_map.h>
+#include <molto/util/text.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -390,11 +391,14 @@ static bool report_conflict(const dep_node *seen, const project_dep *dep, const 
                             size_t err_size) {
     if(conflict != NULL) {
         snprintf(conflict->name, sizeof conflict->name, "%s", dep->name);
-        snprintf(conflict->version, sizeof conflict->version, "%s",
-                 identify(seen->version, seen->source));
+        /* Elided rather than snprintf'd: what `identify` returns is a version
+           or a whole source URL, and clipping the tail off a URL leaves the
+           half that names nobody. */
+        text_elide_middle(identify(seen->version, seen->source), conflict->version,
+                          sizeof conflict->version);
         snprintf(conflict->required_by, sizeof conflict->required_by, "%s", seen->required_by);
-        snprintf(conflict->other_version, sizeof conflict->other_version, "%s",
-                 identify(dep->version, source));
+        text_elide_middle(identify(dep->version, source), conflict->other_version,
+                          sizeof conflict->other_version);
         snprintf(conflict->other_required_by, sizeof conflict->other_required_by, "%s",
                  required_by);
     }

@@ -12,6 +12,29 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* Put a variable back the way it was found.
+ *
+ * A test that changes the environment and does not change it back has changed
+ * it for every test that runs after it, and the failure then surfaces
+ * somewhere else entirely. Not hypothetical: `stub_setup` below used to unset
+ * C_COMPILER without saving it, which is invisible on a machine with pickup
+ * installed — pickup answers instead — and failed eighteen later tests on CI,
+ * where C_COMPILER was the only route to a compiler there was. Same shape as
+ * `test_lint_service.c`, which already got this right. */
+static void remember_env(const char *name, char *into, size_t size, bool *had) {
+    const char *existing = getenv(name);
+    *had = existing != NULL;
+    if (existing != NULL)
+        snprintf(into, size, "%s", existing);
+}
+
+static void restore_env(const char *name, const char *saved, bool had) {
+    if (had)
+        (void)setenv(name, saved, 1);
+    else
+        (void)unsetenv(name);
+}
+
 /* A stand-in for pickup, so the tests exercise Molto's side of the contract
    without depending on which compilers this machine happens to have. Every
    invocation appends a line to a log, which is how "did it ask again?" is
@@ -20,8 +43,12 @@ typedef struct {
     char root[64];
     char program[128];
     char log[128];
-    char previous[4096];
-    bool had_previous;
+    char saved_pickup[4096];
+    char saved_cc[4096];
+    char saved_cxx[4096];
+    bool had_pickup;
+    bool had_cc;
+    bool had_cxx;
 } pickup_stub;
 
 static bool stub_write(const pickup_stub *stub, const char *answer, int exit_code) {
@@ -44,21 +71,22 @@ static bool stub_setup(pickup_stub *stub, const char *answer, int exit_code) {
     snprintf(stub->program, sizeof stub->program, "%s/pickup", stub->root);
     snprintf(stub->log, sizeof stub->log, "%s/calls", stub->root);
 
-    const char *existing = getenv("MOLTO_PICKUP");
-    stub->had_previous = existing != NULL;
-    if (existing != NULL)
-        snprintf(stub->previous, sizeof stub->previous, "%s", existing);
+    /* All three, because all three are about to be changed. Saving only the
+       one the test reads is what left C_COMPILER unset for everything that ran
+       afterwards. */
+    remember_env("MOLTO_PICKUP", stub->saved_pickup, sizeof stub->saved_pickup, &stub->had_pickup);
+    remember_env("C_COMPILER", stub->saved_cc, sizeof stub->saved_cc, &stub->had_cc);
+    remember_env("CPP_COMPILER", stub->saved_cxx, sizeof stub->saved_cxx, &stub->had_cxx);
 
     return stub_write(stub, answer, exit_code)
         && setenv("MOLTO_PICKUP", stub->program, 1) == 0
-        && unsetenv("C_COMPILER") == 0;
+        && unsetenv("C_COMPILER") == 0 && unsetenv("CPP_COMPILER") == 0;
 }
 
 static void stub_teardown(pickup_stub *stub) {
-    if (stub->had_previous)
-        (void)setenv("MOLTO_PICKUP", stub->previous, 1);
-    else
-        (void)unsetenv("MOLTO_PICKUP");
+    restore_env("MOLTO_PICKUP", stub->saved_pickup, stub->had_pickup);
+    restore_env("C_COMPILER", stub->saved_cc, stub->had_cc);
+    restore_env("CPP_COMPILER", stub->saved_cxx, stub->had_cxx);
     char cmd[128];
     snprintf(cmd, sizeof cmd, "rm -rf %s", stub->root);
     (void)system(cmd);
@@ -253,7 +281,5 @@ MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
     EXPECT_STREQ("/usr/bin/some-c++", chain.cxx);
     EXPECT_EQ(0, stub_calls(&stub));
 
-    (void)unsetenv("C_COMPILER");
-    (void)unsetenv("CPP_COMPILER");
     stub_teardown(&stub);
 }

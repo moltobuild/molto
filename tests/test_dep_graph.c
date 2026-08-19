@@ -267,6 +267,78 @@ MOLTEST(no_dependencies_is_an_empty_graph) {
     dep_graph_free(graph);
 }
 
+/* As `make_package`, at a nested location: the package name stays valid while
+   the path to it grows past what a conflict record can hold. */
+static bool make_package_under(const sandbox *at, const char *subdir, const char *name,
+                               char *path, size_t path_size) {
+    char dir[PATH_MAX_LEN];
+    if (!fs_format_path(dir, sizeof dir, "%s/%s/%s", at->root, subdir, name)
+        || !fs_make_dirs(dir))
+        return false;
+
+    char recipe[PATH_MAX_LEN * 2];
+    snprintf(recipe, sizeof recipe,
+             "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+             "name = \"%s\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+             "[artifacts]\ntype = \"source\"\nsources = [\"%s.c\"]\ninclude = [\".\"]\n",
+             name, name);
+
+    char file[PATH_MAX_LEN];
+    if (!fs_format_path(file, sizeof file, "%s/recipe.toml", dir) || !fs_write_file(file, recipe))
+        return false;
+    if (!fs_format_path(file, sizeof file, "%s/%s.c", dir, name))
+        return false;
+    snprintf(path, path_size, "%s", dir);
+    return fs_write_file(file, "int answer(void) { return 1; }\n");
+}
+
+/* The defect this closes: a source is a URL or a path, and it used to be
+   copied into a field sized for a version number. Everything past sixty-three
+   characters was dropped, silently, in the one message whose whole job is to
+   say which two things disagree — so two dependencies under a long enough
+   prefix were reported as the same string twice. */
+MOLTEST(a_conflict_between_two_long_paths_names_both_of_them) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    /* Long enough that the two paths share their first DEP_IDENTITY_MAX bytes
+       and differ only at the end, which is exactly the case a tail-clipping
+       copy cannot report. */
+    char deep[192];
+    memset(deep, 'd', sizeof deep - 1);
+    deep[sizeof deep - 1] = '\0';
+
+    char old_path[PATH_MAX_LEN];
+    char new_path[PATH_MAX_LEN];
+    ASSERT_TRUE(make_package_under(&at, deep, "png_old", old_path, sizeof old_path));
+    ASSERT_TRUE(make_package_under(&at, deep, "png_new", new_path, sizeof new_path));
+
+    char deps[PATH_MAX_LEN * 2];
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s\" }\n", old_path);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    snprintf(deps, sizeof deps, "[deps]\npng = { path = \"%s\" }\n", new_path);
+    EXPECT_TRUE(make_package(&at, "b", deps));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a", "b"};
+    ASSERT_TRUE(parse_root(&at, names, 2, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    dep_conflict conflict = {0};
+    const dep_resolve_options options = { .propose = true };
+    EXPECT_FALSE(dep_graph_resolve_with(&ctx, &options, &graph, &conflict, err, sizeof err));
+
+    /* Both ends survive, so the two claims read as two different things. */
+    EXPECT_NOT_NULL(strstr(conflict.version, "png_old"));
+    EXPECT_NOT_NULL(strstr(conflict.other_version, "png_new"));
+    EXPECT_STRNE(conflict.version, conflict.other_version);
+    /* And the shortening is visible rather than implied. */
+    EXPECT_NOT_NULL(strstr(conflict.version, "\xe2\x80\xa6"));
+
+    sandbox_close(&at);
+}
+
 /* A conflict is reported as data as well as as a message, so a caller can ask
    the user about it instead of only printing it (RFC-0008). */
 MOLTEST(a_conflict_is_reported_as_the_two_claims_and_who_made_them) {

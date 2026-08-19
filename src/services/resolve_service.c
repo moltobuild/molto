@@ -246,8 +246,7 @@ bool resolve_versions(const char *base_url, const char *name, str_list *out, cha
        is dropped: this list is what a proposal is chosen from. */
     const size_t ordered = semver_sort_desc(out);
     if(ordered == 0)
-        return set_error(err, err_size, "'%s' has no release with a version molto can order",
-                         name);
+        return set_error(err, err_size, "'%s' has no release with a version molto can order", name);
     str_list_truncate(out, ordered);
     return true;
 }

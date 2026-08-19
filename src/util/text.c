@@ -1,6 +1,7 @@
 #include <molto/util/text.h>
 
 #include <stdbool.h>
+#include <string.h>
 
 /* The bit pattern every byte of a UTF-8 character after the first one carries.
    Counting the bytes that do not have it counts characters, and does so
@@ -64,4 +65,59 @@ void text_expand_tabs(const char *s, size_t tab_width, char *out, size_t out_siz
             column++;
     }
     out[used] = '\0';
+}
+
+/* --- eliding --- */
+
+#define ELLIPSIS "\xe2\x80\xa6"
+#define ELLIPSIS_BYTES (sizeof ELLIPSIS - 1)
+
+/* The largest count not past `bytes` that does not land inside a character.
+   Walks backwards over continuation bytes, which is the only direction that
+   can shorten a prefix without inspecting what precedes it. */
+static size_t whole_prefix(const char *s, size_t bytes) {
+    while(bytes > 0 && is_continuation(s[bytes]))
+        bytes--;
+    return bytes;
+}
+
+/* The smallest offset not before `from` that starts a character. Walks
+   forwards, so a suffix only ever gets shorter than the budget, never longer. */
+static size_t whole_suffix(const char *s, size_t from, size_t len) {
+    while(from < len && is_continuation(s[from]))
+        from++;
+    return from;
+}
+
+void text_elide_middle(const char *s, char *out, size_t out_size) {
+    if(out_size == 0)
+        return;
+    out[0] = '\0';
+    if(s == NULL)
+        return;
+
+    const size_t len = strlen(s);
+    if(len < out_size) {
+        memcpy(out, s, len + 1);
+        return;
+    }
+
+    /* Everything below divides this: the bytes the answer may occupy. */
+    const size_t room = out_size - 1;
+    if(room < ELLIPSIS_BYTES + 2) {
+        const size_t head = whole_prefix(s, room);
+        memcpy(out, s, head);
+        out[head] = '\0';
+        return;
+    }
+
+    const size_t budget = room - ELLIPSIS_BYTES;
+    const size_t head = whole_prefix(s, budget / 2);
+    const size_t tail_from = whole_suffix(s, len - (budget - budget / 2), len);
+    const size_t tail = len - tail_from;
+
+    memcpy(out, s, head);
+    memcpy(out + head, ELLIPSIS, ELLIPSIS_BYTES);
+    memcpy(out + head + ELLIPSIS_BYTES, s + tail_from, tail);
+    out[head + ELLIPSIS_BYTES + tail] = '\0';
 }

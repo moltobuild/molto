@@ -46,17 +46,26 @@ static bool write_auth_config(const char *token, char *path, size_t size) {
 
 /* --- running curl --- */
 
-/* Splits curl's output into the body and the status the marker carries. */
+/* Splits curl's output into the body and the status the marker carries.
+
+   The body is copied with the bound spelled out. `snprintf` would clip it
+   anyway, but silently and only as a side effect of its own size argument;
+   saying `%.*s` states that a response larger than the buffer is expected and
+   accepted, which is a different claim from one that happens not to overflow. */
+static void copy_body(registry_response *out, const char *text) {
+    snprintf(out->body, sizeof out->body, "%.*s", (int)(sizeof out->body - 1), text);
+}
+
 static void split_response(char *text, registry_response *out) {
     out->status = 0;
     char *marker = strstr(text, STATUS_MARKER);
     if(marker == NULL) {
-        snprintf(out->body, sizeof out->body, "%s", text);
+        copy_body(out, text);
         return;
     }
     *marker = '\0';
     out->status = strtol(marker + strlen(STATUS_MARKER), NULL, 10);
-    snprintf(out->body, sizeof out->body, "%s", text);
+    copy_body(out, text);
 }
 
 static bool run_curl(const char *const argv[], registry_response *out, char *err, size_t err_size) {

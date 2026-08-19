@@ -573,10 +573,13 @@ static bool wsdb_save(wsdb *db) {
              write_u32(f, (uint32_t)str_map_size(db->entries));
     if(ctx.ok)
         str_map_foreach(db->entries, save_entry, &ctx);
-    bool ok = ctx.ok && fclose(f) == 0;
-    if(f != NULL && !ctx.ok)
-        fclose(f);
-    if(!ok) {
+    /* Closed once, on every path, and its result folded in rather than
+       skipped: a buffered write has nowhere else left to fail, so a `fclose`
+       that a short circuit jumped over is a save reported as successful with
+       the last of it still in the buffer. The staging file goes either way —
+       what is not renamed into place is not a database. */
+    const bool closed = fclose(f) == 0;
+    if(!ctx.ok || !closed) {
         remove(tmp);
         return false;
     }

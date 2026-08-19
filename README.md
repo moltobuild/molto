@@ -61,12 +61,19 @@ make run ARGS="new my_app"
 make test
 ```
 
+## Licence
+
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). The patent
+grant is the reason for choosing it over a shorter permissive licence: Molto
+runs other people's compilers and its registry distributes other people's code.
+
 ## Project layout
 
 ```
 include/molto/   Public headers (used as <molto/...>)
 src/             CLI entry point, command handlers, and services
-tests/           Minimal test framework and suites
+tests/           The test suites
+modules/moltest/ The test framework, a standalone module
 docs/            User guides (start with docs/Project.md)
 rfcs/            Design documents
 ```
