@@ -1,6 +1,9 @@
 # Build output
 /build/
 
+# Release artifacts, assembled by the release workflow
+/dist/
+
 # Workspace database (molto-owned metadata)
 /.bin/
 

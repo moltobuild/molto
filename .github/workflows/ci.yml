@@ -138,6 +138,36 @@ jobs:
           MOLTO_CLANG_TIDY: /usr/bin/clang-tidy-19
         run: ./build/molto lint
 
+  # The shape the release ships, built on every push rather than only at a tag.
+  # A release artifact that CI never builds is one that breaks between releases
+  # and is found out by whoever downloads it.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install GCC 12
+        run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
+      - name: Link it statically
+        run: |
+          make build LDFLAGS="-static"
+          file build/molto | grep -q 'statically linked'
+      # Static glibc is only safe here because molto shells out to curl and
+      # never resolves a hostname, so NSS is never dlopened. A build that
+      # started doing its own networking would link cleanly and fail on a
+      # machine other than this one — so the check is that it still works.
+      - name: And it still builds and runs a project
+        env:
+          C_COMPILER: gcc-12
+          CPP_COMPILER: g++-12
+        run: |
+          molto="$PWD/build/molto"
+          cd "$(mktemp -d)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
   # Pinned while it is green. The suite came back clean under all three of
   # these on 2026-08-18 — no leak, no overflow, no undefined behaviour — and
   # that is the cheap moment to hold it there. Found later, the same result
