@@ -35,6 +35,13 @@
 /* A lock file's `source` string: a scheme prefix and an origin (RFC-0008). */
 #define DEP_GRAPH_SOURCE_MAX (SOURCE_URL_MAX + 64)
 
+/* How much of a source a conflict message may name. Not the whole of one: this
+   goes on a terminal row beside an arrow and a package name, and a kilobyte of
+   URL is not more readable than the two ends of it. Anything longer is elided
+   in the middle, so the reader can see that they are looking at a shortening
+   rather than at a name. */
+#define DEP_IDENTITY_MAX 160
+
 /*
  * Which build a package belongs to.
  *
@@ -121,10 +128,16 @@ typedef struct {
        caller tells one apart from an unreachable registry. */
     char name[DEP_NAME_MAX];
     /* The two claims, and who made each. `required_by` is "" when the root
-       package named it directly. */
-    char version[DEP_VERSION_MAX];
+       package named it directly.
+
+       These hold an *identity*, not a version: a dependency with no version of
+       its own — a path, or a git ref — is named by its source instead, and a
+       source is a URL. DEP_VERSION_MAX would fit the version and clip the URL,
+       which is the one thing this message cannot afford to do quietly, so they
+       are sized for the URL and eliding is what happens past that. */
+    char version[DEP_IDENTITY_MAX];
     char required_by[DEP_NAME_MAX];
-    char other_version[DEP_VERSION_MAX];
+    char other_version[DEP_IDENTITY_MAX];
     char other_required_by[DEP_NAME_MAX];
 
     /* Filled by the search when it found a change the user can write down. */
