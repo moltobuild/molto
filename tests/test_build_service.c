@@ -447,6 +447,24 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
     (void)system(cmd);
 }
 
+/* Put C_COMPILER back the way it was found. The test below points it at a
+   stub compiler, and unsetting it afterwards is not the same as restoring it:
+   on a machine that reaches its compiler through C_COMPILER rather than
+   through pickup — which is what CI is — every later test loses it. */
+static void remember_env(const char *name, char *into, size_t size, bool *had) {
+    const char *existing = getenv(name);
+    *had = existing != NULL;
+    if (existing != NULL)
+        snprintf(into, size, "%s", existing);
+}
+
+static void restore_env(const char *name, const char *saved, bool had) {
+    if (had)
+        (void)setenv(name, saved, 1);
+    else
+        (void)unsetenv(name);
+}
+
 MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
     char root[] = "/tmp/molto_build_race_XXXXXX";
     ASSERT_NOT_NULL(mkdtemp(root));
@@ -483,6 +501,9 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
              tools);
     ASSERT_TRUE(fs_write_file(compiler, script));
     ASSERT_TRUE(chmod(compiler, 0755) == 0);
+    char saved_cc[4096];
+    bool had_cc;
+    remember_env("C_COMPILER", saved_cc, sizeof saved_cc, &had_cc);
     ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
 
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
@@ -504,7 +525,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
     EXPECT_TRUE(strlen(second) > after_first);
     free(second);
 
-    (void)unsetenv("C_COMPILER");
+    restore_env("C_COMPILER", saved_cc, had_cc);
     char cmd[512];
     snprintf(cmd, sizeof cmd, "rm -rf %s %s", root, tools);
     (void)system(cmd);
