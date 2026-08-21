@@ -11,6 +11,9 @@
    inside `artifacts` read back the same way. */
 #define ARTIFACTS_PRIVATE_SECTION "artifacts.private"
 
+/* Where a plugin declares what it does and what it needs (RFC-0014). */
+#define PLUGIN_SECTION "plugin"
+
 /* The document's own top level, where a recipe's coordinate lives. */
 #define ROOT_SECTION ""
 
@@ -204,6 +207,43 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
            read_options(doc, ARTIFACTS_SECTION, &out->options, err, err_size) &&
            read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size);
+}
+
+/* --- [plugin] --- */
+
+bool recipe_read_plugin(doc_view doc, recipe_plugin *out, char *err, size_t err_size) {
+    memset(out, 0, sizeof *out);
+
+    if(!doc_has_table(doc, PLUGIN_SECTION))
+        return set_error(err, err_size, "the recipe has no [plugin] table");
+
+    if(!doc_read_strings(doc, PLUGIN_SECTION, "capabilities", out->capabilities[0],
+                         RECIPE_PLUGIN_MAX_CAPABILITIES, RECIPE_PLUGIN_ENTRY_MAX,
+                         &out->capability_count, err, err_size))
+        return false;
+    if(out->capability_count == 0)
+        return set_error(err, err_size, "[plugin].capabilities names none");
+
+    if(!doc_read_strings(doc, PLUGIN_SECTION, "extensions", out->extensions[0],
+                         RECIPE_PLUGIN_MAX_EXTENSIONS, RECIPE_PLUGIN_ENTRY_MAX,
+                         &out->extension_count, err, err_size))
+        return false;
+    if(!doc_read_strings(doc, PLUGIN_SECTION, "permissions", out->permissions[0],
+                         RECIPE_PLUGIN_MAX_PERMISSIONS, RECIPE_PLUGIN_ENTRY_MAX,
+                         &out->permission_count, err, err_size))
+        return false;
+
+    /* Both are optional and both are reported as absent rather than defaulted:
+       a plugin that names no IR schema has not agreed to one, and guessing on
+       its behalf is how a version mismatch turns into a half-read document. */
+    if(!doc_get_int(doc, PLUGIN_SECTION, "ir_schema", &out->ir_schema) &&
+       doc_has_key(doc, PLUGIN_SECTION, "ir_schema"))
+        return set_error(err, err_size, "[plugin].ir_schema must be an integer");
+    if(!doc_get_string(doc, PLUGIN_SECTION, "molto_min", out->molto_min, sizeof out->molto_min) &&
+       doc_has_key(doc, PLUGIN_SECTION, "molto_min"))
+        return set_error(err, err_size, "[plugin].molto_min must be a string");
+
+    return true;
 }
 
 static bool listed_in(const char list[][RECIPE_SOURCE_MAX], size_t count, const char *name) {

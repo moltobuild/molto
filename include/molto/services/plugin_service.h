@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <molto/services/recipe_service.h>
+
 /*
  * Plugins, as far as the command line is concerned (RFC-0014).
  *
@@ -26,6 +28,26 @@
 #define PLUGIN_NAME_MAX 64
 #define PLUGIN_PATH_MAX 4096
 
+/* How many plugins one listing reports. Overflow is reported, never silently
+   dropped: a plugin missing from `molto plugin list` is one nobody knows is
+   installed, and the whole point of the command is answering that question. */
+#define PLUGIN_MAX_LISTED 64
+
+/* Where a plugin came from, which `molto plugin list` reports because "what is
+   installed" and "what happens to be on this PATH" are different answers. */
+typedef enum {
+    plugin_origin_installed, /* ~/.molto/plugins/bin, put there by molto */
+    plugin_origin_path,      /* found on PATH, and nobody's record says why */
+} plugin_origin;
+
+/* One plugin, as a listing knows it before any recipe is read. */
+typedef struct {
+    char name[PLUGIN_NAME_MAX];
+    char path[PLUGIN_PATH_MAX];
+    plugin_origin origin;
+    bool has_recipe;
+} plugin_entry;
+
 /* Whether `name` may name a plugin: lowercase letters, digits, `_` and `-`,
    starting with a letter or a digit. The same shape a recipe's name has
    (RFC-0009), and the reason to check it here is narrower — the name becomes a
@@ -40,6 +62,30 @@
 /* The executable serving `name`, written to `out` as an absolute path.
    False when the name is invalid or nothing provides it. */
 [[nodiscard]] bool plugin_resolve(const char *name, char *out, size_t size);
+
+/* Where the recipe of an installed plugin is kept:
+   ~/.molto/plugins/recipes/<name>.toml.
+
+   Beside the binary rather than inside it, and on disk rather than fetched
+   again, because the permissions a plugin was installed under have to be
+   readable later without asking a registry that may be unreachable, may have
+   yanked the version, or may answer differently than it did that day. */
+[[nodiscard]] bool plugin_recipe_path(const char *name, char *out, size_t size);
+
+/* Every plugin this machine offers, installed first and then whatever PATH
+   adds, each name reported once — a plugin installed *and* on PATH is the
+   installed one, which is the copy that would run.
+
+   Sorted by name within each origin, so two runs list the same thing in the
+   same order however the filesystem felt about it. False when the listing did
+   not fit `capacity`. */
+[[nodiscard]] bool plugin_list(plugin_entry *out, size_t capacity, size_t *count);
+
+/* Read the recipe of an installed plugin: its coordinate and its `[plugin]`
+   table. False, with a message, when there is no recipe beside it or the one
+   there cannot be read. Either `coordinate` or `plugin` may be NULL. */
+[[nodiscard]] bool plugin_read_recipe(const char *name, recipe_coordinate *coordinate,
+                                      recipe_plugin *plugin, char *err, size_t err_size);
 
 /* Run the executable at `path`, handing it `argc`/`argv` unchanged and letting
    it inherit stdio, so what it prints is what the user sees.
