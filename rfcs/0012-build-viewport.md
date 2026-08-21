@@ -198,3 +198,6 @@ that applied to the failing case applies to both.
   for `molto lint`. This applies it to a build.
 - **RFC-0007** (Build) defines the plan that counts the units, which is what
   gives the bar an honest denominator and lets the region exist at all.
+- **RFC-0015** (Build Pipeline and Transforms) makes `generate` a barrier so
+  that denominator is still final, and gives a plugin's step an origin to be
+  named by.

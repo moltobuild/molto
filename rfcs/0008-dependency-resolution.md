@@ -577,7 +577,7 @@ system rather than a script.
 - [RFC-0007: Build System](0007-build-system.md) — the build graph these edges extend, and the global cache
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — the `recipe` source
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — where a `version` source is resolved
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the `Dependency` nodes a resolution becomes
 
 See also `spec.md` sections 7 (Dependency Model), 9-10 (Artifacts and Global
 Cache) and 15-16 (Registries).
-- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the `Dependency` nodes a resolution becomes

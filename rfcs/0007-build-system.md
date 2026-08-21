@@ -630,7 +630,8 @@ whose stated non-goal is being a compiler has no business attempting either
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the edges this build has none of yet
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — where a dependency's include paths, libraries and defines come from
 - [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — what a build prints when a unit does not compile, and why no flag is asked for
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — supersedes *The build graph*, and the document everything specified here is downstream of
+- [RFC-0015: Build Pipeline and Transforms](0015-build-pipeline.md) — the phases around the compile and link this RFC composes
 
 See also `spec.md` sections 6 (Philosophy), 9-10 (Artifacts and Global Cache),
 12 (Incremental Compilation), 13 (Build Profiles) and 20 (Performance).
-- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — supersedes *The build graph*, and the document everything specified here is downstream of
