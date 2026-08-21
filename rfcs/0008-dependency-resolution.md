@@ -469,6 +469,12 @@ Path dependencies are excluded from this entirely. Their bytes change without
 notice, and a cache entry for a moving target is a stale entry waiting to
 happen.
 
+The IR (RFC-0013) fails the same test and for the second reason rather than the
+first: a document is cheap to recompute and full of one machine's absolute
+paths, so it is kept in the workspace database and never in the global cache.
+What is worth keeping globally is what a build *produced*, not the description
+it was produced from.
+
 ## Implementation Status
 
 As of molto 0.5.0, the front half exists: a manifest's dependencies are read,
@@ -570,3 +576,4 @@ system rather than a script.
 
 See also `spec.md` sections 7 (Dependency Model), 9-10 (Artifacts and Global
 Cache) and 15-16 (Registries).
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the `Dependency` nodes a resolution becomes
