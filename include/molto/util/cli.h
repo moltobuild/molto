@@ -46,6 +46,22 @@ typedef struct {
     cli_handler handler;
 } cli_command;
 
+/*
+ * Last chance to serve a name the command table does not carry.
+ *
+ * Called after the table has been searched and before the unknown-command
+ * error is printed, so a handler can never shadow a built-in: `build` is found
+ * first, always. Returning true means the name was served and `*exit_code`
+ * holds the process's answer; returning false leaves the error to the
+ * framework, which is what keeps that message in one place.
+ *
+ * The arguments arrive exactly as they did on the command line, unparsed. The
+ * framework validates options against a command's spec, and it has no spec for
+ * a name it does not know — pretending otherwise would mean rejecting flags
+ * that are perfectly valid to whoever ends up handling them.
+ */
+typedef bool (*cli_unknown_handler)(const char *name, int argc, char **argv, int *exit_code);
+
 /* The application: program identity plus its command table. */
 typedef struct {
     const char *program; /* e.g. "molto" */
@@ -53,6 +69,7 @@ typedef struct {
     const char *tagline; /* one line shown in the global help */
     const cli_command *commands;
     size_t command_count;
+    cli_unknown_handler unknown; /* optional; NULL is the usage error alone */
 } cli_app;
 
 /* Parse argv against `app`, handling --help/--version, validating options and

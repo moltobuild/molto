@@ -39,7 +39,7 @@ static int run_app(int argc, char **argv) {
         { "do", "a test command", "<name>", test_options,
           sizeof test_options / sizeof test_options[0], capture_handler },
     };
-    const cli_app app = { "testapp", "9.9.9", "tagline", commands, 1 };
+    const cli_app app = { "testapp", "9.9.9", "tagline", commands, 1, NULL };
     memset(&seen, 0, sizeof seen);
     return cli_app_run(&app, argc, argv);
 }
@@ -167,4 +167,78 @@ MOLTEST(cli_refuses_a_jobs_count_that_is_not_one) {
 
     char *absurd[] = { "molto", "fmt", "-j", "4096" };
     EXPECT_EQ(exit_usage_error, cli_run(4, absurd));
+}
+
+/* --- the unknown-command hook (RFC-0014) --- */
+
+/* What the fallback saw, and what it should answer. */
+static struct {
+    bool called;
+    const char *name;
+    int argc;
+    const char *argv0;
+    bool claim; /* what the handler returns */
+    int code;   /* what it writes into *exit_code when it claims the name */
+} fallback;
+
+static bool capture_unknown(const char *name, int argc, char **argv, int *exit_code) {
+    fallback.called = true;
+    fallback.name = name;
+    fallback.argc = argc;
+    fallback.argv0 = argc > 0 ? argv[0] : NULL;
+    if(!fallback.claim)
+        return false;
+    *exit_code = fallback.code;
+    return true;
+}
+
+static int run_app_with_fallback(int argc, char **argv, bool claim, int code) {
+    const cli_command commands[] = {
+        { "do", "a test command", "<name>", test_options,
+          sizeof test_options / sizeof test_options[0], capture_handler },
+    };
+    const cli_app app = { "testapp", "9.9.9", "tagline", commands, 1, capture_unknown };
+    memset(&seen, 0, sizeof seen);
+    memset(&fallback, 0, sizeof fallback);
+    fallback.claim = claim;
+    fallback.code = code;
+    return cli_app_run(&app, argc, argv);
+}
+
+MOLTEST(cli_hands_an_unknown_name_to_the_fallback) {
+    char *argv[] = { "testapp", "deb", "--output", "x.deb" };
+    EXPECT_EQ(7, run_app_with_fallback(4, argv, true, 7));
+
+    EXPECT_TRUE(fallback.called);
+    EXPECT_STREQ("deb", fallback.name);
+
+    /* Unparsed, because the framework has no option spec for a name it does
+       not know and would otherwise reject flags that are valid to whoever
+       handles it. */
+    EXPECT_EQ(2, fallback.argc);
+    EXPECT_STREQ("--output", fallback.argv0);
+}
+
+MOLTEST(cli_reports_the_usual_error_when_the_fallback_declines) {
+    char *argv[] = { "testapp", "typo" };
+    EXPECT_EQ(exit_usage_error, run_app_with_fallback(2, argv, false, 0));
+
+    /* Asked, and said no — so the user still gets the list of what does exist,
+       which is the right answer for a typo. */
+    EXPECT_TRUE(fallback.called);
+}
+
+MOLTEST(cli_never_offers_a_built_in_command_to_the_fallback) {
+    /* The table is searched first, so nothing installed can take a name Molto
+       already answers. */
+    char *argv[] = { "testapp", "do", "x" };
+    EXPECT_EQ(0, run_app_with_fallback(3, argv, true, 7));
+
+    EXPECT_FALSE(fallback.called);
+    EXPECT_TRUE(seen.called);
+}
+
+MOLTEST(cli_without_a_fallback_still_refuses_an_unknown_name) {
+    char *argv[] = { "testapp", "deb" };
+    EXPECT_EQ(exit_usage_error, run_app(2, argv));
 }

@@ -13,6 +13,7 @@
 #include <molto/commands/run_command.h>
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
+#include <molto/services/plugin_service.h>
 #include <molto/util/cli.h>
 
 #include <stdio.h>
@@ -282,6 +283,23 @@ static int handle_unimplemented(const cli_args *args) {
     return exit_not_implemented;
 }
 
+/* A name the table above does not carry may be a plugin: `molto deb` runs
+   `molto-deb` (RFC-0014). Reached only after every built-in has been tried, so
+   no plugin can take a command Molto already answers.
+
+   An unresolved name is left unhandled rather than reported here, so the user
+   still gets the usual "unknown command" with the list of what does exist —
+   which is the right message, since most of the time the name is a typo and not
+   a plugin anyone meant to install. */
+static bool handle_plugin(const char *name, int argc, char **argv, int *exit_code) {
+    char path[PLUGIN_PATH_MAX];
+    if(!plugin_resolve(name, path, sizeof path))
+        return false;
+
+    *exit_code = plugin_run(path, argc, argv);
+    return true;
+}
+
 /* --- command table --- */
 
 static const cli_command commands[] = {
@@ -320,6 +338,7 @@ int cli_run(int argc, char **argv) {
         .tagline = "a modern packaging ecosystem for C and C++",
         .commands = commands,
         .command_count = sizeof commands / sizeof commands[0],
+        .unknown = handle_plugin,
     };
     return cli_app_run(&app, argc, argv);
 }

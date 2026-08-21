@@ -131,6 +131,11 @@ int cli_app_run(const cli_app *app, int argc, char **argv) {
 
     const cli_command *cmd = find_command(app, argv[1]);
     if(cmd == NULL) {
+        /* The table wins first, so nothing served here can shadow a built-in. */
+        int handled = CLI_EXIT_OK;
+        if(app->unknown != NULL && app->unknown(argv[1], argc - 2, argv + 2, &handled))
+            return handled;
+
         fprintf(stderr, "%s: unknown command '%s'\n\n", app->program, argv[1]);
         print_global_help(app, stderr);
         return CLI_EXIT_USAGE;
