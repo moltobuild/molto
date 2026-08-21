@@ -139,9 +139,10 @@ carrying a script.
 | Key | Type | Description |
 |---|---|---|
 | `system` | string | `make`, `cmake`, `autotools`, `meson` or `none` |
-| `args` | array[string] | Arguments passed to it, verbatim |
-| `env` | table | Environment variables set for the build |
-| `jobs` | bool | Whether the build system is given a parallelism flag |
+| `via` | string | `frontend` or `delegate`; how `system` is honoured |
+| `args` | array[string] | Arguments passed to it, verbatim — `delegate` only |
+| `env` | table | Environment variables set for the build — `delegate` only |
+| `jobs` | bool | Whether the build system is given a parallelism flag — `delegate` only |
 
 `system = "none"` is for a source drop that needs no build: headers, or sources
 compiled by the consumer as if they were its own.
@@ -150,12 +151,51 @@ This table is where the temptation to invent a build language lives, and the
 answer is no (RFC-0001, and RFC-0007's Non-Goals). A recipe that could run
 arbitrary commands would make every dependency a remote code execution with
 extra steps, and would make Molto the thing it says it is not. Naming an
-existing build system means the escape hatch is `args`, which is bounded, and
-means the recipes people write stay readable — `system = "cmake"` says more
-about a dependency than twenty lines of shell.
+existing build system keeps the recipes people write readable — `system =
+"cmake"` says more about a dependency than twenty lines of shell.
 
 A build system Molto does not know is a rejected recipe, not a fallback to
 `sh -c`.
+
+### `system` names a language; `via` names the mechanism
+
+This document used to argue that naming an existing build system avoided
+arbitrary code execution, because "the escape hatch is `args`, which is
+bounded". That argument was wrong and is withdrawn. `system = "cmake"` runs
+CMake, and a `CMakeLists.txt` may call `execute_process`; `system = "meson"`
+runs Meson, and a `meson.build` may call `run_command`. Handing a build to an
+installed build system *is* remote code execution with extra steps — the thing
+this table was written to prevent — and until RFC-0014 it was the only option a
+recipe had.
+
+So `system` names the **language the build is described in**, and `via` names
+**what Molto does with it**:
+
+- `via = "frontend"` — a compatibility plugin (RFC-0014) reads the build files
+  and translates them into an IR document (RFC-0013). Nothing from the
+  dependency is executed. A construct outside the frontend's subset is a
+  rejected build, reported with its line, and **never** a silent fallback to
+  `delegate` — a safe path that becomes unsafe exactly when a project gets
+  complicated is not a safe path.
+- `via = "delegate"` — the build system installed on this machine is invoked,
+  as it always was. This is the escape hatch, and calling it one in the recipe
+  is the point: it is a declaration, readable from the catalogue before a single
+  byte is downloaded (RFC-0010), that building this dependency runs code the
+  dependency wrote.
+
+`via` defaults to `frontend` when a frontend for that `system` is installed, and
+to `delegate` otherwise, so a recipe written today keeps working and gets safer
+the day a frontend exists for it. A recipe may set `via` explicitly to refuse
+that: a dependency that genuinely needs its own configure logic pins
+`delegate`, and one that never wants to run foreign code pins `frontend` and
+fails loudly if none is installed.
+
+`args`, `env` and `jobs` mean nothing under a frontend. There is no process to
+pass arguments to, no environment to set for it, and — since Molto schedules the
+work itself once it is in the graph (RFC-0015) — nothing to hand a parallelism
+flag to. Setting any of the three alongside `via = "frontend"` is a rejected
+recipe, not a key quietly ignored: a recipe that sets them believes something
+about what the consumer will do.
 
 ## `[artifacts]`
 
@@ -273,11 +313,24 @@ satisfies — the same vocabulary a manifest's `[target].requires` asks for
 
 ### `[tool]`
 
-Required for `kind = "tool"`. `kind` is one of `formatter`, `linter` or
-`linker`, and `binary` names the executable inside the archive. An optional
+Required for `kind = "tool"`. `kind` is one of `formatter`, `linter`, `linker`
+or `plugin`, and `binary` names the executable inside the archive. An optional
 `aliases` string list gives the other names the tool is known by. This is what
 lets `molto fmt` and `molto lint` obtain their tools from the same registry
 that serves libraries (RFC-0005).
+
+`kind = "plugin"` additionally requires a `[plugin]` table, specified by
+RFC-0014, declaring the capabilities the plugin provides, the file extensions
+that select it, the permissions it asks for, the IR schema it speaks and the
+minimum Molto it needs. A plugin is a native executable, so its `target` **MUST
+NOT** be `any`.
+
+**A plugin recipe is the one place the unknown-key rule below does not apply.**
+A reader that ignores a `[plugin]` table it does not understand runs an
+executable under permissions it never saw, which is the opposite of what
+ignoring unknown keys is for. A recipe with `kind = "plugin"` therefore
+declares a higher `schema`, so a Molto that does not know about plugins refuses
+it outright instead of reading the half it recognises.
 
 ### `[package]`
 
@@ -615,12 +668,13 @@ package should be one, and should publish as `kind = "package"` with a real
 
 ## Related RFCs
 
-- [RFC-0001: Manifesto](0001-manifesto.md) — why a recipe names a build system instead of running one
+- [RFC-0001: Manifesto](0001-manifesto.md) — why a recipe names a build system instead of inventing one
 - [RFC-0002: CLI Specification](0002-cli-specification.md) — `molto publish`, which reads a recipe
 - [RFC-0003: Project Manifest](0003-project-manifest.md) — the `[deps]` syntax a recipe reuses, and the reserved metadata keys `[about]` mirrors
 - [RFC-0005: Code Style](0005-code-style.md) — the formatters and linters a `tool` recipe distributes
 - [RFC-0007: Build System](0007-build-system.md) — where `[artifacts]` ends up on a command line
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the `recipe` dependency source this document defines
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — how a recipe is published and served
+- [RFC-0014: Plugin System](0014-plugin-system.md) — the `[plugin]` table, and the frontend `via = "frontend"` hands a build to
 
 See also `spec.md` sections 8 (Recipes) and 9 (Artifacts).

@@ -575,10 +575,22 @@ Not implemented, each waiting on something other than this RFC:
 ## Non-Goals
 
 Molto is not a build language. There are no rules, no recipes local to a
-project, no shell escapes inside a build, and no way to make one target depend
-on an arbitrary command. What a build does is derived from the tree and from the
-manifest, and if that is not enough, the answer is a new manifest key or a
-plugin — not a scripting layer.
+project, no shell escapes inside a build, and nothing in a `Project.toml` that
+makes a target depend on a command someone typed. What a build does is derived
+from the tree and from the manifest, and if that is not enough, the answer is a
+new manifest key or a plugin — not a scripting layer.
+
+That sentence named a plugin as the escape hatch before anyone had specified
+one, and RFC-0014 now has. It is worth being exact about what the answer turned
+out to be, because half of this Non-Goal was given up to get it. A build *can*
+now run a command: a `BuildStep` (RFC-0013), emitted by a frontend from a
+`custom_target` that already existed in a file that already described a build.
+What was not given up is why the refusal was there. A `BuildStep` declares its
+inputs and its outputs, so the scheduler can order it and the freshness model
+can check it; it is executed directly and never through a shell; it is validated
+against the workspace before it runs; and no project can introduce one by
+writing it in its own manifest. The thing refused was never "a command" — it was
+a command Molto cannot see the edges of, and that is still refused.
 
 Molto does not scan `#include` itself. Header dependencies come from the
 compiler, which already resolves them exactly and for free while it works.

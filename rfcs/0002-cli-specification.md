@@ -189,8 +189,52 @@ on its own.
 ### `molto migrate <make|cmake|meson>`
 
 Imports an existing project built with Make, CMake, or Meson, generating a
-`Project.toml` and reorganizing sources to follow Molto's conventions where
-possible (see `spec.md` section 18).
+`Project.toml` (see `spec.md` section 18).
+
+It does **not** reorganize sources. An earlier draft of this section said it
+would move files to follow Molto's conventions, and that contradicts the rule
+this RFC applies to the manifest itself: Molto writes to a user's tree only in
+response to an explicit command, and rearranging someone's repository is a far
+larger act than writing one file they asked for. What `migrate` produces is a
+manifest that describes the tree as it is, and a report of what it could not
+express.
+
+`migrate` is not a separate importer. It runs a compatibility frontend
+(RFC-0014) once and serialises the resulting IR (RFC-0013) to a `Project.toml`.
+Written any other way it would be a second parser for the files a frontend
+already parses, and the two would drift — one parser, two products: a permanent
+conversion here, and a continuous translation when the same project is built
+through its own build files.
+
+### `molto plugin <list|info|install|remove>`
+
+Manages installed plugins (RFC-0014). `list` shows what is installed with the
+capabilities and permissions of each; `info <name>` shows one in full, including
+where it came from; `install <name>[@<version>]` fetches and verifies it from a
+registry, shows what it will be allowed to do and asks for confirmation;
+`remove <name>` uninstalls it.
+
+Permissions are shown by default rather than behind a flag. The security of the
+design rests on a user being able to answer "what is installed, and what may it
+do" without reading a recipe by hand.
+
+### `molto ir`
+
+Writes the project's IR document (RFC-0013) to standard output, or to
+`--output <path>`. It runs the frontend and every transform and stops before the
+engine.
+
+Like `molto metadata`, its output carries no timestamp, no serial and no path
+that a second machine would write differently: two runs over one project MUST
+produce one byte-identical file. A document that differs between runs cannot be
+diffed, and a contract nobody can diff is a contract nobody can conform to.
+
+### `molto <plugin-command>`
+
+A plugin providing the `command` capability adds a subcommand under its own
+name. The lookup happens **after** the built-in table, never before, so no
+plugin can shadow `build`, and an unknown command that matches no plugin is
+still a usage error.
 
 ## Exit Codes
 
@@ -202,10 +246,19 @@ possible (see `spec.md` section 18).
 | 3    | Dependency resolution failure               |
 | 4    | Invalid CLI usage (bad flags/args)          |
 | 5    | Command declared in the CLI but not implemented yet |
+| 6    | Plugin failure                              |
 
 A command listed in `--help` but not yet implemented MUST exit with 5, never
 with 1: a script has to be able to tell "this is not built yet" apart from
 "the build failed".
+
+6 is for a plugin that crashed, timed out, returned a document that failed
+validation, or asked for something it had no permission to do (RFC-0014). It
+exists for the same reason 5 does: a script needs to tell "my code does not
+compile" apart from "a third-party binary misbehaved", and collapsing the two
+into 1 makes a build failure the explanation for everything. The existing codes
+still cover the neighbouring cases — a manifest naming an unknown plugin is 2,
+and a plugin that cannot be resolved from a registry is 3.
 
 ### `molto run` and the program's exit code
 
@@ -230,3 +283,5 @@ run `molto build` first and then the executable directly.
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — the document `publish` reads
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — `login` and `publish`
 - [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — how what a compiler said reaches the person who typed the command
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the document `molto ir` writes
+- [RFC-0014: Plugin System](0014-plugin-system.md) — `molto plugin`, plugin subcommands, the reframed `migrate`, and exit code 6

@@ -557,8 +557,12 @@ system rather than a script.
   resolution pass over a graph that does not exist yet — and because a feature
   no manifest can enable does not need an algorithm.
 - `[build-deps]`. Dependencies needed to *run* a build rather than to link into
-  it. They wait because Molto has no build scripts, so nothing could consume one
-  yet. `[dev-deps]` is no longer reserved; it is specified above.
+  it. They waited because Molto had no build scripts, so nothing could consume
+  one yet; RFC-0013's `BuildStep` is the first thing that could. They are still
+  not specified here, and they are deliberately not the same table as
+  RFC-0014's `[plugins]` — a build dependency is a package this resolver
+  resolves, and a plugin is an installed executable with a consent model.
+  `[dev-deps]` is no longer reserved; it is specified above.
 - Vendoring — a command that copies the resolved graph into the project for
   offline or audited builds.
 - Multi-package workspaces, where several members share one resolution and one
