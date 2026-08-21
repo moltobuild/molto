@@ -469,6 +469,12 @@ Path dependencies are excluded from this entirely. Their bytes change without
 notice, and a cache entry for a moving target is a stale entry waiting to
 happen.
 
+The IR (RFC-0013) fails the same test and for the second reason rather than the
+first: a document is cheap to recompute and full of one machine's absolute
+paths, so it is kept in the workspace database and never in the global cache.
+What is worth keeping globally is what a build *produced*, not the description
+it was produced from.
+
 ## Implementation Status
 
 As of molto 0.5.0, the front half exists: a manifest's dependencies are read,
@@ -551,8 +557,12 @@ system rather than a script.
   resolution pass over a graph that does not exist yet — and because a feature
   no manifest can enable does not need an algorithm.
 - `[build-deps]`. Dependencies needed to *run* a build rather than to link into
-  it. They wait because Molto has no build scripts, so nothing could consume one
-  yet. `[dev-deps]` is no longer reserved; it is specified above.
+  it. They waited because Molto had no build scripts, so nothing could consume
+  one yet; RFC-0013's `BuildStep` is the first thing that could. They are still
+  not specified here, and they are deliberately not the same table as
+  RFC-0014's `[plugins]` — a build dependency is a package this resolver
+  resolves, and a plugin is an installed executable with a consent model.
+  `[dev-deps]` is no longer reserved; it is specified above.
 - Vendoring — a command that copies the resolved graph into the project for
   offline or audited builds.
 - Multi-package workspaces, where several members share one resolution and one
@@ -567,6 +577,7 @@ system rather than a script.
 - [RFC-0007: Build System](0007-build-system.md) — the build graph these edges extend, and the global cache
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — the `recipe` source
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — where a `version` source is resolved
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the `Dependency` nodes a resolution becomes
 
 See also `spec.md` sections 7 (Dependency Model), 9-10 (Artifacts and Global
 Cache) and 15-16 (Registries).

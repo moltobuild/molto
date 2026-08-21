@@ -317,6 +317,16 @@ molto appimage
 
 Plugins communicate using a stable API.
 
+The API is a document, not an ABI.
+
+A plugin is a process. It reads an IR document and writes one.
+
+Specified by RFC-0013 (the IR), RFC-0014 (plugins) and RFC-0015 (the pipeline).
+
+Molto is the engine. Plugins are languages, transformations and capabilities.
+The IR is the contract. The pipeline is the execution. Recipes describe how
+external software becomes a Molto package.
+
 ---
 
 # 15. Registry Philosophy
@@ -483,13 +493,16 @@ Version 0.4
 
 - Windows
 - macOS
-- Plugins
+- Build IR (RFC-0013)
+- Plugins (RFC-0014)
+- Build pipeline (RFC-0015)
 
 Version 1.0
 
 Stable API
 Stable Registry
-Stable Plugin ABI
+Stable Plugin contract — the IR schema, the process protocol and the
+permission vocabulary. Not a C ABI; RFC-0014 says why.
 
 The 0.1 and 0.2 entries record what was released. Clang, Windows and macOS were
 planned for 0.2 and did not make it: the work went into the toolchain contract

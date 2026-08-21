@@ -66,7 +66,11 @@ of incremental truth. Conceptually it stores (`spec.md` section 11):
 
 - **Dependency graph** — declared dependencies and their resolved sources.
 - **Build graph** — translation units → objects → binary, plus test and bench
-  targets.
+  targets. RFC-0013 specifies what that graph is as a document; a cached IR is
+  a WSDB entry like any other, keyed and fingerprinted in the shape RFC-0006
+  uses, and discarded fail-safe under the same rules as everything else here. It
+  is cached here and never in `~/.molto/`, because an IR is full of this
+  machine's absolute paths and a global store must be addressed by content.
 - **File hashes and timestamps** — for sources and their headers.
 - **Command fingerprints** — the exact compile/link command per artifact, so a
   change in flags/profile/toolchain triggers a rebuild.
@@ -211,6 +215,7 @@ Not implemented yet, and each waiting on a feature rather than on this RFC:
 - [RFC-0006: Analysis Result Cache](0006-analysis-result-cache.md) — adds a fourth entry kind to the store described here
 - [RFC-0007: Build System](0007-build-system.md) — what the build does with the state stored here
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the dependency graph this store has no entry kind for, and why the resolution is not kept here
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — the build graph this store reserved room for, specified as a document
 
 See also `spec.md` sections 4 (Workspace), 10 (Global Cache) and 11 (Workspace
 Database).

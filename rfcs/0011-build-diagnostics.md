@@ -217,3 +217,5 @@ frame makes the cut visible where a raw stream did not.
   compile flag expensive, and the three defects this closes.
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the shared
   object cache whose key a compile flag would change.
+- [RFC-0014: Plugin System](0014-plugin-system.md) — the two forms a plugin may
+  write, and the `= plugin:` footer line it adds.

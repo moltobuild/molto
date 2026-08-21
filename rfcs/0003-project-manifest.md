@@ -339,6 +339,24 @@ yet, so the format can grow without breaking:
   into the package's own binary.
 - `[workspace]` — multi-package workspaces (`members`).
 - A manifest schema/version key for forward compatibility.
+- `[plugins]` — the plugins a project uses, specified by RFC-0014. It is
+  reserved separately from `[build-deps]` although the two are close enough to
+  be confused. A `[build-deps]` entry is a package: resolved by the resolver,
+  recorded in the lock file, built from source. A `[plugins]` entry is an
+  installed executable with declared permissions that Molto runs. They may share
+  a resolver one day; they do not share a consent model, and folding "this
+  binary may spawn processes" into a dependency list nobody reads that carefully
+  is how a supply chain gets one.
+
+`[plugins]` is also what forces the schema key above to stop being reserved. It
+**MUST** fail closed, and it cannot: an unknown table is ignored in silence
+today, so a manifest naming a plugin would build without it, succeed, and say
+nothing — a green build of the wrong thing, which is the exact failure
+`[package]`'s closed key list was introduced to prevent. An old reader cannot
+know it should refuse a table it has never heard of, so the manifest has to tell
+it: a manifest that names plugins declares a schema, and a Molto that does not
+understand that schema refuses the file rather than reading the half it
+recognises.
 
 ## Related RFCs
 
@@ -348,3 +366,4 @@ yet, so the format can grow without breaking:
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the algorithm behind `[deps]` and `[registries]`
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — reuses the `[deps]` syntax, and spells the publishing metadata `[about]`
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — how a named registry is reached
+- [RFC-0014: Plugin System](0014-plugin-system.md) — `[plugins]`, and the schema key it forces

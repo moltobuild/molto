@@ -82,10 +82,18 @@ only one of them.
 
 **The same tree, manifest and resolved toolchain produce the same command
 lines, in the same order, and the same link line.** Everything that decides a
-command is either in the tree, in the manifest, or in the WSDB's record of the
-toolchain (RFC-0004); the walk is sorted; and no part of the composition
-consults the clock, the environment, the current directory, or the order a
-filesystem hands back its entries.
+command is either in the tree, in the manifest, in the WSDB's record of the
+toolchain (RFC-0004), or in the IR a frontend produced from the first two
+(RFC-0013); the walk is sorted; and no part of the composition consults the
+clock, the environment, the current directory, or the order a filesystem hands
+back its entries.
+
+The fourth source is the one that needs care. A document produced by a plugin
+is not a file anyone can diff, so the promise holds only as far as the producer
+is deterministic — which is why RFC-0013 requires a frontend to report every
+file it read, and RFC-0015 requires a generator to be byte-reproducible. A
+non-deterministic producer does not break this build; it breaks this
+guarantee, and it is the producer's defect.
 
 **Byte-identical objects across machines are not guaranteed**, and three things
 break them, none of which is Molto's to fix by default. `__DATE__` and
@@ -105,14 +113,18 @@ audit.
 
 ## The build graph
 
-Molto has no build graph. It has a flat list of independent translation units
-and, per object, the list of files that object was compiled from.
+**Superseded by [RFC-0013](0013-build-intermediate-representation.md).**
 
-That is an honest description of the implementation and, for now, a sufficient
-one. A graph earns its keep when there are edges to order — when target B cannot
-start until target A has produced a header or a library. A single package has no
-such edges: every translation unit in `src/` can compile at the same instant,
-and the only ordering in the whole build is "all objects, then the link".
+This section used to say that Molto has no build graph, and that a flat list of
+independent translation units was a sufficient description because a single
+package has no edges to order. That was true while a package built exactly one
+executable from one directory. It stopped being true when a target could depend
+on a target and a source could be generated, and the list this section closed
+with — targets as nodes, a topological order, cycle detection — is now
+RFC-0013's node types and RFC-0015's scheduler.
+
+What is unchanged, and belongs here rather than there, is where a per-object
+prerequisite list comes from. It is not a graph; it is how one edge is learned.
 
 The per-object prerequisite list comes from the compiler. Each compile is issued
 with `-MMD -MF <object>.d`; the resulting depfile is parsed, absorbed into the
@@ -127,11 +139,10 @@ different toolchain changes the resolved compiler recorded in the WSDB
 individually would multiply prerequisite lists by an order of magnitude to
 detect an event that is already detected.
 
-What a real graph will have to add, when RFC-0008 lands: targets as nodes rather
-than three hard-coded shapes, a topological order over package dependencies,
-cycle detection, and a reverse index from header to dependent unit — today
-freshness is answered by walking every object's prerequisites, which is fine for
-hundreds of units and will not be fine for thousands.
+One item on that old list is still open and is not RFC-0013's: a reverse index
+from header to dependent unit. Freshness is answered today by walking every
+object's prerequisites, which is fine for hundreds of units and will not be fine
+for thousands.
 
 ## Incremental compilation
 
@@ -325,7 +336,9 @@ own, and it is why a project's library code is testable without being split into
 a separate target first.
 
 The output is `build/<profile>/<package-name>`. There is exactly one executable
-per package.
+per package **as implemented**; the limit is the engine's and no longer the
+model's, since RFC-0013 makes a target a node and a project may describe
+several.
 
 RFC-0003 defines `[package].artifact` as `source`, `static` or `shared`. Molto
 **rejects the manifest** that sets it, with any value, rather than accepting the
@@ -333,6 +346,13 @@ key and ignoring it. Producing a `.a` requires `ar`, and a `.so` requires
 `-fPIC`, a soname and a versioning policy; none of that exists. An explicit
 refusal costs the user one error message, while silent acceptance costs them a
 debugging session over a shared library that was never built.
+
+The refusal moves rather than relaxes. An IR document may carry an `Artifact`
+of either kind — a frontend for a build system whose whole vocabulary is
+libraries has to be able to say so — and the engine reports that it cannot
+build it. What a representation can express and what an implementation can
+produce are two questions, and conflating them would mean no frontend could be
+written until shared libraries were.
 
 ## Profiles
 
@@ -546,14 +566,31 @@ Not implemented, each waiting on something other than this RFC:
 - **Warnings on a cached unit.** A unit found up to date is not compiled, so
   what the compiler said about it last time is not said again. RFC-0006's store
   already records and replays that for `lint`; the build does not read it.
+- **The IR.** A build is planned straight from the manifest into compilation
+  passes, in one function, with no representation of the plan that outlives the
+  call. RFC-0013 specifies the document and RFC-0015 the phases; until they are
+  built, this RFC describes both the frontend and the engine at once, which is
+  why it reads as though the two were one thing.
 
 ## Non-Goals
 
 Molto is not a build language. There are no rules, no recipes local to a
-project, no shell escapes inside a build, and no way to make one target depend
-on an arbitrary command. What a build does is derived from the tree and from the
-manifest, and if that is not enough, the answer is a new manifest key or a
-plugin — not a scripting layer.
+project, no shell escapes inside a build, and nothing in a `Project.toml` that
+makes a target depend on a command someone typed. What a build does is derived
+from the tree and from the manifest, and if that is not enough, the answer is a
+new manifest key or a plugin — not a scripting layer.
+
+That sentence named a plugin as the escape hatch before anyone had specified
+one, and RFC-0014 now has. It is worth being exact about what the answer turned
+out to be, because half of this Non-Goal was given up to get it. A build *can*
+now run a command: a `BuildStep` (RFC-0013), emitted by a frontend from a
+`custom_target` that already existed in a file that already described a build.
+What was not given up is why the refusal was there. A `BuildStep` declares its
+inputs and its outputs, so the scheduler can order it and the freshness model
+can check it; it is executed directly and never through a shell; it is validated
+against the workspace before it runs; and no project can introduce one by
+writing it in its own manifest. The thing refused was never "a command" — it was
+a command Molto cannot see the edges of, and that is still refused.
 
 Molto does not scan `#include` itself. Header dependencies come from the
 compiler, which already resolves them exactly and for free while it works.
@@ -563,8 +600,10 @@ whose stated non-goal is being a compiler has no business attempting either
 
 ## Reserved / Future
 
-- Multiple binaries per package, and a library target separate from `src/`. Both
-  wait on a target model, which waits on the build graph.
+- Multiple binaries per package, and a library target separate from `src/`. The
+  target model they waited on is specified — it is RFC-0013's `Target` — so what
+  remains is the engine building more than one of them, plus `ar` and the
+  shared-library policy above.
 - Precompiled headers and unity builds. Both trade correctness of the
   incremental model for speed, and the incremental model is not the bottleneck
   yet.
@@ -591,6 +630,8 @@ whose stated non-goal is being a compiler has no business attempting either
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the edges this build has none of yet
 - [RFC-0009: Recipe Specification](0009-recipe-specification.md) — where a dependency's include paths, libraries and defines come from
 - [RFC-0011: Build Diagnostics](0011-build-diagnostics.md) — what a build prints when a unit does not compile, and why no flag is asked for
+- [RFC-0013: Build Intermediate Representation](0013-build-intermediate-representation.md) — supersedes *The build graph*, and the document everything specified here is downstream of
+- [RFC-0015: Build Pipeline and Transforms](0015-build-pipeline.md) — the phases around the compile and link this RFC composes
 
 See also `spec.md` sections 6 (Philosophy), 9-10 (Artifacts and Global Cache),
 12 (Incremental Compilation), 13 (Build Profiles) and 20 (Performance).
