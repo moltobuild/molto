@@ -249,7 +249,7 @@ MOLTEST(plugin_run_reports_a_plugin_that_never_ran) {
 /* A complete plugin recipe, so a test that cares about one key does not have
    to restate the other six. */
 #define A_PLUGIN_RECIPE \
-    "schema = 1\n" \
+    "schema = 2\n" \
     "form = \"binary\"\n" \
     "kind = \"tool\"\n" \
     "name = \"deb\"\n" \

@@ -20,8 +20,14 @@
    is refused rather than interpreted: RFC-0009 allows a later schema to give an
    existing key a new meaning, so reading one optimistically is reading it
    wrong. "Upgrade molto" is a fixable error; a misread recipe is a broken build
-   with no message. */
-#define RECIPE_SCHEMA_MAX 1
+   with no message.
+
+   Schema 2 is `[plugin]` (RFC-0014). A plugin's recipe is required to declare
+   it, so that a molto predating plugins refuses the document rather than
+   ignoring a table it does not know and installing an executable whose
+   permissions it never saw. Raising this is what makes such a recipe readable
+   here, and it is only honest because this reader does understand the table. */
+#define RECIPE_SCHEMA_MAX 2
 
 #define RECIPE_COORDINATE_MAX 128
 #define RECIPE_MAX_SOURCES 32

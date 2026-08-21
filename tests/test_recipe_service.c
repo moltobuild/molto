@@ -136,11 +136,26 @@ MOLTEST(recipe_assumes_what_a_recipe_without_the_new_keys_meant) {
 
 MOLTEST(recipe_rejects_a_schema_it_cannot_read) {
     /* A later schema may give an existing key a new meaning, so reading it
-       optimistically is reading it wrong. */
+       optimistically is reading it wrong. Written against the ceiling rather
+       than a number, so raising it does not quietly turn this into a test of
+       nothing. */
+    char text[256];
+    snprintf(text, sizeof text, "schema = %d\n" MINIMUM, RECIPE_SCHEMA_MAX + 1);
+
     recipe_coordinate coordinate;
     char err[256] = "";
-    EXPECT_FALSE(read_coordinate_of("schema = 2\n" MINIMUM, &coordinate, err, sizeof err));
+    EXPECT_FALSE(read_coordinate_of(text, &coordinate, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "upgrade molto"));
+}
+
+MOLTEST(recipe_reads_the_schema_a_plugin_declares) {
+    /* Schema 2 is `[plugin]` (RFC-0014), and a plugin recipe is required to
+       declare it — so a reader that refused it could not read what the
+       registry serves. */
+    recipe_coordinate coordinate;
+    char err[256] = "";
+    EXPECT_TRUE(read_coordinate_of("schema = 2\n" MINIMUM, &coordinate, err, sizeof err));
+    EXPECT_EQ(2, coordinate.schema);
 }
 
 MOLTEST(recipe_rejects_an_unknown_form) {
