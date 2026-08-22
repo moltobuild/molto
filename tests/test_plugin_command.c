@@ -54,7 +54,7 @@ MOLTEST(plugin_command_lists_an_empty_machine_without_failing) {
     ASSERT_TRUE(home_setup(&box));
 
     /* Nothing installed is an answer, not a failure. */
-    EXPECT_EQ(exit_ok, plugin_command_run("list", NULL));
+    EXPECT_EQ(exit_ok, plugin_command_run("list", NULL, NULL, false));
 
     home_teardown(&box);
 }
@@ -64,19 +64,19 @@ MOLTEST(plugin_command_defaults_to_listing) {
     ASSERT_TRUE(home_setup(&box));
     ASSERT_TRUE(install(&box, "deb"));
 
-    EXPECT_EQ(exit_ok, plugin_command_run(NULL, NULL));
-    EXPECT_EQ(exit_ok, plugin_command_run("list", NULL));
+    EXPECT_EQ(exit_ok, plugin_command_run(NULL, NULL, NULL, false));
+    EXPECT_EQ(exit_ok, plugin_command_run("list", NULL, NULL, false));
 
     home_teardown(&box);
 }
 
 MOLTEST(plugin_command_refuses_an_action_it_does_not_have) {
-    EXPECT_EQ(exit_usage_error, plugin_command_run("instal", NULL));
-    EXPECT_EQ(exit_usage_error, plugin_command_run("remove", "deb"));
+    EXPECT_EQ(exit_usage_error, plugin_command_run("instal", NULL, NULL, false));
+    EXPECT_EQ(exit_usage_error, plugin_command_run("uninstall", "deb", NULL, false));
 }
 
 MOLTEST(plugin_command_info_needs_a_name) {
-    EXPECT_EQ(exit_usage_error, plugin_command_run("info", NULL));
+    EXPECT_EQ(exit_usage_error, plugin_command_run("info", NULL, NULL, false));
 }
 
 MOLTEST(plugin_command_info_reports_a_plugin_that_is_not_there) {
@@ -85,7 +85,7 @@ MOLTEST(plugin_command_info_reports_a_plugin_that_is_not_there) {
 
     /* Not a usage error: the command was used correctly and the answer is that
        nothing provides that name. */
-    EXPECT_EQ(exit_dependency_failure, plugin_command_run("info", "nosuch"));
+    EXPECT_EQ(exit_dependency_failure, plugin_command_run("info", "nosuch", NULL, false));
 
     home_teardown(&box);
 }
@@ -97,7 +97,7 @@ MOLTEST(plugin_command_info_works_without_a_recipe) {
 
     /* Installed by hand, so nothing recorded what it asked for. What is known
        is still worth printing. */
-    EXPECT_EQ(exit_ok, plugin_command_run("info", "deb"));
+    EXPECT_EQ(exit_ok, plugin_command_run("info", "deb", NULL, false));
 
     home_teardown(&box);
 }
@@ -108,4 +108,35 @@ MOLTEST(cli_has_command_knows_the_built_ins) {
     EXPECT_TRUE(cli_has_command("plugin"));
     EXPECT_FALSE(cli_has_command("deb"));
     EXPECT_FALSE(cli_has_command(""));
+}
+
+MOLTEST(plugin_command_install_needs_a_name) {
+    EXPECT_EQ(exit_usage_error, plugin_command_run("install", NULL, NULL, true));
+}
+
+MOLTEST(plugin_command_remove_needs_a_name) {
+    EXPECT_EQ(exit_usage_error, plugin_command_run("remove", NULL, NULL, false));
+}
+
+MOLTEST(plugin_command_refuses_to_remove_what_it_did_not_install) {
+    home box;
+    ASSERT_TRUE(home_setup(&box));
+
+    /* A plugin that arrived on PATH was put there by someone else. Removing
+       nothing and reporting success would be worse than saying so. */
+    EXPECT_EQ(exit_dependency_failure, plugin_command_run("remove", "deb", NULL, false));
+
+    home_teardown(&box);
+}
+
+MOLTEST(plugin_command_removes_what_it_installed) {
+    home box;
+    ASSERT_TRUE(home_setup(&box));
+    ASSERT_TRUE(install(&box, "deb"));
+
+    EXPECT_EQ(exit_ok, plugin_command_run("remove", "deb", NULL, false));
+    /* Gone for good: a second removal has nothing to find. */
+    EXPECT_EQ(exit_dependency_failure, plugin_command_run("remove", "deb", NULL, false));
+
+    home_teardown(&box);
 }

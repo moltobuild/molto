@@ -85,16 +85,21 @@ static void describe_targets(json_value targets, char *out, size_t size) {
  * be consumed.
  */
 static bool choose_artifact(json_value targets, const char *name, const char *version,
-                            json_value *out, char *err, size_t err_size) {
+                            const char *wanted, json_value *out, char *err, size_t err_size) {
     const size_t total = json_count(targets);
     if(total == 0)
         return set_error(err, err_size, "%s %s is published with no targets at all", name, version);
+
+    /* `any` unless a caller names a platform. A dependency is compiled from
+       sources and does not have one; a plugin is a native executable and can
+       only ever be the host's, which is why it asks (RFC-0014). */
+    const char *sought = wanted != NULL ? wanted : ANY_TARGET;
 
     bool saw_any = false;
     for(size_t i = 0; i < total; i++) {
         const json_value artifact = json_at(targets, i);
         const char *target = json_string(json_get(artifact, "target"));
-        if(target == NULL || strcmp(target, ANY_TARGET) != 0)
+        if(target == NULL || strcmp(target, sought) != 0)
             continue;
         saw_any = true;
         /* A yanked artifact stays resolvable so old builds keep working, but it
@@ -111,6 +116,9 @@ static bool choose_artifact(json_value targets, const char *name, const char *ve
 
     char published[TARGET_LIST_MAX];
     describe_targets(targets, published, sizeof published);
+    if(wanted != NULL)
+        return set_error(err, err_size, "%s %s is published for %s, and not for %s", name, version,
+                         published, wanted);
     return set_error(err, err_size,
                      "%s %s is published for %s, and molto can only use a recipe published for "
                      "\"any\" yet",
@@ -169,8 +177,9 @@ static bool read_artifact(json_value artifact, const char *name, const char *ver
     return true;
 }
 
-bool resolve_read_release(const char *body, const char *name, const char *version,
-                          resolved_dep *out, char *err, size_t err_size) {
+bool resolve_read_release_for(const char *body, const char *name, const char *version,
+                              const char *target_wanted, resolved_dep *out, char *err,
+                              size_t err_size) {
     memset(out, 0, sizeof *out);
 
     json_document *doc = json_parse(body);
@@ -179,12 +188,18 @@ bool resolve_read_release(const char *body, const char *name, const char *versio
 
     json_value targets;
     json_value artifact;
-    const bool ok = release_targets(json_root(doc), &targets, err, err_size) &&
-                    choose_artifact(targets, name, version, &artifact, err, err_size) &&
-                    read_artifact(artifact, name, version, out, err, err_size);
+    const bool ok =
+        release_targets(json_root(doc), &targets, err, err_size) &&
+        choose_artifact(targets, name, version, target_wanted, &artifact, err, err_size) &&
+        read_artifact(artifact, name, version, out, err, err_size);
 
     json_free(doc);
     return ok;
+}
+
+bool resolve_read_release(const char *body, const char *name, const char *version,
+                          resolved_dep *out, char *err, size_t err_size) {
+    return resolve_read_release_for(body, name, version, NULL, out, err, err_size);
 }
 
 /* --- the newest release --- */

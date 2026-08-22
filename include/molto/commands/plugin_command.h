@@ -1,6 +1,7 @@
 #ifndef MOLTO_PLUGIN_COMMAND_H
 #define MOLTO_PLUGIN_COMMAND_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /* Execute `molto plugin <list|info> [<name>]` (RFC-0014).
@@ -18,7 +19,14 @@
    it, so nothing recorded what it asked for. That is reported as the unknown it
    is, never as "asks for nothing".
 
+   `install` fetches from a registry and asks before it does: what a plugin may
+   do is the thing being consented to, so the permissions are printed and the
+   question is asked, unless `assume_yes` says a caller already decided.
+   `remove` uninstalls what molto installed, and refuses to touch a plugin that
+   arrived on PATH some other way.
+
    Returns a molto_exit_code. */
-[[nodiscard]] int plugin_command_run(const char *action, const char *name);
+[[nodiscard]] int plugin_command_run(const char *action, const char *name, const char *registry,
+                                     bool assume_yes);
 
 #endif /* MOLTO_PLUGIN_COMMAND_H */

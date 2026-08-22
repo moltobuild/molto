@@ -3,13 +3,18 @@
 #include <molto/exit_code.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/resolve_service.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/util/doc.h>
+#include <molto/util/json.h>
+#include <molto/util/semver.h>
 #include <molto/util/toml.h>
 
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* The prefix every plugin executable carries, so that a plugin cannot be
@@ -141,14 +146,37 @@ int plugin_run(const char *path, int argc, char **argv) {
 
 /* --- the recipe kept beside a plugin --- */
 
-bool plugin_recipe_path(const char *name, char *out, size_t size) {
-    if(!plugin_name_valid(name))
-        return false;
-
+/* The recipe directory itself, which the install has to create. */
+static bool recipe_dir(char *out, size_t size) {
     const char *home = getenv("HOME");
     if(home == NULL || home[0] == '\0')
         return false;
-    return fs_format_path(out, size, "%s/.molto/plugins/recipes/%s.toml", home, name);
+    return fs_format_path(out, size, "%s/.molto/plugins/recipes", home);
+}
+
+/* One of the two encodings a recipe may be stored in. */
+static bool recipe_path_with(const char *name, const char *extension, char *out, size_t size) {
+    if(!plugin_name_valid(name))
+        return false;
+
+    char dir[PLUGIN_PATH_MAX];
+    if(!recipe_dir(dir, sizeof dir))
+        return false;
+    return fs_format_path(out, size, "%s/%s.%s", dir, name, extension);
+}
+
+bool plugin_recipe_path(const char *name, char *out, size_t size) {
+    /* The hand-written one when it is there, so a developer can override what
+       an install put down without uninstalling it. */
+    if(recipe_path_with(name, "toml", out, size) && fs_path_exists(out))
+        return true;
+    return recipe_path_with(name, "json", out, size);
+}
+
+static bool ends_with(const char *text, const char *suffix) {
+    const size_t text_length = strlen(text);
+    const size_t suffix_length = strlen(suffix);
+    return text_length >= suffix_length && strcmp(text + text_length - suffix_length, suffix) == 0;
 }
 
 static bool recipe_error(char *err, size_t err_size, const char *format, const char *detail) {
@@ -167,20 +195,40 @@ bool plugin_read_recipe(const char *name, recipe_coordinate *coordinate, recipe_
     if(text == NULL)
         return recipe_error(err, err_size, "no recipe beside '%s'", name);
 
-    char parse_err[256] = "";
-    toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
-    free(text);
-    if(doc == NULL)
-        return recipe_error(err, err_size, "the recipe is not valid TOML: %s", parse_err);
-
-    const doc_view view = doc_from_toml(doc);
     recipe_coordinate discarded_coordinate;
     recipe_plugin discarded_plugin;
-    const bool ok =
-        recipe_read_coordinate(view, coordinate != NULL ? coordinate : &discarded_coordinate, err,
-                               err_size) &&
-        recipe_read_plugin(view, plugin != NULL ? plugin : &discarded_plugin, err, err_size);
-    toml_free(doc);
+    recipe_coordinate *into_coordinate = coordinate != NULL ? coordinate : &discarded_coordinate;
+    recipe_plugin *into_plugin = plugin != NULL ? plugin : &discarded_plugin;
+    bool ok = false;
+
+    if(ends_with(path, ".json")) {
+        /* The registry's answer for one artifact. The recipe is its `metadata`
+           member: the artifact wraps it with the checksum and the size the
+           registry measured, which are facts about the blob rather than part of
+           what the publisher wrote. */
+        json_document *doc = json_parse(text);
+        if(doc == NULL) {
+            free(text);
+            return recipe_error(err, err_size, "the stored answer for '%s' is not JSON", name);
+        }
+        const doc_view view = doc_from_json(json_get(json_root(doc), "metadata"));
+        ok = recipe_read_coordinate(view, into_coordinate, err, err_size) &&
+             recipe_read_plugin(view, into_plugin, err, err_size);
+        json_free(doc);
+    } else {
+        char parse_err[256] = "";
+        toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
+        if(doc == NULL) {
+            free(text);
+            return recipe_error(err, err_size, "the recipe is not valid TOML: %s", parse_err);
+        }
+        const doc_view view = doc_from_toml(doc);
+        ok = recipe_read_coordinate(view, into_coordinate, err, err_size) &&
+             recipe_read_plugin(view, into_plugin, err, err_size);
+        toml_free(doc);
+    }
+
+    free(text);
     return ok;
 }
 
@@ -292,6 +340,197 @@ bool plugin_list(plugin_entry *out, size_t capacity, size_t *count) {
                 return false;
         }
         entry = separator != NULL ? separator + 1 : NULL;
+    }
+    return true;
+}
+
+/* --- installing one --- */
+
+/* The registry path of a tool's release, and of one artifact of it. */
+#define TOOL_RELEASE_PATH "/v1/tools/%s/%s"
+#define TOOL_ARTIFACT_PATH "/v1/tools/%s/%s/%s"
+#define TOOL_VERSIONS_PATH "/v1/tools/%s"
+
+static bool ask(const char *base_url, const char *path, registry_response *out, char *err,
+                size_t err_size) {
+    if(!registry_get(base_url, path, out, err, err_size))
+        return false;
+    if(out->status != 200) {
+        registry_explain(out, err, err_size);
+        return false;
+    }
+    return true;
+}
+
+/* The newest version published under `name`, when the caller named none. */
+static bool newest_version(const char *base_url, const char *name, char *out, size_t size,
+                           char *err, size_t err_size) {
+    char path[PLUGIN_PATH_MAX];
+    if(!fs_format_path(path, sizeof path, TOOL_VERSIONS_PATH, name))
+        return recipe_error(err, err_size, "the path for '%s' is too long", name);
+
+    registry_response response;
+    if(!ask(base_url, path, &response, err, err_size))
+        return false;
+
+    str_list versions;
+    str_list_init(&versions);
+    bool ok = resolve_read_versions(response.body, &versions, err, err_size);
+    if(ok) {
+        /* Ordered by precedence rather than by publication, so "the newest" is
+           the same answer whatever order the catalogue happened to return. */
+        const size_t ordered = semver_sort_desc(&versions);
+        ok = ordered > 0 && fs_format_path(out, size, "%s", str_list_get(&versions, 0));
+        if(!ok)
+            (void)recipe_error(err, err_size, "'%s' has no release molto can order", name);
+    }
+    str_list_free(&versions);
+    return ok;
+}
+
+bool plugin_prepare(const char *base_url, const char *name, const char *version,
+                    plugin_candidate *out, char *err, size_t err_size) {
+    memset(out, 0, sizeof *out);
+
+    if(!plugin_name_valid(name))
+        return recipe_error(err, err_size, "'%s' is not a plugin name", name);
+
+    char target[PLUGIN_NAME_MAX];
+    if(!toolchain_host_target(target, sizeof target))
+        return recipe_error(err, err_size,
+                            "could not ask pickup what this machine is (needs pickup 0.6.0)%s", "");
+
+    char resolved[RECIPE_COORDINATE_MAX];
+    if(version != NULL) {
+        if(!fs_format_path(resolved, sizeof resolved, "%s", version))
+            return recipe_error(err, err_size, "the version of '%s' is too long", name);
+    } else if(!newest_version(base_url, name, resolved, sizeof resolved, err, err_size)) {
+        return false;
+    }
+
+    /* One artifact, not the whole release: the target is already decided, and
+       asking for it by name is what makes "published, but not for you" a
+       distinct answer from "no such plugin". */
+    char path[PLUGIN_PATH_MAX];
+    if(!fs_format_path(path, sizeof path, TOOL_ARTIFACT_PATH, name, resolved, target))
+        return recipe_error(err, err_size, "the path for '%s' is too long", name);
+
+    registry_response response;
+    if(!ask(base_url, path, &response, err, err_size))
+        return false;
+
+    json_document *doc = json_parse(response.body);
+    if(doc == NULL)
+        return recipe_error(err, err_size, "the registry's answer about '%s' was not JSON", name);
+
+    const json_value root = json_root(doc);
+    const doc_view view = doc_from_json(json_get(root, "metadata"));
+    const char *url = json_string(json_get(root, "download_url"));
+    const char *checksum = json_string(json_get(root, "checksum"));
+
+    bool ok = recipe_read_coordinate(view, &out->coordinate, err, err_size) &&
+              recipe_read_plugin(view, &out->plugin, err, err_size);
+    if(ok && (url == NULL || checksum == NULL))
+        ok = recipe_error(err, err_size, "the registry offered '%s' with no bytes to download",
+                          name);
+    if(ok)
+        ok = fs_format_path(out->download_url, sizeof out->download_url, "%s", url) &&
+             fs_format_path(out->checksum, sizeof out->checksum, "%s", checksum) &&
+             fs_format_path(out->body, sizeof out->body, "%s", response.body);
+    json_free(doc);
+    return ok;
+}
+
+/* Copy the binary out of the unpacked tree and into ~/.molto/plugins/bin. */
+static bool place_binary(const char *root, const char *name, char *err, size_t err_size) {
+    char dir[PLUGIN_PATH_MAX];
+    if(!plugin_dir(dir, sizeof dir) || !fs_make_dirs(dir))
+        return recipe_error(err, err_size, "could not create the plugin directory for '%s'", name);
+
+    /* The archive carries `bin/molto-<name>`, the same shape every other
+       artifact in this ecosystem is packed with. */
+    char source[PLUGIN_PATH_MAX];
+    char destination[PLUGIN_PATH_MAX];
+    if(!fs_format_path(source, sizeof source, "%s/bin/" PLUGIN_PREFIX "%s", root, name) ||
+       !fs_format_path(destination, sizeof destination, "%s/" PLUGIN_PREFIX "%s", dir, name))
+        return recipe_error(err, err_size, "the path to '%s' is too long", name);
+
+    if(!fs_path_exists(source))
+        return recipe_error(err, err_size, "the archive holds no bin/" PLUGIN_PREFIX "%s", name);
+
+    const char *argv[] = {"cp", "-f", source, destination, NULL};
+    if(process_run(argv) != 0)
+        return recipe_error(err, err_size, "could not install the binary of '%s'", name);
+
+    return chmod(destination, 0755) == 0 ||
+           recipe_error(err, err_size, "could not make '%s' executable", name);
+}
+
+/* Keep the registry's answer, so what it said stays readable offline. */
+static bool place_recipe(const plugin_candidate *candidate, char *err, size_t err_size) {
+    char dir[PLUGIN_PATH_MAX];
+    char path[PLUGIN_PATH_MAX];
+    if(!recipe_dir(dir, sizeof dir) || !fs_make_dirs(dir) ||
+       !recipe_path_with(candidate->coordinate.name, "json", path, sizeof path))
+        return recipe_error(err, err_size, "could not write the recipe of '%s'",
+                            candidate->coordinate.name);
+
+    return fs_write_file(path, candidate->body) ||
+           recipe_error(err, err_size, "could not write the recipe of '%s'",
+                        candidate->coordinate.name);
+}
+
+bool plugin_install(const plugin_candidate *candidate, char *err, size_t err_size) {
+    const char *name = candidate->coordinate.name;
+
+    /* The fetch is the one that already downloads, verifies the digest and
+       unpacks atomically. Reimplementing it here would be a second integrity
+       story, and the wrong number of them is two. */
+    source_spec spec;
+    memset(&spec, 0, sizeof spec);
+    spec.origin = source_origin_archive;
+    spec.compression = source_compression_tar_zst;
+    if(!fs_format_path(spec.location, sizeof spec.location, "%s", candidate->download_url) ||
+       !fs_format_path(spec.sha256, sizeof spec.sha256, "%s", candidate->checksum))
+        return recipe_error(err, err_size, "the download of '%s' does not fit", name);
+
+    char root[PLUGIN_PATH_MAX];
+    if(!source_fetch(&spec, name, candidate->coordinate.version, candidate->coordinate.target, root,
+                     sizeof root, err, err_size))
+        return false;
+
+    return place_binary(root, name, err, err_size) && place_recipe(candidate, err, err_size);
+}
+
+/* --- removing one --- */
+
+bool plugin_remove(const char *name, char *err, size_t err_size) {
+    if(!plugin_name_valid(name))
+        return recipe_error(err, err_size, "'%s' is not a plugin name", name);
+
+    char dir[PLUGIN_PATH_MAX];
+    char binary[PLUGIN_PATH_MAX];
+    if(!plugin_dir(dir, sizeof dir) ||
+       !fs_format_path(binary, sizeof binary, "%s/" PLUGIN_PREFIX "%s", dir, name))
+        return recipe_error(err, err_size, "the path to '%s' is too long", name);
+
+    /* A plugin on PATH was put there by someone else and is not molto's to
+       delete. Saying so is more useful than removing nothing and reporting
+       success. */
+    if(!fs_path_exists(binary))
+        return recipe_error(err, err_size, "'%s' was not installed by molto", name);
+
+    if(remove(binary) != 0)
+        return recipe_error(err, err_size, "could not remove the binary of '%s'", name);
+
+    /* Both encodings, because either could be there and leaving one behind
+       would make `molto plugin list` report a plugin that is gone. */
+    char recipe[PLUGIN_PATH_MAX];
+    for(const char *extension = "json";; extension = "toml") {
+        if(recipe_path_with(name, extension, recipe, sizeof recipe) && fs_path_exists(recipe))
+            (void)remove(recipe);
+        if(extension[0] == 't')
+            break;
     }
     return true;
 }

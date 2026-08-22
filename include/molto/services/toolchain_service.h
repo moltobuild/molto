@@ -38,6 +38,20 @@ typedef struct {
  *
  * Returns a molto_exit_code; on failure the reason is already on stderr.
  */
+/* What the registry calls this machine, from `pickup host`.
+
+   Asked rather than derived. Pickup owns the target vocabulary because pickup
+   is what downloads published artifacts, and a second derivation here would
+   disagree with it the first time an architecture is spelled differently — the
+   compiler's own triple is `x86_64-unknown-linux-gnu` and the catalogue
+   publishes under `linux-x86_64`, which is exactly that disagreement already
+   sitting in the open.
+
+   False when pickup cannot be run or answers that nothing is published for this
+   host. Not cached: it costs one process, it cannot change while molto runs,
+   and a wrong answer kept in a database is worse than a cheap right one. */
+[[nodiscard]] bool toolchain_host_target(char *out, size_t out_size);
+
 [[nodiscard]] int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db,
                                     bool refresh, resolved_toolchain *out);
 
