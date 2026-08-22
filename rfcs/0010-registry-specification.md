@@ -266,7 +266,10 @@ Implemented and conforming: the `/v1` prefix and error object, health, search,
 all five catalogue reads, download with its checksum and cache headers, the
 two-step publish with measured size and checksum, coordinate conflict detection
 before both steps, registry-side recipe validation, bearer tokens restricted to
-the client kind, and hashed token storage.
+the client kind, hashed token storage, and name ownership — a name belongs to
+the account that first published under it, checked before the upload and again
+before the insert, with a claim atomic enough that a simultaneous first publish
+has one winner.
 
 Not implemented:
 
@@ -274,10 +277,10 @@ Not implemented:
 - **Per-registry credentials**, as above.
 - **Pagination** on the catalogue listings. Every name and every version is
   returned in one response, which is correct today and will not be.
-- **Ownership.** Any authenticated account may publish any name. There is no
-  owner, no team, no name reservation and therefore no defence against
-  squatting or against a typo publishing under someone else's name. This is the
-  most serious gap in this document.
+- **Teams and transfer.** A name belongs to whoever published it first, which
+  is enforced, and to exactly one account. There is no way to share a name, to
+  hand it over, or to take back one whose owner is gone — all three are real
+  needs and none is urgent while the ecosystem is small.
 - **Token management over the API.** Tokens can be created and, through the web
   interface, revoked; there is no way to list or revoke them from the CLI, and
   they do not expire.

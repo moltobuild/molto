@@ -285,14 +285,18 @@ where "ignore what you don't know" is actively dangerous, and the fix is that
 `[tool].kind = "plugin"` raises the recipe's `schema`: a Molto that does not
 know the plugin schema refuses the recipe rather than reading a subset of it.
 
-**Ownership is a precondition, not a caveat.** RFC-0010 calls the absence of
-package ownership "the most serious gap in this document": any authenticated
-account may publish any name, with no owner, no reservation and no defence
-against a typo publishing under someone else's name. That gap, applied to
-libraries, produces a bad dependency. Applied to executables Molto downloads and
-runs, it produces a bad executable Molto downloads and runs. **No plugin may be
-served from the official registry until ownership exists.** Local plugins and
-private registries are unaffected; the public distribution path is what waits.
+**Ownership was a precondition, and it is met.** RFC-0010 used to call the
+absence of package ownership "the most serious gap in this document": any
+authenticated account could publish any name. That gap, applied to libraries,
+produces a bad dependency; applied to executables Molto downloads and runs, it
+produces a bad executable on the machine of everyone who trusted the name. A
+name now belongs to whoever first published under it, and publishing under
+someone else's is refused.
+
+What is settled is the case that mattered — taking a name somebody
+established. What is not settled is squatting by whoever got there first, which
+needs a moderator rather than a rule, and sharing or transferring a name, which
+needs teams. Neither blocks distributing a plugin.
 
 ## Distribution
 
@@ -432,7 +436,8 @@ The order that matters, because parts of it are cheap and parts are not:
   not there.
 - **The Meson frontend**, which is a separate RFC and the first real test of
   whether the subset above is a language anyone can build with.
-- **Ownership in the registry**, which gates public distribution entirely.
+- **Teams and name transfer** in the registry. Ownership itself is implemented;
+  a name is held by one account and cannot yet be shared or handed over.
 
 ## Non-Goals
 
