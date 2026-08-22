@@ -116,6 +116,43 @@ typedef struct {
 [[nodiscard]] bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err,
                                          size_t err_size);
 
+/*
+ * `[plugin]`, on a recipe whose `[tool].kind` is `plugin` (RFC-0014).
+ *
+ * What a plugin declares before anything of it is downloaded: the capabilities
+ * it provides, the file extensions that select it as a frontend, the
+ * permissions it asks for, the IR schema it speaks and the oldest Molto it
+ * works with.
+ *
+ * The lists are read exactly as written and are not checked against the
+ * vocabularies RFC-0014 defines. A reader that dropped a permission it did not
+ * recognise would report a plugin as asking for less than it does, which is the
+ * one place in this format where ignoring the unknown is dangerous rather than
+ * merely forgiving. Deciding what an unfamiliar name means belongs to whoever
+ * is about to act on it; reporting it belongs here.
+ */
+#define RECIPE_PLUGIN_ENTRY_MAX 48
+#define RECIPE_PLUGIN_MAX_CAPABILITIES 8
+#define RECIPE_PLUGIN_MAX_EXTENSIONS 16
+#define RECIPE_PLUGIN_MAX_PERMISSIONS 16
+
+typedef struct {
+    char capabilities[RECIPE_PLUGIN_MAX_CAPABILITIES][RECIPE_PLUGIN_ENTRY_MAX];
+    size_t capability_count;
+    char extensions[RECIPE_PLUGIN_MAX_EXTENSIONS][RECIPE_PLUGIN_ENTRY_MAX];
+    size_t extension_count;
+    char permissions[RECIPE_PLUGIN_MAX_PERMISSIONS][RECIPE_PLUGIN_ENTRY_MAX];
+    size_t permission_count;
+    long ir_schema;                        /* 0 when the recipe names none */
+    char molto_min[RECIPE_COORDINATE_MAX]; /* "" when the recipe names none */
+} recipe_plugin;
+
+/* Read `[plugin]`. A recipe without the table is not a plugin: false with an
+   error, rather than an empty declaration that would read as "asks for
+   nothing". `capabilities` is required and must not be empty, because a plugin
+   that provides no capability is a binary Molto has no reason to run. */
+[[nodiscard]] bool recipe_read_plugin(doc_view doc, recipe_plugin *out, char *err, size_t err_size);
+
 /* True when `name` survives `sources`/`exclude`: it is listed (or `sources` is
    empty, meaning all of them) and not excluded. The one place that rule is
    spelled out, so the build and any report of it agree. */

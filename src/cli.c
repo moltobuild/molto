@@ -9,10 +9,12 @@
 #include <molto/commands/login_command.h>
 #include <molto/commands/metadata_command.h>
 #include <molto/commands/new_command.h>
+#include <molto/commands/plugin_command.h>
 #include <molto/commands/publish_command.h>
 #include <molto/commands/run_command.h>
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
+#include <molto/services/plugin_service.h>
 #include <molto/util/cli.h>
 
 #include <stdio.h>
@@ -274,12 +276,33 @@ static int handle_metadata(const cli_args *args) {
                                 cli_args_flag(args, "--include-dev"));
 }
 
+static int handle_plugin_command(const cli_args *args) {
+    return plugin_command_run(cli_args_positional(args, 0), cli_args_positional(args, 1));
+}
+
 static int handle_unimplemented(const cli_args *args) {
     fprintf(stderr,
             "molto: '%s' is not implemented yet "
             "(see rfcs/0002-cli-specification.md)\n",
             cli_args_command_name(args));
     return exit_not_implemented;
+}
+
+/* A name the table above does not carry may be a plugin: `molto deb` runs
+   `molto-deb` (RFC-0014). Reached only after every built-in has been tried, so
+   no plugin can take a command Molto already answers.
+
+   An unresolved name is left unhandled rather than reported here, so the user
+   still gets the usual "unknown command" with the list of what does exist —
+   which is the right message, since most of the time the name is a typo and not
+   a plugin anyone meant to install. */
+static bool handle_plugin(const char *name, int argc, char **argv, int *exit_code) {
+    char path[PLUGIN_PATH_MAX];
+    if(!plugin_resolve(name, path, sizeof path))
+        return false;
+
+    *exit_code = plugin_run(path, argc, argv);
+    return true;
 }
 
 /* --- command table --- */
@@ -309,9 +332,18 @@ static const cli_command commands[] = {
      sizeof login_options / sizeof login_options[0], handle_login},
     {"publish", "Publish an artifact to a registry", NULL, publish_options,
      sizeof publish_options / sizeof publish_options[0], handle_publish},
+    {"plugin", "Inspect installed plugins", "<list|info> [<name>]", NULL, 0, handle_plugin_command},
     {"update", "Update dependency versions", NULL, NULL, 0, handle_unimplemented},
     {"migrate", "Import a Make/CMake/Meson project", "<system>", NULL, 0, handle_unimplemented},
 };
+
+bool cli_has_command(const char *name) {
+    for(size_t i = 0; i < sizeof commands / sizeof commands[0]; i++) {
+        if(strcmp(commands[i].name, name) == 0)
+            return true;
+    }
+    return false;
+}
 
 int cli_run(int argc, char **argv) {
     const cli_app app = {
@@ -320,6 +352,7 @@ int cli_run(int argc, char **argv) {
         .tagline = "a modern packaging ecosystem for C and C++",
         .commands = commands,
         .command_count = sizeof commands / sizeof commands[0],
+        .unknown = handle_plugin,
     };
     return cli_app_run(&app, argc, argv);
 }
