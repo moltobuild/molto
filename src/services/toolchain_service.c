@@ -20,6 +20,7 @@
 
 /* The pickup sub-command and its arguments. */
 #define ARG_RESOLVE "resolve"
+#define ARG_HOST "host"
 #define ARG_LANG "--lang"
 #define LANG_C "c"
 #define LANG_CXX "c++"
@@ -241,6 +242,25 @@ static int ask_pickup(const project_target *target, bool needs_cpp, const char *
         return exit_build_failure;
     }
     return exit_ok;
+}
+
+bool toolchain_host_target(char *out, size_t out_size) {
+    const char *argv[] = {pickup_program(), ARG_HOST, ARG_FORMAT, FORMAT_TOML, NULL};
+
+    char answer[256] = "";
+    if(process_capture(argv, answer, sizeof answer) != 0)
+        return false;
+
+    char parse_err[128] = "";
+    toml_document *doc = toml_parse(answer, parse_err, sizeof parse_err);
+    if(doc == NULL)
+        return false;
+
+    /* Top-level `target = "linux-x86_64"`, and nothing else: the answer is one
+       key precisely so that a reader of it cannot drift. */
+    const bool ok = toml_get_string(doc, "", "target", out, out_size) && out[0] != '\0';
+    toml_free(doc);
+    return ok;
 }
 
 int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db, bool refresh,

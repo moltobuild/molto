@@ -5,6 +5,8 @@
 #include <stddef.h>
 
 #include <molto/services/recipe_service.h>
+#include <molto/services/registry_service.h>
+#include <molto/services/source_service.h>
 
 /*
  * Plugins, as far as the command line is concerned (RFC-0014).
@@ -63,6 +65,35 @@ typedef struct {
    False when the name is invalid or nothing provides it. */
 [[nodiscard]] bool plugin_resolve(const char *name, char *out, size_t size);
 
+/* What installing `name` would mean, answered before anything is downloaded. */
+typedef struct {
+    recipe_coordinate coordinate;
+    recipe_plugin plugin;
+    char download_url[SOURCE_URL_MAX];
+    char checksum[SOURCE_DIGEST_MAX];
+    /* The registry's answer for this artifact, verbatim. Kept beside the
+       binary so the permissions it was installed under stay readable. */
+    char body[REGISTRY_BODY_MAX];
+} plugin_candidate;
+
+/* Ask `base_url` what installing `name` would mean. `version` NULL is the
+   newest published.
+
+   Separate from the install because the answer has to be shown to a person
+   before it happens: the permissions are the thing being consented to, and a
+   function that fetched and installed in one call would leave nowhere to ask
+   (RFC-0014). Nothing is written and nothing is downloaded here. */
+[[nodiscard]] bool plugin_prepare(const char *base_url, const char *name, const char *version,
+                                  plugin_candidate *out, char *err, size_t err_size);
+
+/* Download, verify and install a prepared candidate. */
+[[nodiscard]] bool plugin_install(const plugin_candidate *candidate, char *err, size_t err_size);
+
+/* Remove an installed plugin: its binary and the recipe beside it. False when
+   nothing by that name was installed by molto — a plugin found on PATH is not
+   molto's to delete. */
+[[nodiscard]] bool plugin_remove(const char *name, char *err, size_t err_size);
+
 /* Where the recipe of an installed plugin is kept:
    ~/.molto/plugins/recipes/<name>.toml.
 
@@ -83,7 +114,13 @@ typedef struct {
 
 /* Read the recipe of an installed plugin: its coordinate and its `[plugin]`
    table. False, with a message, when there is no recipe beside it or the one
-   there cannot be read. Either `coordinate` or `plugin` may be NULL. */
+   there cannot be read. Either `coordinate` or `plugin` may be NULL.
+
+   Two encodings, one reader (`doc_view`). A `.toml` is what someone wrote by
+   hand while developing a plugin; a `.json` is the registry's answer, stored
+   verbatim by the install because the registry serves a parsed recipe and
+   there is no original TOML to keep. The hand-written one wins, so a developer
+   can override what was installed without uninstalling it. */
 [[nodiscard]] bool plugin_read_recipe(const char *name, recipe_coordinate *coordinate,
                                       recipe_plugin *plugin, char *err, size_t err_size);
 

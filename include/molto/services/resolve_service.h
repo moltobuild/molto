@@ -119,4 +119,16 @@ void resolve_remember(const char *name, const char *version, const char *body);
 [[nodiscard]] bool resolve_read_release(const char *body, const char *name, const char *version,
                                         resolved_dep *out, char *err, size_t err_size);
 
+/* The same, for a caller that knows which platform it needs.
+
+   `target_wanted` NULL is the line above: `any`, the only thing a dependency
+   can be. Naming one selects that artifact instead, which is what installing a
+   native executable requires — and what the target vocabulary belongs to
+   pickup for (RFC-0014). An artifact published for other platforms and not
+   this one is reported with what *was* published, because "no such plugin" and
+   "not for your machine" are different problems. */
+[[nodiscard]] bool resolve_read_release_for(const char *body, const char *name, const char *version,
+                                            const char *target_wanted, resolved_dep *out, char *err,
+                                            size_t err_size);
+
 #endif /* MOLTO_RESOLVE_SERVICE_H */

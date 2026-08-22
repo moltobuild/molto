@@ -3,6 +3,7 @@
 #include <molto/cli.h>
 #include <molto/exit_code.h>
 #include <molto/services/plugin_service.h>
+#include <molto/util/progress.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -133,14 +134,107 @@ static int run_info(const char *name) {
     return exit_ok;
 }
 
+/* --- install --- */
+
+/* Everything the person is being asked to agree to, before it happens. */
+static void announce(const plugin_candidate *candidate) {
+    printf("%s %s (%s)\n", candidate->coordinate.name, candidate->coordinate.version,
+           candidate->coordinate.target);
+    print_list("capabilities", candidate->plugin.capabilities, candidate->plugin.capability_count);
+    print_list("permissions", candidate->plugin.permissions, candidate->plugin.permission_count);
+}
+
+/* The question, on stderr beside the answer it belongs to. Declining is not a
+   failure: someone read what it asked for and said no. */
+static bool confirm(void) {
+    if(!progress_is_interactive(stdin)) {
+        fprintf(stderr, "molto: refusing to install without a confirmation; pass --yes\n");
+        return false;
+    }
+    fprintf(stderr, "\n  Install it? [Y/n] ");
+    (void)fflush(stderr);
+
+    char answer[16] = "";
+    if(fgets(answer, sizeof answer, stdin) == NULL)
+        return false;
+    if(answer[0] == '\n' || answer[0] == '\0')
+        return true;
+    return answer[0] == 'y' || answer[0] == 'Y';
+}
+
+/* `<name>` or `<name>@<version>`, split in place. */
+static const char *split_version(char *name) {
+    char *at = strchr(name, '@');
+    if(at == NULL)
+        return NULL;
+    *at = '\0';
+    return at + 1;
+}
+
+static int run_install(const char *spec, const char *registry, bool assume_yes) {
+    if(spec == NULL) {
+        fprintf(stderr, "molto: plugin install needs a name\n");
+        return exit_usage_error;
+    }
+
+    char name[PLUGIN_NAME_MAX];
+    if(snprintf(name, sizeof name, "%s", spec) < 0 || strlen(spec) >= sizeof name) {
+        fprintf(stderr, "molto: '%s' is not a plugin name\n", spec);
+        return exit_usage_error;
+    }
+    const char *version = split_version(name);
+
+    plugin_candidate candidate;
+    char err[512] = "";
+    if(!plugin_prepare(registry, name, version, &candidate, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return exit_dependency_failure;
+    }
+
+    announce(&candidate);
+    if(!assume_yes && !confirm()) {
+        fprintf(stderr, "molto: nothing was installed\n");
+        return exit_ok;
+    }
+
+    if(!plugin_install(&candidate, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return exit_plugin_failure;
+    }
+    printf("Installed %s %s\n", candidate.coordinate.name, candidate.coordinate.version);
+    return exit_ok;
+}
+
+/* --- remove --- */
+
+static int run_remove(const char *name) {
+    if(name == NULL) {
+        fprintf(stderr, "molto: plugin remove needs a name\n");
+        return exit_usage_error;
+    }
+
+    char err[512] = "";
+    if(!plugin_remove(name, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return exit_dependency_failure;
+    }
+    printf("Removed %s\n", name);
+    return exit_ok;
+}
+
 /* --- entry point --- */
 
-int plugin_command_run(const char *action, const char *name) {
+int plugin_command_run(const char *action, const char *name, const char *registry,
+                       bool assume_yes) {
     if(action == NULL || strcmp(action, "list") == 0)
         return run_list();
     if(strcmp(action, "info") == 0)
         return run_info(name);
+    if(strcmp(action, "install") == 0)
+        return run_install(name, registry, assume_yes);
+    if(strcmp(action, "remove") == 0)
+        return run_remove(name);
 
-    fprintf(stderr, "molto: '%s' is not a plugin action (list, info)\n", action);
+    fprintf(stderr, "molto: '%s' is not a plugin action (list, info, install, remove)\n", action);
     return exit_usage_error;
 }

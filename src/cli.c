@@ -15,6 +15,7 @@
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
 #include <molto/services/plugin_service.h>
+#include <molto/services/registry_service.h>
 #include <molto/util/cli.h>
 
 #include <stdio.h>
@@ -277,7 +278,8 @@ static int handle_metadata(const cli_args *args) {
 }
 
 static int handle_plugin_command(const cli_args *args) {
-    return plugin_command_run(cli_args_positional(args, 0), cli_args_positional(args, 1));
+    return plugin_command_run(cli_args_positional(args, 0), cli_args_positional(args, 1),
+                              cli_args_option(args, "--registry"), cli_args_flag(args, "--yes"));
 }
 
 static int handle_unimplemented(const cli_args *args) {
@@ -304,6 +306,11 @@ static bool handle_plugin(const char *name, int argc, char **argv, int *exit_cod
     *exit_code = plugin_run(path, argc, argv);
     return true;
 }
+
+static const cli_option plugin_options[] = {
+    {"--registry", 'r', cli_opt_value, "<url>", "Registry to install from", REGISTRY_DEFAULT_URL},
+    {"--yes", 'y', cli_opt_flag, NULL, "Install without asking to confirm the permissions", NULL},
+};
 
 /* --- command table --- */
 
@@ -332,7 +339,8 @@ static const cli_command commands[] = {
      sizeof login_options / sizeof login_options[0], handle_login},
     {"publish", "Publish an artifact to a registry", NULL, publish_options,
      sizeof publish_options / sizeof publish_options[0], handle_publish},
-    {"plugin", "Inspect installed plugins", "<list|info> [<name>]", NULL, 0, handle_plugin_command},
+    {"plugin", "Manage plugins", "<list|info|install|remove> [<name>[@<version>]]", plugin_options,
+     sizeof plugin_options / sizeof plugin_options[0], handle_plugin_command},
     {"update", "Update dependency versions", NULL, NULL, 0, handle_unimplemented},
     {"migrate", "Import a Make/CMake/Meson project", "<system>", NULL, 0, handle_unimplemented},
 };
