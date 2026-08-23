@@ -94,6 +94,19 @@ static bool locate(const char *name, plugin_entry *out) {
     return false;
 }
 
+/* What the permissions above actually mean today.
+
+   RFC-0014 requires this line and not as a courtesy: the permission list reads
+   like a boundary the operating system is holding, and no such boundary exists
+   yet. What denies a plugin the network is that it is never handed a
+   connection, and what denies it the project is that it receives a document
+   rather than a directory — real, and only as real as the interface. A page
+   that implied a sandbox nobody wrote would be the worst kind of security
+   documentation. */
+static void print_enforcement(void) {
+    printf("  %-13s%s\n", "enforced by", "the interface only: no sandbox yet (RFC-0014)");
+}
+
 static int run_info(const char *name) {
     if(name == NULL) {
         fprintf(stderr, "molto: plugin info needs a name\n");
@@ -127,6 +140,7 @@ static int run_info(const char *name) {
     print_list("capabilities", plugin.capabilities, plugin.capability_count);
     print_list("extensions", plugin.extensions, plugin.extension_count);
     print_list("permissions", plugin.permissions, plugin.permission_count);
+    print_enforcement();
     if(plugin.ir_schema > 0)
         printf("  %-13s%ld\n", "ir schema", plugin.ir_schema);
     if(plugin.molto_min[0] != '\0')
@@ -192,6 +206,7 @@ static int run_install(const char *spec, const char *registry, bool assume_yes) 
     }
 
     announce(&candidate);
+    print_enforcement();
     if(!assume_yes && !confirm()) {
         fprintf(stderr, "molto: nothing was installed\n");
         return exit_ok;
