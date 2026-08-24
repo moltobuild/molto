@@ -37,6 +37,23 @@
  * is what makes keeping this structure affordable: a recipe_artifacts is
  * fifteen kilobytes of fixed-size arrays, and thirty-two of them is half a
  * megabyte to hold what a handful of strings holds. */
+/* What a package exports: what a consumer compiles and links against.
+ *
+ * Deliberately not what the package compiles *itself* with, which is the lists
+ * on `prepared_unit` below: the two differ by the recipe's private table, which
+ * never leaves the package.
+ *
+ * `prepared_deps` carries the concatenation of every package's export, and that
+ * sum is what a compile line needs. This is the same thing said per package,
+ * which is what a document's `Dependency` node needs and what a sum cannot
+ * answer — a consumer of the sum cannot tell which package asked for what. */
+typedef struct {
+    str_list includes; /* -I directories, absolute */
+    str_list defines;  /* -D */
+    str_list flags;    /* passed verbatim */
+    str_list links;    /* -l */
+} prepared_interface;
+
 typedef struct {
     char name[DEP_NAME_MAX];
     /* What the package is, for anything that has to name it rather than
@@ -61,6 +78,10 @@ typedef struct {
        is not. */
     char std[RECIPE_STD_MAX];
     char cpp_std[RECIPE_STD_MAX];
+    /* What this package exports, as opposed to the lists above, which are what
+       it is compiled with. Filled from the same recipe table and in the same
+       pass as the sum on `prepared_deps`, so the two cannot disagree. */
+    prepared_interface exports;
 } prepared_unit;
 
 typedef struct {

@@ -39,6 +39,10 @@ void prepared_deps_free(prepared_deps *out) {
         str_list_free(&out->units[i].includes);
         str_list_free(&out->units[i].defines);
         str_list_free(&out->units[i].flags);
+        str_list_free(&out->units[i].exports.includes);
+        str_list_free(&out->units[i].exports.defines);
+        str_list_free(&out->units[i].exports.flags);
+        str_list_free(&out->units[i].exports.links);
     }
     free(out->units);
     out->units = NULL;
@@ -73,7 +77,30 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);
     str_list_init(&unit->flags);
+    str_list_init(&unit->exports.includes);
+    str_list_init(&unit->exports.defines);
+    str_list_init(&unit->exports.flags);
+    str_list_init(&unit->exports.links);
     return unit;
+}
+
+/* Everything in `src` onto the end of `dest`. */
+static bool append_list(str_list *dest, const str_list *src, char *err, size_t err_size) {
+    for(size_t i = 0; i < str_list_count(src); i++) {
+        if(!str_list_push(dest, str_list_get(src, i)))
+            return set_error(err, err_size, "out of memory collecting dependencies");
+    }
+    return true;
+}
+
+/* One package's export onto the sum of all of them, in the order a compile line
+   receives it: includes, defines, flags, then libraries. */
+static bool append_interface(prepared_deps *out, const prepared_interface *exports, char *err,
+                             size_t err_size) {
+    return append_list(&out->includes, &exports->includes, err, err_size) &&
+           append_list(&out->defines, &exports->defines, err, err_size) &&
+           append_list(&out->flags, &exports->flags, err, err_size) &&
+           append_list(&out->links, &exports->links, err, err_size);
 }
 
 /* --- collecting what a dependency contributes --- */
@@ -215,18 +242,28 @@ static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps 
                          "this dependency is published as a built library, and molto can only "
                          "consume [artifacts] type = \"source\" yet");
 
-    /* The interface, which the consumer compiles and links against. The
-       private table is deliberately absent: it never leaves the package. */
-    if(!push_options(&artifacts->options, node->root, &out->includes, &out->defines, &out->flags,
-                     err, err_size))
+    prepared_unit *unit = unit_open(out, node, err, err_size);
+    if(unit == NULL)
+        return false;
+
+    /* The interface, which the consumer compiles and links against. The private
+       table is deliberately absent: it never leaves the package.
+     *
+     * Recorded against the package first and added to the sum second, from one
+     * pass over one table — the sum is exactly the concatenation of the
+     * packages' exports, and writing it that way is what stops the two from
+     * ever disagreeing about what a dependency asked for. */
+    if(!push_options(&artifacts->options, node->root, &unit->exports.includes,
+                     &unit->exports.defines, &unit->exports.flags, err, err_size))
         return false;
     for(size_t i = 0; i < artifacts->link_count; i++) {
-        if(!str_list_push(&out->links, artifacts->link[i]))
+        if(!str_list_push(&unit->exports.links, artifacts->link[i]))
             return set_error(err, err_size, "out of memory collecting dependencies");
     }
+    if(!append_interface(out, &unit->exports, err, err_size))
+        return false;
 
-    prepared_unit *unit = unit_open(out, node, err, err_size);
-    return unit != NULL && collect_sources(artifacts, node->root, &unit->sources, err, err_size) &&
+    return collect_sources(artifacts, node->root, &unit->sources, err, err_size) &&
            collect_unit(graph, node, unit, err, err_size);
 }
 
