@@ -8,9 +8,14 @@
 
 #include <molto/services/process_service.h>
 
+#include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Offset used to report a signal death as a return code, following the usual
@@ -39,6 +44,12 @@ typedef struct {
     int read_end;  /* closed in the child; -1 when nothing is captured */
     bool stdout_captured;
     bool stderr_captured;
+    /* An exchange also feeds the child: the read end becomes its standard
+       input, and the write end is the parent's and closed here. -1 in every
+       other caller, because 0 is a descriptor and would read as "wire fd 0",
+       which is the one mistake this field could make. */
+    int stdin_read_end;
+    int stdin_write_end;
 } child_pipe;
 
 /* A pipe whose ends are closed by exec.
@@ -77,6 +88,12 @@ static pid_t spawn_child(const char *const argv[], const process_env_var *env, s
 
     if(wiring->read_end >= 0)
         close(wiring->read_end);
+    if(wiring->stdin_write_end >= 0)
+        close(wiring->stdin_write_end);
+    if(wiring->stdin_read_end >= 0) {
+        dup2(wiring->stdin_read_end, STDIN_FILENO);
+        close(wiring->stdin_read_end);
+    }
     /* dup2 clears close-on-exec on the descriptor it creates, so the streams
        wired here survive the exec even though the pipe they came from does
        not. That is the whole arrangement: the child keeps what it was given
@@ -144,6 +161,8 @@ int process_execute(const char *const argv[], process_spec *spec) {
         .read_end = capturing ? output[PIPE_READ] : -1,
         .stdout_captured = spec->stdout_to == process_stream_capture,
         .stderr_captured = spec->stderr_to == process_stream_capture,
+        .stdin_read_end = -1,
+        .stdin_write_end = -1,
     };
     pid_t pid = spawn_child(argv, spec->env, spec->env_count, &wiring);
     if(pid < 0) {
@@ -217,4 +236,220 @@ const char **process_argv_from_list(const str_list *list) {
         argv[i] = str_list_get(list, i);
     argv[count] = NULL;
     return argv;
+}
+
+/* --- exchanging a document with a child process --- */
+
+/* How much is read in one go, and how much the answer buffer grows by. */
+#define EXCHANGE_CHUNK 65536
+
+/* Milliseconds on the monotonic clock, which is what a deadline has to be
+   measured against: the wall clock can step backwards and a build would then
+   wait for a plugin twice. */
+static long long monotonic_ms(void) {
+    struct timespec now;
+    if(clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* Append `length` bytes to a growable buffer, keeping it NUL-terminated. */
+static bool answer_append(char **answer, size_t *size, size_t *capacity, const char *text,
+                          size_t length) {
+    if(*size + length + 1 > *capacity) {
+        size_t next = *capacity == 0 ? EXCHANGE_CHUNK : *capacity;
+        while(next < *size + length + 1)
+            next *= 2;
+        char *bigger = realloc(*answer, next);
+        if(bigger == NULL)
+            return false;
+        *answer = bigger;
+        *capacity = next;
+    }
+    memcpy(*answer + *size, text, length);
+    *size += length;
+    (*answer)[*size] = '\0';
+    return true;
+}
+
+/* Kill a child and reap it, so a timeout does not leave a process behind. */
+static void kill_child(pid_t pid) {
+    kill(pid, SIGKILL);
+    int status = 0;
+    (void)waitpid(pid, &status, 0);
+}
+
+typedef struct {
+    int to_child;   /* -1 once the request is written and the pipe closed */
+    int from_child; /* -1 once the answer reached EOF */
+    const char *request;
+    size_t remaining;
+} exchange_state;
+
+/* One turn of the loop: whichever end is ready, moved by one chunk.
+   Returns false when the exchange should stop, with `*result` saying why. */
+static bool exchange_step(exchange_state *state, process_exchange *io, size_t *capacity,
+                          process_exchange_result *result) {
+    struct pollfd watched[2];
+    int count = 0;
+    if(state->to_child >= 0)
+        watched[count++] = (struct pollfd){.fd = state->to_child, .events = POLLOUT};
+    if(state->from_child >= 0)
+        watched[count++] = (struct pollfd){.fd = state->from_child, .events = POLLIN};
+    if(count == 0)
+        return false;
+
+    if(poll(watched, (nfds_t)count, 50) < 0 && errno != EINTR) {
+        *result = process_exchange_failed;
+        return false;
+    }
+
+    for(int i = 0; i < count; i++) {
+        if(watched[i].revents == 0)
+            continue;
+
+        if(watched[i].fd == state->to_child) {
+            const ssize_t wrote = write(state->to_child, state->request, state->remaining);
+            if(wrote < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                continue; /* the pipe filled between the poll and the write */
+            if(wrote <= 0) {
+                /* A child that stopped reading has all the request it wants.
+                   With SIGPIPE ignored this is a failed write and not a death. */
+                close(state->to_child);
+                state->to_child = -1;
+                continue;
+            }
+            state->request += wrote;
+            state->remaining -= (size_t)wrote;
+            if(state->remaining == 0) {
+                /* Closed rather than left open, because a plugin reading to EOF
+                   is waiting for exactly this. */
+                close(state->to_child);
+                state->to_child = -1;
+            }
+            continue;
+        }
+
+        char chunk[EXCHANGE_CHUNK];
+        const ssize_t got = read(state->from_child, chunk, sizeof chunk);
+        if(got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            continue; /* drained between the poll and the read */
+        if(got <= 0) {
+            close(state->from_child);
+            state->from_child = -1;
+            continue;
+        }
+        if(io->answer_max > 0 && io->answer_size + (size_t)got > io->answer_max) {
+            *result = process_exchange_too_large;
+            return false;
+        }
+        if(!answer_append(&io->answer, &io->answer_size, capacity, chunk, (size_t)got)) {
+            *result = process_exchange_failed;
+            return false;
+        }
+    }
+    return true;
+}
+
+process_exchange_result process_exchange_run(const char *const argv[], process_exchange *io) {
+    if(io == NULL || argv == NULL || argv[0] == NULL)
+        return process_exchange_not_started;
+
+    io->answer = NULL;
+    io->answer_size = 0;
+    io->code = -1;
+
+    int to_child[2] = {-1, -1};
+    int from_child[2] = {-1, -1};
+    if(!open_pipe(to_child))
+        return process_exchange_not_started;
+    if(!open_pipe(from_child)) {
+        close(to_child[PIPE_READ]);
+        close(to_child[PIPE_WRITE]);
+        return process_exchange_not_started;
+    }
+
+    const child_pipe wiring = {
+        .write_end = from_child[PIPE_WRITE],
+        .read_end = from_child[PIPE_READ],
+        .stdout_captured = true,
+        /* Left inherited: stderr is what the plugin has to say, and it belongs
+           on the terminal beside everything else a build prints. */
+        .stderr_captured = false,
+        .stdin_read_end = to_child[PIPE_READ],
+        .stdin_write_end = to_child[PIPE_WRITE],
+    };
+
+    /* A child that exits without reading turns the parent's next write into
+       SIGPIPE, which would end molto rather than the exchange. Ignored for the
+       duration and restored after, so nothing else inherits the change. */
+    void (*previous_sigpipe)(int) = signal(SIGPIPE, SIG_IGN);
+
+    const pid_t pid = spawn_child(argv, io->env, io->env_count, &wiring);
+    close(to_child[PIPE_READ]);
+    close(from_child[PIPE_WRITE]);
+    if(pid < 0) {
+        close(to_child[PIPE_WRITE]);
+        close(from_child[PIPE_READ]);
+        (void)signal(SIGPIPE, previous_sigpipe);
+        return process_exchange_not_started;
+    }
+
+    /* The parent's ends are non-blocking, and this is what makes the poll loop
+       above actually work rather than merely look like it does. On a blocking
+       pipe, write() with more than PIPE_BUF bytes does not return until every
+       byte is written — so the parent would sit inside one write() while the
+       child filled the pipe coming back, which is precisely the deadlock the
+       loop exists to avoid. Non-blocking turns that into a partial write the
+       loop can interleave with a read. */
+    (void)fcntl(to_child[PIPE_WRITE], F_SETFL, O_NONBLOCK);
+    (void)fcntl(from_child[PIPE_READ], F_SETFL, O_NONBLOCK);
+
+    exchange_state state = {
+        .to_child = to_child[PIPE_WRITE],
+        .from_child = from_child[PIPE_READ],
+        .request = io->request,
+        .remaining = io->request == NULL
+                         ? 0
+                         : (io->request_size > 0 ? io->request_size : strlen(io->request)),
+    };
+    /* Nothing to send is a closed stdin, not an open one: a frontend asked for
+       nothing still reads to EOF. */
+    if(state.remaining == 0) {
+        close(state.to_child);
+        state.to_child = -1;
+    }
+
+    const long long deadline = io->timeout_ms == 0 ? 0 : monotonic_ms() + io->timeout_ms;
+    process_exchange_result result = process_exchange_ok;
+    size_t capacity = 0;
+
+    while(state.to_child >= 0 || state.from_child >= 0) {
+        if(!exchange_step(&state, io, &capacity, &result))
+            break;
+        if(deadline != 0 && monotonic_ms() >= deadline) {
+            result = process_exchange_timed_out;
+            break;
+        }
+    }
+
+    if(state.to_child >= 0)
+        close(state.to_child);
+    if(state.from_child >= 0)
+        close(state.from_child);
+    (void)signal(SIGPIPE, previous_sigpipe);
+
+    if(result != process_exchange_ok) {
+        kill_child(pid);
+        return result;
+    }
+
+    int status = 0;
+    if(waitpid(pid, &status, 0) < 0)
+        return process_exchange_failed;
+    io->code = status_to_code(status);
+    /* An exec that failed reports as a shell does, and that is not a plugin
+       that ran and answered — it is one that never started. */
+    return io->code == EXIT_COMMAND_NOT_RUNNABLE ? process_exchange_not_started
+                                                 : process_exchange_ok;
 }

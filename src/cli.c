@@ -5,6 +5,7 @@
 #include <molto/commands/clean_command.h>
 #include <molto/commands/fmt_command.h>
 #include <molto/commands/init_command.h>
+#include <molto/commands/ir_command.h>
 #include <molto/commands/lint_command.h>
 #include <molto/commands/login_command.h>
 #include <molto/commands/metadata_command.h>
@@ -116,6 +117,14 @@ static const cli_option fmt_options[] = {
      "Format every file again instead of skipping what did not change", NULL},
     {"--jobs", 'j', cli_opt_value, "<n>", "Format at most n files at once (default: every core)",
      NULL},
+};
+
+/* `molto ir` takes a profile like a build does, because the profile decides
+   which defines are in force and a `#ifdef` decides what compiles: a document
+   dumped for the wrong profile describes code the build never sees. */
+static const cli_option ir_options[] = {
+    {"--output", 'o', cli_opt_value, "<path>", "Write to this file instead of stdout", NULL},
+    {"--profile", 'p', cli_opt_value, "<name>", "Profile whose options to fold in", "debug"},
 };
 
 /* `molto metadata` takes no profile: a profile decides which defines and flags
@@ -277,6 +286,10 @@ static int handle_metadata(const cli_args *args) {
                                 cli_args_flag(args, "--include-dev"));
 }
 
+static int handle_ir(const cli_args *args) {
+    return ir_command_run(cli_args_option(args, "--output"), cli_args_option(args, "--profile"));
+}
+
 static int handle_plugin_command(const cli_args *args) {
     return plugin_command_run(cli_args_positional(args, 0), cli_args_positional(args, 1),
                               cli_args_option(args, "--registry"), cli_args_flag(args, "--yes"));
@@ -330,6 +343,8 @@ static const cli_command commands[] = {
     {"bench", "Run benchmarks", NULL, NULL, 0, handle_unimplemented},
     {"lint", "Run diagnostics and static checks", NULL, lint_options,
      sizeof lint_options / sizeof lint_options[0], handle_lint},
+    {"ir", "Write the build intermediate representation for this project", NULL, ir_options,
+     sizeof ir_options / sizeof ir_options[0], handle_ir},
     {"metadata", "Write a CycloneDX bill of materials", NULL, metadata_options,
      sizeof metadata_options / sizeof metadata_options[0], handle_metadata},
     {"add", "Add a dependency", "<dep>[@<version>]", add_options,

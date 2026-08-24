@@ -159,3 +159,109 @@ MOLTEST(process_builds_an_argv_from_a_list) {
     free((void *)argv);
     str_list_free(&list);
 }
+
+/* --- exchanging a document with a child process (RFC-0014) --- */
+
+MOLTEST(process_exchange_sends_a_request_and_reads_the_answer) {
+    /* `cat` is the identity plugin: it reads to EOF and writes back what it
+       got, which is exactly the contract a frontend follows. */
+    const char *const argv[] = {"cat", NULL};
+    process_exchange io = {.request = "{\"schema\":1}", .timeout_ms = 5000};
+
+    ASSERT_EQ(process_exchange_ok, process_exchange_run(argv, &io));
+    EXPECT_EQ(0, io.code);
+    ASSERT_NOT_NULL(io.answer);
+    EXPECT_STREQ("{\"schema\":1}", io.answer);
+    EXPECT_EQ(strlen("{\"schema\":1}"), io.answer_size);
+    free(io.answer);
+}
+
+MOLTEST(process_exchange_does_not_deadlock_on_a_large_document) {
+    /* The case that makes the poll loop necessary rather than nice. Writing the
+       whole request before reading anything deadlocks here: the parent blocks
+       on a full pipe to the child while the child blocks on a full pipe back,
+       and neither is at fault. A megabyte is comfortably past both buffers. */
+    const size_t size = 1024 * 1024;
+    char *request = malloc(size + 1);
+    ASSERT_NOT_NULL(request);
+    memset(request, 'x', size);
+    request[size] = '\0';
+
+    const char *const argv[] = {"cat", NULL};
+    process_exchange io = {.request = request, .request_size = size, .timeout_ms = 30000};
+
+    ASSERT_EQ(process_exchange_ok, process_exchange_run(argv, &io));
+    EXPECT_EQ(0, io.code);
+    EXPECT_EQ(size, io.answer_size);
+    free(io.answer);
+    free(request);
+}
+
+MOLTEST(process_exchange_keeps_the_child_exit_code) {
+    /* Exit 3 is a frontend declining — the file is not one it understands —
+       which is not an error and lets molto try another. The exchange reports
+       the number and does not interpret it. */
+    const char *const argv[] = {"sh", "-c", "exit 3", NULL};
+    process_exchange io = {.request = "{}", .timeout_ms = 5000};
+
+    ASSERT_EQ(process_exchange_ok, process_exchange_run(argv, &io));
+    EXPECT_EQ(3, io.code);
+    free(io.answer);
+}
+
+MOLTEST(process_exchange_survives_a_child_that_never_reads) {
+    /* Without SIGPIPE ignored this ends molto rather than the exchange, and it
+       is the ordinary shape of a plugin that refuses before reading. */
+    const char *const argv[] = {"sh", "-c", "exit 3", NULL};
+    const size_t size = 1024 * 1024;
+    char *request = malloc(size + 1);
+    ASSERT_NOT_NULL(request);
+    memset(request, 'x', size);
+    request[size] = '\0';
+
+    process_exchange io = {.request = request, .request_size = size, .timeout_ms = 10000};
+    ASSERT_EQ(process_exchange_ok, process_exchange_run(argv, &io));
+    EXPECT_EQ(3, io.code);
+    free(io.answer);
+    free(request);
+}
+
+MOLTEST(process_exchange_kills_a_child_that_never_finishes) {
+    /* A plugin that hangs must not hang a build. */
+    const char *const argv[] = {"sh", "-c", "sleep 30", NULL};
+    process_exchange io = {.request = "{}", .timeout_ms = 200};
+
+    ASSERT_EQ(process_exchange_timed_out, process_exchange_run(argv, &io));
+    free(io.answer);
+}
+
+MOLTEST(process_exchange_refuses_an_answer_past_its_cap) {
+    /* Refused mid-read rather than after: a document that does not fit is not
+       going to be read whole, and reading it anyway is what the cap exists to
+       prevent. */
+    const char *const argv[] = {"sh", "-c", "yes molto", NULL};
+    process_exchange io = {.request = NULL, .answer_max = 4096, .timeout_ms = 10000};
+
+    ASSERT_EQ(process_exchange_too_large, process_exchange_run(argv, &io));
+    free(io.answer);
+}
+
+MOLTEST(process_exchange_reports_a_command_that_is_not_there) {
+    const char *const argv[] = {"molto-a-plugin-nobody-installed", NULL};
+    process_exchange io = {.request = "{}", .timeout_ms = 5000};
+
+    EXPECT_EQ(process_exchange_not_started, process_exchange_run(argv, &io));
+    free(io.answer);
+}
+
+MOLTEST(process_exchange_closes_stdin_when_there_is_nothing_to_send) {
+    /* A frontend asked for nothing still reads to EOF, so an empty request has
+       to be a closed pipe and not an open one it would wait on forever. */
+    const char *const argv[] = {"cat", NULL};
+    process_exchange io = {.request = NULL, .timeout_ms = 5000};
+
+    ASSERT_EQ(process_exchange_ok, process_exchange_run(argv, &io));
+    EXPECT_EQ(0, io.code);
+    EXPECT_EQ(0u, io.answer_size);
+    free(io.answer);
+}

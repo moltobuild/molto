@@ -553,3 +553,83 @@ MOLTEST(toml_reports_an_array_that_is_never_closed) {
     EXPECT_NULL(toml_parse("provides = [\n  \"constexpr\",\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "unterminated array"));
 }
+
+/* --- arrays of tables inside arrays of tables (RFC-0013) --- */
+
+MOLTEST(toml_keeps_a_nested_array_of_tables_with_its_parent) {
+    /* The shape an IR document has: a list of targets, each with its own list
+       of sources. Stored under a bare `targets.sources` the two lists would
+       merge, and a reader asking for the first target's sources would be handed
+       the second target's as well. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("[[targets]]\n"
+                                    "name = \"app\"\n"
+                                    "[[targets.sources]]\n"
+                                    "path = \"src/main.c\"\n"
+                                    "[[targets.sources]]\n"
+                                    "path = \"src/util.c\"\n"
+                                    "[[targets]]\n"
+                                    "name = \"lib\"\n"
+                                    "[[targets.sources]]\n"
+                                    "path = \"src/lib.c\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    ASSERT_EQ(2, (int)toml_table_array_count(doc, "targets"));
+    EXPECT_EQ(2, (int)toml_table_array_count(doc, "targets[0].sources"));
+    EXPECT_EQ(1, (int)toml_table_array_count(doc, "targets[1].sources"));
+
+    /* Nothing landed under the unqualified name: a reader that asked for it
+       would silently get an empty list, which is the honest answer. */
+    EXPECT_EQ(0, (int)toml_table_array_count(doc, "targets.sources"));
+
+    char value[64] = "";
+    EXPECT_TRUE(toml_get_string(doc, "targets[0]", "name", value, sizeof value));
+    EXPECT_STREQ("app", value);
+    EXPECT_TRUE(toml_get_string(doc, "targets[0].sources[1]", "path", value, sizeof value));
+    EXPECT_STREQ("src/util.c", value);
+    EXPECT_TRUE(toml_get_string(doc, "targets[1]", "name", value, sizeof value));
+    EXPECT_STREQ("lib", value);
+    EXPECT_TRUE(toml_get_string(doc, "targets[1].sources[0]", "path", value, sizeof value));
+    EXPECT_STREQ("src/lib.c", value);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_keeps_a_plain_table_with_the_array_element_it_is_written_under) {
+    /* [targets.artifact] is that target's artifact. Stored unqualified, the
+       second element's table would overwrite the first's. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("[[targets]]\n"
+                                    "name = \"app\"\n"
+                                    "[targets.artifact]\n"
+                                    "kind = \"executable\"\n"
+                                    "[[targets]]\n"
+                                    "name = \"probe\"\n"
+                                    "[targets.artifact]\n"
+                                    "kind = \"object\"\n",
+                                    err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char value[64] = "";
+    EXPECT_TRUE(toml_get_string(doc, "targets[0].artifact", "kind", value, sizeof value));
+    EXPECT_STREQ("executable", value);
+    EXPECT_TRUE(toml_get_string(doc, "targets[1].artifact", "kind", value, sizeof value));
+    EXPECT_STREQ("object", value);
+
+    toml_free(doc);
+}
+
+MOLTEST(toml_leaves_a_table_under_a_plain_parent_unqualified) {
+    /* Qualifying only applies to an ancestor that is an array of tables. A
+       plain [a.b] is still a.b, or every existing recipe would move. */
+    char err[256] = "";
+    toml_document *doc = toml_parse("[toolchain.c]\nversion = \"17\"\n", err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+
+    char value[64] = "";
+    EXPECT_TRUE(toml_get_string(doc, "toolchain.c", "version", value, sizeof value));
+    EXPECT_STREQ("17", value);
+
+    toml_free(doc);
+}
