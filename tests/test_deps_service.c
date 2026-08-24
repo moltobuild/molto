@@ -115,6 +115,47 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     sandbox_close(&at);
 }
 
+MOLTEST(deps_prepare_records_what_each_package_exports) {
+    /* The sum of every package's interface is what a compile line needs, and it
+       cannot answer which package asked for what. A document's `Dependency`
+       node has to, so the export is recorded against the package as well —
+       from the same table and the same pass, so the two cannot disagree. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, RECIPE));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_dep(&at, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+
+    ASSERT_EQ(1u, deps.unit_count);
+    const prepared_interface *exports = &deps.units[0].exports;
+
+    ASSERT_EQ(1u, exports->includes.count);
+    EXPECT_EQ('/', exports->includes.items[0][0]); /* absolute, as the sum's is */
+    ASSERT_EQ(1u, exports->defines.count);
+    EXPECT_STREQ("YYJSON_STATIC=1", exports->defines.items[0]);
+    ASSERT_EQ(1u, exports->links.count);
+    EXPECT_STREQ("m", exports->links.items[0]);
+
+    /* With one package the sum is its export, entry for entry. That is the
+       relationship being asserted, not a coincidence of this fixture: the sum
+       is built by concatenating them. */
+    ASSERT_EQ(exports->includes.count, deps.includes.count);
+    EXPECT_STREQ(exports->includes.items[0], deps.includes.items[0]);
+    ASSERT_EQ(exports->defines.count, deps.defines.count);
+    EXPECT_STREQ(exports->defines.items[0], deps.defines.items[0]);
+    ASSERT_EQ(exports->links.count, deps.links.count);
+    EXPECT_STREQ(exports->links.items[0], deps.links.items[0]);
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
 MOLTEST(deps_prepare_takes_every_source_when_the_recipe_names_none) {
     static const char *const everything = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                           "name = \"yyjson\"\nversion = \"0.10.0\"\n"

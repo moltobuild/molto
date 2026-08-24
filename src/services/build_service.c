@@ -13,6 +13,7 @@
 #include <molto/services/deps_service.h>
 #include <molto/services/frontend_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/ir_transform.h>
 #include <molto/services/manifest_service.h>
 #include <molto/services/object_cache.h>
 #include <molto/services/process_service.h>
@@ -1549,6 +1550,16 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     }
     if(!document_sources(&plan->doc, root, false, &plan->sources))
         return exit_build_failure;
+
+    /* What `resolve` found, said in the document. It runs here and not in the
+       frontend because a frontend describes a project and not its graph — and
+       because doing it there would make `molto ir` resolve, which means the
+       network, for a command whose whole purpose is to show what is already
+       known. */
+    if(!ir_transform_dependencies(&plan->doc, &plan->deps, frontend_err, sizeof frontend_err)) {
+        fprintf(stderr, "molto: %s\n", frontend_err);
+        return exit_build_failure;
+    }
 
     /* The interface of the dependencies folds into `[target]`; what each of
        them compiles itself with becomes a pass of its own units. */

@@ -579,8 +579,11 @@ MOLTEST(frontend_native_describes_a_manifest_and_its_sources) {
     EXPECT_STREQ("-std=c17", target->sources[1].options[0].value);
     EXPECT_EQ(ir_scope_unit, target->sources[1].options[0].scope);
 
-    ASSERT_EQ(1u, target->include_count);
+    /* What the manifest named, and then `src/`, which every build has on the
+       include path and no manifest states. */
+    ASSERT_EQ(2u, target->include_count);
     EXPECT_STREQ("include", target->includes[0].value);
+    EXPECT_STREQ("src", target->includes[1].value);
     ASSERT_EQ(1u, target->link_count);
     EXPECT_STREQ("m", target->links[0].value);
     EXPECT_TRUE(target->has_artifact);
@@ -927,6 +930,44 @@ MOLTEST(frontend_native_produces_a_document_that_validates) {
     bounds_for(&box, build_dir, sizeof build_dir, &bounds);
     EXPECT_TRUE(ir_validate(&doc, &bounds, err, sizeof err));
     EXPECT_STREQ("", err);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_puts_src_on_the_include_path_last) {
+    /* Every Molto build has `src/` on the include path and no manifest says
+       so, which is what lets a source include a sibling by name. It is stated
+       last because that is where the build puts it, and include order decides
+       which header wins when two directories carry the same name. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[target]\ninclude = [\"include\"]\n"
+                                   "[test]\ninclude = [\"tests/support\"]\n",
+                                   tests, 1));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    const ir_target *app = target_named(&doc, "app");
+    ASSERT_TRUE(app != NULL);
+    ASSERT_EQ(2u, app->include_count);
+    EXPECT_STREQ("include", app->includes[0].value);
+    EXPECT_STREQ("src", app->includes[1].value);
+    EXPECT_FALSE(app->includes[1].system); /* the project's own headers: -I, never -isystem */
+
+    /* And after `[test]`'s own, which is the order the compile line carries. */
+    const ir_target *test = target_named(&doc, "tests/test_a");
+    ASSERT_TRUE(test != NULL);
+    ASSERT_EQ(3u, test->include_count);
+    EXPECT_STREQ("include", test->includes[0].value);
+    EXPECT_STREQ("tests/support", test->includes[1].value);
+    EXPECT_STREQ("src", test->includes[2].value);
 
     ir_document_free(&doc);
     sandbox_teardown(&box);
