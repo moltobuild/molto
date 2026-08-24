@@ -562,14 +562,22 @@ MOLTEST(frontend_native_describes_a_manifest_and_its_sources) {
     EXPECT_STREQ("src/main.c", target->sources[1].path);
     EXPECT_EQ(ir_language_c, target->sources[1].language);
 
-    bool saw_std = false;
     bool saw_define = false;
     for(size_t i = 0; i < target->option_count; i++) {
-        saw_std = saw_std || strcmp(target->options[i].value, "-std=c17") == 0;
         saw_define = saw_define || strcmp(target->options[i].value, "-DAPP=1") == 0;
+        /* The standard is not target scope: a target holds units of both
+           languages and there are two standards to state. */
+        EXPECT_FALSE(strncmp(target->options[i].value, "-std=", 5) == 0);
     }
-    EXPECT_TRUE(saw_std);
     EXPECT_TRUE(saw_define);
+
+    /* `std` reaches the C unit, and the C++ one gets nothing because this
+       manifest declares no `cpp_std`. Stating `-std=c17` for it would not be a
+       detail: it would be the wrong language. */
+    ASSERT_EQ(0u, target->sources[0].option_count); /* src/extra.cpp */
+    ASSERT_EQ(1u, target->sources[1].option_count); /* src/main.c */
+    EXPECT_STREQ("-std=c17", target->sources[1].options[0].value);
+    EXPECT_EQ(ir_scope_unit, target->sources[1].options[0].scope);
 
     ASSERT_EQ(1u, target->include_count);
     EXPECT_STREQ("include", target->includes[0].value);
@@ -607,6 +615,46 @@ MOLTEST(frontend_native_leaves_out_what_the_profile_decides) {
         if(strncmp(value, "-O", 2) == 0 || strcmp(value, "-g") == 0)
             FAIL("the document carries a profile flag the engine composes");
     }
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_states_each_language_its_own_standard) {
+    /* `[target]` declares two standards and a target holds units of both
+       languages, which is why the standard is a unit-scope option: one at
+       target scope would state one of them for all of them. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    char manifest[320];
+    snprintf(manifest, sizeof manifest, "%s/Project.toml", box.project);
+    ASSERT_TRUE(fs_write_file(manifest, "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                        "[target]\nstd = \"c17\"\ncpp_std = \"c++20\"\n"));
+
+    char path[384];
+    snprintf(path, sizeof path, "%s/src", box.project);
+    ASSERT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src/a.c", box.project);
+    ASSERT_TRUE(fs_write_file(path, "int a;\n"));
+    snprintf(path, sizeof path, "%s/src/b.cpp", box.project);
+    ASSERT_TRUE(fs_write_file(path, "int b;\n"));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    ASSERT_EQ(1u, doc.target_count);
+    const ir_target *target = &doc.targets[0];
+    ASSERT_EQ(2u, target->source_count);
+
+    EXPECT_STREQ("src/a.c", target->sources[0].path);
+    ASSERT_EQ(1u, target->sources[0].option_count);
+    EXPECT_STREQ("-std=c17", target->sources[0].options[0].value);
+
+    EXPECT_STREQ("src/b.cpp", target->sources[1].path);
+    ASSERT_EQ(1u, target->sources[1].option_count);
+    EXPECT_STREQ("-std=c++20", target->sources[1].options[0].value);
 
     ir_document_free(&doc);
     sandbox_teardown(&box);

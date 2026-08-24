@@ -104,18 +104,41 @@ static const project_options *options_for(const project_ctx *ctx, build_profile 
 
 /* --- sources --- */
 
+/* The language standard, on the unit and not on the target.
+ *
+ * `[target]` declares two — `std` for C and `cpp_std` for C++ — and a target
+ * holds units of both languages, so a single target-scope `-std=` would state
+ * one of them for all of them. A C++ unit compiled with `-std=c17` is not a
+ * detail: it is the wrong language.
+ *
+ * Unit scope is what RFC-0013 has for exactly this, and a Meson frontend's
+ * `c_std` / `cpp_std` lands the same way. A target that declares only one
+ * standard still says it once per unit; the document is machine-written and
+ * one option per source is what says the truth. */
+static bool push_std(ir_source *source, const project_ctx *ctx, bool is_cpp) {
+    const char *value = is_cpp ? ctx->target.cpp_std : ctx->target.std;
+    if(value[0] == '\0')
+        return true; /* none declared for this language */
+    char flag[32];
+    snprintf(flag, sizeof flag, "-std=%s", value);
+    return ir_add_option(&source->options, &source->option_count, flag, ir_scope_unit);
+}
+
 /* Add one absolute path to `target`, said relative to the project root: the
    document anchors every path at `Project.root`, so an absolute one would
    describe this machine rather than this project. */
-static bool push_source(ir_target *target, const char *root, const char *absolute) {
+static bool push_source(ir_target *target, const char *root, const project_ctx *ctx,
+                        const char *absolute) {
     const char *relative = fs_relative_to(absolute, root);
-    return ir_add_source(target, relative,
-                         source_is_cpp(relative) ? ir_language_cpp : ir_language_c) != NULL;
+    const bool is_cpp = source_is_cpp(relative);
+    ir_source *source = ir_add_source(target, relative, is_cpp ? ir_language_cpp : ir_language_c);
+    return source != NULL && push_std(source, ctx, is_cpp);
 }
 
-static bool push_sources(ir_target *target, const char *root, const str_list *paths) {
+static bool push_sources(ir_target *target, const char *root, const project_ctx *ctx,
+                         const str_list *paths) {
     for(size_t i = 0; i < str_list_count(paths); i++) {
-        if(!push_source(target, root, str_list_get(paths, i)))
+        if(!push_source(target, root, ctx, str_list_get(paths, i)))
             return false;
     }
     return true;
@@ -136,18 +159,11 @@ static bool collect_project_sources(const char *root, str_list *out) {
 
 /* --- what every target carries --- */
 
-/* The language standard, `[target]`'s own scope, the profile's scope and the
-   link line. Every target the native frontend emits carries all four, so they
-   are composed once: an executable and a test
+/* `[target]`'s own scope, the profile's scope and the link line. Every target
+   the native frontend emits carries all three, so they are composed once: an executable and a test
    that filled their scopes in two places would drift, and the drift would show up as a test
    compiled against options the code under it was not. */
 static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile profile) {
-    if(ctx->target.std[0] != '\0') {
-        char std_flag[32];
-        snprintf(std_flag, sizeof std_flag, "-std=%s", ctx->target.std);
-        if(!ir_add_option(&target->options, &target->option_count, std_flag, ir_scope_target))
-            return false;
-    }
     if(!push_scope(target, &ctx->target.options, ir_scope_target) ||
        !push_scope(target, options_for(ctx, profile), ir_scope_profile))
         return false;
@@ -217,7 +233,7 @@ static bool add_tests_per_file(ir_document *out, const char *root, const project
         if(!test_stem(root, source, stem, sizeof stem))
             return false;
         ir_target *target = ir_add_target(out, stem, ir_target_test);
-        if(target == NULL || !push_source(target, root, source) ||
+        if(target == NULL || !push_source(target, root, ctx, source) ||
            !fill_test(target, ctx, profile, stem))
             return false;
     }
@@ -234,7 +250,7 @@ static bool add_tests_single(ir_document *out, const char *root, const project_c
        !fs_format_path(artifact, sizeof artifact, "tests/%s", name))
         return false;
     ir_target *target = ir_add_target(out, name, ir_target_test);
-    return target != NULL && push_sources(target, root, sources) &&
+    return target != NULL && push_sources(target, root, ctx, sources) &&
            fill_test(target, ctx, profile, artifact);
 }
 
@@ -333,7 +349,7 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
        target pointer is only valid until the next ir_add_target on the same
        document. */
     ir_target *target = ir_add_target(out, ctx.project_name, ir_target_executable);
-    const bool described = target != NULL && push_sources(target, absolute, &sources) &&
+    const bool described = target != NULL && push_sources(target, absolute, &ctx, &sources) &&
                            fill_common(target, &ctx, which) &&
                            /* The artifact is relative to the profile's build directory, which is
                               where the engine puts it and is the only anchor an artifact path has

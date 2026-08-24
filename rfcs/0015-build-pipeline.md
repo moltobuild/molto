@@ -269,9 +269,19 @@ straight-line code. `resolve`, `compile` and `link` exist and work;
 `transform` exists as two function calls that are not called that; `generate`
 and `package` do not exist at all.
 
+The split of `plan_project()` has started. `load_project()` and the source
+discovery walk are gone from it: it asks the native frontend for a document and
+`document_sources()` lowers the targets it describes into the units the passes
+compile. `Target` is therefore load-bearing — a test target's `depends_on` is
+what a test binary links against — and `build_plan` now holds the document it is
+derived from. The line has not moved past that: everything the compile line says
+still comes from `project_ctx`.
+
 Not implemented:
 
-- **The phase boundaries**, which is the split of `plan_project()` above.
+- **The rest of the phase boundaries**: the options half of `plan_project()`,
+  which RFC-0013's status entry sets out the two decisions and one transform it
+  waits on.
 - **A topological order over targets**, which needs `Target` to be a node
   (RFC-0013). Today the only ordering in a build is "all objects, then the
   link".

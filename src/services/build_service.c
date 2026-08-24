@@ -11,6 +11,7 @@
 #include <molto/project/project_ctx.h>
 #include <molto/services/conflict_prompt.h>
 #include <molto/services/deps_service.h>
+#include <molto/services/frontend_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
 #include <molto/services/object_cache.h>
@@ -1385,6 +1386,10 @@ typedef struct {
     size_t to_build; /* across every pass: what the bar counts */
     bool any_cpp;
 
+    /* What is to be built, as the frontend described it. The plan is derived
+       from it and is never serialised; the document is, and is what `molto ir`
+       prints. RFC-0015 splits these two apart and this is the split. */
+    ir_document doc;
     prepared_deps deps; /* runtime dependencies */
     prepared_deps dev;  /* development dependencies, resolved with them */
     dep_pass runtime_units;
@@ -1397,6 +1402,7 @@ typedef struct {
 
 static void build_plan_init(build_plan *plan) {
     memset(plan, 0, sizeof *plan);
+    ir_document_init(&plan->doc);
     prepared_deps_init(&plan->deps);
     prepared_deps_init(&plan->dev);
     str_list_init(&plan->sources);
@@ -1417,6 +1423,7 @@ static void build_plan_free(build_plan *plan) {
     dep_pass_free(&plan->runtime_units);
     prepared_deps_free(&plan->dev);
     prepared_deps_free(&plan->deps);
+    ir_document_free(&plan->doc);
     memset(plan, 0, sizeof *plan);
 }
 
@@ -1461,6 +1468,40 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     }
 }
 
+/*
+ * The sources of one kind of target, as the absolute paths the engine compiles.
+ *
+ * This is the seam RFC-0015 names. What a build compiles now comes from the
+ * document rather than from a walk of the filesystem, which is what makes
+ * `Project.toml` reach the engine by the road a plugin's answer will travel —
+ * and what makes every `molto build` a test of the frontend.
+ *
+ * The paths are anchored back at the root on the way through: a document says
+ * them relative to it, which is what makes it diffable between machines and
+ * what makes it wrong to hand straight to a compiler.
+ *
+ * Concatenating the test targets in document order reproduces the flat list
+ * `molto test` used to walk for itself, because the frontend fills them from
+ * that same sorted list — one target per file, in order.
+ */
+[[nodiscard]] static bool document_sources(const ir_document *doc, const char *root, bool tests,
+                                           str_list *out) {
+    for(size_t t = 0; t < doc->target_count; t++) {
+        const ir_target *target = &doc->targets[t];
+        if((target->kind == ir_target_test) != tests)
+            continue;
+        for(size_t i = 0; i < target->source_count; i++) {
+            const char *relative = target->sources[i].path;
+            char path[PATH_BUFFER_SIZE];
+            if(!fs_format_path(path, sizeof path, "%s/%s", root, relative))
+                return fs_report_long_path(relative);
+            if(!str_list_push(out, path))
+                return false;
+        }
+    }
+    return true;
+}
+
 /* Load the manifest, resolve what it depends on, and work out every unit the
    project's own build would compile — without compiling any of them. `objects`
    and `include_flags` are caller-initialised and caller-freed; everything the
@@ -1495,10 +1536,19 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
         return exit_dependency_failure;
     }
 
-    if(!source_discovery_collect(src_dir, &plan->sources)) {
-        fprintf(stderr, "molto: could not read the sources under '%s'\n", src_dir);
+    /* The frontend describes the project; the engine below consumes what it
+       said. The manifest is read twice for now — once here and once by
+       load_project above, which is still where the compile line's options come
+       from — and the second read goes away with `project_ctx` when the options
+       are lowered from the document too. */
+    char frontend_err[512] = "";
+    if(!frontend_native(root, profile_name(profile), &plan->doc, frontend_err,
+                        sizeof frontend_err)) {
+        fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }
+    if(!document_sources(&plan->doc, root, false, &plan->sources))
+        return exit_build_failure;
 
     /* The interface of the dependencies folds into `[target]`; what each of
        them compiles itself with becomes a pass of its own units. */
@@ -1649,22 +1699,6 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
         *dot = '\0';
     return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem) ||
            fs_report_long_path(test_source);
-}
-
-/* Collect what the tests are built from. The walk itself lives in
-   source_discovery, because the native frontend needs the same answer to
-   describe the same tests; what stays here is saying so on stderr, which is a
-   build's job and not a collector's. */
-static bool collect_test_sources(const char *root, const project_ctx *ctx, str_list *out) {
-    str_list extra;
-    str_list_init(&extra);
-    char err[PATH_BUFFER_SIZE] = "out of memory reading [test].sources";
-    const bool ok = project_test_sources(&ctx->test, &extra) &&
-                    source_discovery_collect_tests(root, &extra, out, err, sizeof err);
-    str_list_free(&extra);
-    if(!ok)
-        fprintf(stderr, "molto: %s\n", err);
-    return ok;
 }
 
 /* Everything a test link needs beyond its own objects. */
@@ -1907,7 +1941,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
                 plan_add(&plan, &env, plan.dev_units.units, plan.dev_units.count, &lib_objects);
     }
 
-    if(result == exit_ok && !collect_test_sources(root, &ctx, &plan.test_sources))
+    if(result == exit_ok && !document_sources(&plan.doc, root, true, &plan.test_sources))
         result = exit_build_failure;
 
     /* Compiled through the same path as the project's own sources, so tests get
