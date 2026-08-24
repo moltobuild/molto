@@ -297,3 +297,130 @@ MOLTEST(doc_read_strings_refuses_an_entry_that_is_too_long) {
 
     toml_free(as_toml);
 }
+
+/* --- arrays of tables, two encodings, one set of assertions (RFC-0013) --- */
+
+/* The shape an IR document has, and the reason this accessor exists: a list of
+   targets, each with its own list of sources, and one of them with a table of
+   its own. Written twice, asserted once — a backend that reads nesting
+   differently from the other fails here rather than in whichever half of the
+   ecosystem happened to exercise it. */
+
+static const char *const NESTED_TOML = "schema = 1\n"
+                                       "[[targets]]\n"
+                                       "name = \"app\"\n"
+                                       "kind = \"executable\"\n"
+                                       "[targets.artifact]\n"
+                                       "path = \"app\"\n"
+                                       "[[targets.sources]]\n"
+                                       "path = \"src/main.c\"\n"
+                                       "language = \"c\"\n"
+                                       "[[targets.sources]]\n"
+                                       "path = \"src/util.c\"\n"
+                                       "language = \"c\"\n"
+                                       "[[targets]]\n"
+                                       "name = \"probe\"\n"
+                                       "kind = \"object\"\n"
+                                       "[[targets.sources]]\n"
+                                       "path = \"src/probe.cpp\"\n"
+                                       "language = \"cpp\"\n";
+
+static const char *const NESTED_JSON = "{"
+                                       "\"schema\":1,"
+                                       "\"targets\":["
+                                       "{\"name\":\"app\",\"kind\":\"executable\","
+                                       "\"artifact\":{\"path\":\"app\"},"
+                                       "\"sources\":["
+                                       "{\"path\":\"src/main.c\",\"language\":\"c\"},"
+                                       "{\"path\":\"src/util.c\",\"language\":\"c\"}]},"
+                                       "{\"name\":\"probe\",\"kind\":\"object\","
+                                       "\"sources\":["
+                                       "{\"path\":\"src/probe.cpp\",\"language\":\"cpp\"}]}"
+                                       "]}";
+
+static void assert_nested(doc_view doc) {
+    ASSERT_EQ(2u, doc_array_len(doc, "targets"));
+    EXPECT_EQ(0u, doc_array_len(doc, "absent"));
+
+    char value[64] = "";
+    doc_view first;
+    ASSERT_TRUE(doc_array_at(doc, "targets", 0, &first));
+
+    /* An element's own keys live at the root of its view, which is what makes a
+       node reader indifferent to how deep it was found. */
+    EXPECT_TRUE(doc_get_string(first, "", "name", value, sizeof value));
+    EXPECT_STREQ("app", value);
+    EXPECT_TRUE(doc_get_string(first, "", "kind", value, sizeof value));
+    EXPECT_STREQ("executable", value);
+
+    /* A plain table under the element is reached relative to it. */
+    EXPECT_TRUE(doc_has_table(first, "artifact"));
+    EXPECT_TRUE(doc_get_string(first, "artifact", "path", value, sizeof value));
+    EXPECT_STREQ("app", value);
+
+    /* And an array under the element nests. */
+    ASSERT_EQ(2u, doc_array_len(first, "sources"));
+    doc_view source;
+    ASSERT_TRUE(doc_array_at(first, "sources", 1, &source));
+    EXPECT_TRUE(doc_get_string(source, "", "path", value, sizeof value));
+    EXPECT_STREQ("src/util.c", value);
+
+    /* The second target's sources are its own. Reading the first target's list
+       here would be the bug this accessor is defended against. */
+    doc_view second;
+    ASSERT_TRUE(doc_array_at(doc, "targets", 1, &second));
+    EXPECT_TRUE(doc_get_string(second, "", "name", value, sizeof value));
+    EXPECT_STREQ("probe", value);
+    ASSERT_EQ(1u, doc_array_len(second, "sources"));
+    ASSERT_TRUE(doc_array_at(second, "sources", 0, &source));
+    EXPECT_TRUE(doc_get_string(source, "", "language", value, sizeof value));
+    EXPECT_STREQ("cpp", value);
+
+    /* The second target declared no artifact, and asking says so rather than
+       handing back the first one's. */
+    EXPECT_FALSE(doc_has_table(second, "artifact"));
+
+    /* Past the end is not there, whichever encoding it is not there in. */
+    doc_view past;
+    EXPECT_FALSE(doc_array_at(doc, "targets", 2, &past));
+    EXPECT_FALSE(doc_array_at(doc, "absent", 0, &past));
+}
+
+MOLTEST(doc_walks_nested_tables_in_toml) {
+    char err[256] = "";
+    toml_document *doc = toml_parse(NESTED_TOML, err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+    assert_nested(doc_from_toml(doc));
+    toml_free(doc);
+}
+
+MOLTEST(doc_walks_nested_tables_in_json) {
+    json_document *doc = json_parse(NESTED_JSON);
+    ASSERT_NOT_NULL(doc);
+    assert_nested(doc_from_json(json_root(doc)));
+    json_free(doc);
+}
+
+MOLTEST(doc_refuses_an_array_element_that_is_not_a_table) {
+    /* JSON can express `[1, 2]` where a list of nodes belongs. Reading it as an
+       empty table would drop a node in silence; saying no is the whole point of
+       the type check. */
+    json_document *doc = json_parse("{\"targets\":[1,2]}");
+    ASSERT_NOT_NULL(doc);
+    const doc_view view = doc_from_json(json_root(doc));
+
+    EXPECT_EQ(2u, doc_array_len(view, "targets"));
+    doc_view element;
+    EXPECT_FALSE(doc_array_at(view, "targets", 0, &element));
+
+    json_free(doc);
+}
+
+MOLTEST(doc_counts_nothing_for_a_key_that_is_not_an_array_of_tables) {
+    /* A scalar under the name a caller expected an array at is not an array of
+       one: it is a document that does not say what the reader was told it did. */
+    json_document *doc = json_parse("{\"targets\":\"app\"}");
+    ASSERT_NOT_NULL(doc);
+    EXPECT_EQ(0u, doc_array_len(doc_from_json(json_root(doc)), "targets"));
+    json_free(doc);
+}
