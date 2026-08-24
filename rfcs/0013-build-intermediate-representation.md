@@ -407,14 +407,34 @@ cannot be diffed cannot be reviewed or cached.
 
 ## Implementation Status
 
-None of this is implemented. `plan_project()` in `src/services/build_service.c`
-does today what this RFC splits in two, and the line falls inside it: everything
-up to and including the scan for C++ sources is a frontend producing a
-description, and `toolchain_resolve()` onwards is an engine consuming one.
-`merge_deps()` is the clearest case — its own comment argues that folding a
-dependency's interface into the target scope means "none of those has to learn
-what a dependency is", which is the argument for a transform, written before
-transforms existed.
+The document exists and the engine does not read it yet. As of molto 0.21.0:
+
+- **The table-array accessor** is `doc_array_len` / `doc_array_at` / `doc_table_at`
+  in `include/molto/util/doc.h`. Reaching it needed a fix in the TOML parser
+  first: `[[targets.sources]]` was stored flat under `targets.sources` and lost
+  which element it belonged to, so every target's sources merged into one list.
+  A nested header is now qualified with its ancestors' indices.
+- **The node types and their validation** are `ir_service.h`, `ir_service.c`,
+  `ir_read.c` and `ir_validate.c` — eight of the ten. `BuildStep` and
+  `GeneratedSource` are refused by name, with the reason, rather than silently
+  absent.
+- **The native frontend** is `frontend_native.c`, and `molto ir` prints what it
+  produces.
+- **`molto ir`** is implemented, `--output` and `--profile` included, and its
+  output is byte-identical between runs.
+
+Still ahead, and unchanged in what blocks what:
+
+- **The engine reading a document.** `plan_project()` in
+  `src/services/build_service.c` still does what this RFC splits in two, and the
+  line falls inside it: everything up to and including the scan for C++ sources
+  is a frontend producing a description, and `toolchain_resolve()` onwards is an
+  engine consuming one. `units_from()` is the seam.
+- **Transforms**, which is where `merge_deps()` belongs — its own comment argues
+  that folding a dependency's interface into the target scope means "none of
+  those has to learn what a dependency is", which is the argument for a
+  transform, written before transforms existed. Until one exists, a document's
+  `dependencies` list is empty.
 
 Ordered by what blocks what:
 

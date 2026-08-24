@@ -420,8 +420,27 @@ resolved from a registry is `3`.
 
 ## Implementation Status
 
-Nothing is implemented. `spec.md` §14 is five lines and this RFC is the first
-document to specify any of it.
+As of molto 0.21.0, the CLI fallback, `molto plugin` and the `frontend`
+capability are implemented; the rest is not.
+
+- **The CLI fallback** — an unknown command looking for `molto-<name>` — works,
+  and is checked after the built-in table so no plugin can shadow `build`.
+- **`molto plugin list/info/install/remove`** work, and `info` says that nothing
+  enforces a plugin's permissions yet.
+- **The `frontend` capability** works end to end: selection by extension,
+  the schema and `molto_min` check before the process starts, the stdin/stdout
+  exchange with a deadline and a size cap, exit 3 as declining, and the document
+  validated before a caller ever holds it (`frontend_service.h`). What a plugin
+  author needs to know is `docs/Plugins.md`.
+- **One gap this RFC left** is closed by that work and belongs here: a `frontend`
+  is asked about a directory, so there is no IR document to hand it. It receives
+  a small request document instead — `{"schema", "request", "root", "entry"}` —
+  and `entry` is the filename from its own `extensions` that selected it.
+
+Not implemented: the other seven capabilities, `[plugins]` in the manifest, the
+sandbox, and the reframed `migrate`. The engine still builds from `Project.toml`
+rather than from a document, so a plugin's frontend can be inspected with
+`molto ir` and cannot yet be built from.
 
 The order that matters, because parts of it are cheap and parts are not:
 
