@@ -1,6 +1,7 @@
 #include <molto/services/ir_service.h>
 
 #include <molto/util/json.h>
+#include <molto/util/text.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -119,6 +120,27 @@ static bool reject_unknown_nodes(doc_view node, const char *const *known, const 
    one sized for what a manifest may write. */
 #define IR_TEXT_MAX 4096
 
+/* --- naming the node a message is about --- */
+
+/*
+ * A label is composed from a *bounded excerpt* of the name, not from the name.
+ *
+ * Two reasons that turn out to be one. A name is as long as the producer made
+ * it — the document owns its own lengths — so a message quoting one whole can
+ * be four kilobytes of unreadable, and the buffer holding "target '<name>'"
+ * would have to be larger than the largest name to be provably safe. Eliding
+ * first fixes the message and the buffer at once, which is why gcc's
+ * -Wformat-truncation is right to object to the version that did not.
+ */
+#define IR_LABEL_MAX 256
+#define IR_NAME_SHOWN_MAX 96
+
+static void label_for(char *out, size_t size, const char *what, const char *name) {
+    char shown[IR_NAME_SHOWN_MAX];
+    text_elide_middle(name, shown, sizeof shown);
+    snprintf(out, size, "%s '%s'", what, shown);
+}
+
 static bool read_required(doc_view node, const char *key, char *out, size_t size, const char *where,
                           char *err, size_t err_size) {
     if(!doc_get_string(node, "", key, out, size)) {
@@ -229,8 +251,8 @@ static bool read_sources(doc_view target_node, ir_target *target, char *err, siz
             return false;
 
         char path[IR_TEXT_MAX];
-        char where[IR_TEXT_MAX];
-        snprintf(where, sizeof where, "a source of target '%s'", target->name);
+        char where[IR_LABEL_MAX];
+        label_for(where, sizeof where, "a source of target", target->name);
         if(!read_required(node, "path", path, sizeof path, where, err, err_size))
             return false;
 
@@ -269,8 +291,8 @@ static bool read_artifact(doc_view target_node, ir_target *target, char *err, si
     if(!doc_table_at(target_node, "artifact", &node))
         return true;
 
-    char where[IR_TEXT_MAX];
-    snprintf(where, sizeof where, "the artifact of target '%s'", target->name);
+    char where[IR_LABEL_MAX];
+    label_for(where, sizeof where, "the artifact of target", target->name);
 
     if(!reject_unknown_nodes(node, KNOWN, where, err, err_size))
         return false;
@@ -332,8 +354,8 @@ static bool read_target(doc_view node, ir_document *out, char *err, size_t err_s
         return false;
     }
 
-    char where[IR_TEXT_MAX];
-    snprintf(where, sizeof where, "target '%s'", name);
+    char where[IR_LABEL_MAX];
+    label_for(where, sizeof where, "target", name);
 
     if(!read_sources(node, target, err, err_size) ||
        !read_options(node, "options", &target->options, &target->option_count, where, err,
@@ -365,8 +387,8 @@ static bool read_dependency(doc_view node, ir_document *out, char *err, size_t e
     if(!read_required(node, "name", name, sizeof name, "a dependency", err, err_size))
         return false;
 
-    char where[IR_TEXT_MAX];
-    snprintf(where, sizeof where, "dependency '%s'", name);
+    char where[IR_LABEL_MAX];
+    label_for(where, sizeof where, "dependency", name);
 
     char origin_name[32] = "";
     ir_dep_origin origin = ir_dep_registry;

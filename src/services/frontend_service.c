@@ -133,8 +133,16 @@ bool frontend_candidates(const char *root, frontend_choice *out, size_t capacity
         if(*count >= capacity)
             return false;
 
-        snprintf(choice.name, sizeof choice.name, "%s", installed[i].name);
-        snprintf(choice.path, sizeof choice.path, "%s", installed[i].path);
+        /* Bounded explicitly rather than left to the destination's size. The
+           two buffers are the same width and plugin_list validated the name, so
+           neither copy can truncate in fact — but a compiler cannot see that,
+           and at -O3 gcc assumes the source may run to the end of the whole
+           entry array. Saying the bound is also the honest statement: this
+           copies at most as much of the name as a name can hold. */
+        snprintf(choice.name, sizeof choice.name, "%.*s", (int)(sizeof choice.name - 1),
+                 installed[i].name);
+        snprintf(choice.path, sizeof choice.path, "%.*s", (int)(sizeof choice.path - 1),
+                 installed[i].path);
         out[(*count)++] = choice;
     }
     return true;
