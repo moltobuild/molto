@@ -74,6 +74,70 @@ typedef struct {
                                       size_t env_count, char *out, size_t out_size,
                                       bool *truncated);
 
+/* --- exchanging a document with a child process (RFC-0014) --- */
+
+/* How an exchange ended. The child's own exit code is a separate field, because
+   "the plugin ran and said no" and "the plugin broke" are different facts and a
+   single integer cannot carry both. */
+typedef enum {
+    process_exchange_ok,          /* it exited on its own; `code` says with what */
+    process_exchange_not_started, /* fork or exec failed; nothing ran */
+    process_exchange_timed_out,   /* it passed its deadline and was killed */
+    process_exchange_too_large,   /* its answer passed the cap and was refused mid-read */
+    /* The exchange itself broke — a failed poll, memory that ran out mid-read.
+       Separate from `not_started` because the child did run, and a caller
+       reporting "the plugin could not be started" about a plugin that started
+       sends whoever reads it looking in the wrong place. */
+    process_exchange_failed,
+} process_exchange_result;
+
+/* One exchange: a document in, a document out.
+ *
+ * Different from every capture above in the one way that matters here. Those
+ * merge the child's two streams on purpose, because a compiler diagnoses on
+ * stderr and clang-tidy on stdout and a caller reading either wants both. For a
+ * plugin the two streams mean different things — stdout is the document and
+ * stderr is what the plugin has to say about producing it — so merging them
+ * would corrupt the answer with the explanation. */
+typedef struct {
+    /* in */
+    const char *request; /* written to the child's stdin, which is then closed,
+                            so a plugin that reads to EOF has the whole request */
+    size_t request_size; /* 0 with a non-NULL request means strlen(request) */
+    size_t answer_max;   /* refuse an answer larger than this; 0 means no cap */
+    unsigned timeout_ms; /* 0 waits as long as it takes */
+    const process_env_var *env;
+    size_t env_count;
+
+    /* out */
+    char *answer; /* heap, NUL-terminated; the caller frees it. NULL when the
+                     child wrote nothing */
+    size_t answer_size;
+    int code; /* the child's exit code, or 128 + N when a signal ended it */
+} process_exchange;
+
+/* Run `argv`, write `io->request` to its standard input, read its standard
+   output into `io->answer`, and leave its standard error inherited so what it
+   says reaches the user directly.
+ *
+ * Both directions are driven at once rather than one after the other. Writing
+ * the whole request first would deadlock the moment a child answers before it
+ * has finished reading: the parent blocks writing into a full pipe while the
+ * child blocks writing into one nobody is draining. Neither side is at fault
+ * and neither can recover, so the parent polls both.
+ *
+ * A child that exits before reading its request does not kill Molto: SIGPIPE is
+ * ignored for the duration and the failed write is simply the end of the
+ * request. A child that never finishes is killed at `timeout_ms` — a plugin
+ * that hangs must not hang a build.
+ *
+ * `io->answer` is set on every result that produced bytes, including a timeout,
+ * so a caller can report what it got. It is the caller's decision what a
+ * partial answer means, and for an IR document the answer is nothing: a
+ * document half-read is valid JSON prefix and invalid meaning. */
+[[nodiscard]] process_exchange_result process_exchange_run(const char *const argv[],
+                                                           process_exchange *io);
+
 /* Build the NULL-terminated argv the exec family wants from a str_list. The
    array is the caller's to free; the strings inside stay owned by `list`.
    Returns NULL on allocation failure. */
