@@ -386,3 +386,11 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
             ctx->profile.custom.opt_level, ctx->profile.custom.debug_info ? "true" : "false");
     project_deps_dump(&ctx->deps, stream);
 }
+
+bool project_test_sources(const project_test *test, str_list *out) {
+    for(size_t i = 0; i < test->source_count; i++) {
+        if(!str_list_push(out, test->sources[i]))
+            return false;
+    }
+    return true;
+}

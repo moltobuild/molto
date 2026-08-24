@@ -290,11 +290,14 @@ fixture is useless.
 This is the first revision of the frontend capability, and it stops in a
 deliberate place.
 
-- **`molto build` does not yet build from a plugin's document.** The engine still
-  plans from `Project.toml` directly. What works today is producing, inspecting
-  and validating the document — which is what a frontend author needs in order
-  to write one at all, and the contract has to be stable before the engine
-  depends on it.
+- **`molto build` does not yet build from a plugin's document.** It builds from
+  a *document* now — the native frontend's — and takes from it what is compiled:
+  the targets, their sources and each source's language. What it still takes
+  from `Project.toml` directly is the compile line, and it asks the native
+  frontend by name rather than asking whichever frontend understands the
+  directory. So a plugin's document is still produced, inspected and validated
+  rather than built, which is what a frontend author needs in order to write one
+  at all, and the contract has to be stable before the engine depends on it.
 - **`molto migrate` is not implemented.** It is specified as running a frontend
   once and serialising the result to a `Project.toml` — one parser, two products.
 - **No transforms.** A dependency's interface is folded into a target's scope by
