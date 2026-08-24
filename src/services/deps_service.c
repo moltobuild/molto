@@ -11,6 +11,9 @@
 
 #define DEPS_PATH_MAX 1024
 
+/* An include search directory, as a command line carries it. */
+#define INCLUDE_FLAG_FORMAT "-I%s"
+
 static bool set_error(char *err, size_t err_size, const char *format, ...)
     __attribute__((format(printf, 3, 4)));
 
@@ -309,4 +312,84 @@ bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err, size_t 
     const bool ok = deps_prepare_graph(graph, out, err, err_size);
     dep_graph_free(graph);
     return ok;
+}
+
+/* --- what a command line makes of them --- */
+
+/* Append one entry to a fixed-size option array, refusing to overflow it: a
+   dropped define or library produces a green build of something else. */
+bool deps_append_option(char dest[][PROJECT_OPT_LEN], size_t *count, size_t capacity,
+                        const char *value, const char *what) {
+    if(*count >= capacity) {
+        fprintf(stderr, "molto: %s has more than %zu entries once dependencies are added\n", what,
+                capacity);
+        return false;
+    }
+    if(!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
+        return fs_report_long_path(value);
+    (*count)++;
+    return true;
+}
+
+/* The "-I" flags a compile line carries: the project's own src/, then one per
+   include directory a dependency exports.
+
+   Composed into a list rather than merged into project_options because a
+   dependency's include is an absolute path into the shared cache, and a
+   manifest option is sized for "-DFOO=1" — RFC-0003 caps one at 95 characters,
+   which a real cache path exceeds. */
+bool deps_include_flags(const char *src_dir, const prepared_deps *deps, str_list *out) {
+    const str_list *dep_includes = deps != NULL ? &deps->includes : NULL;
+    char flag[DEPS_PATH_MAX + 4];
+    if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, src_dir))
+        return fs_report_long_path(src_dir);
+    if(!str_list_push(out, flag))
+        return false;
+
+    for(size_t i = 0; dep_includes != NULL && i < str_list_count(dep_includes); i++) {
+        const char *directory = str_list_get(dep_includes, i);
+        if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
+            return fs_report_long_path(directory);
+        if(!str_list_push(out, flag))
+            return false;
+    }
+    return true;
+}
+
+/* Fold what the dependencies contribute into `[target]`.
+ *
+ * A dependency's include directories, defines, flags and libraries are exactly
+ * the things `[target]` already carries, and everything downstream — the
+ * compile line, the link line, `molto lint`, the test build — reads them from
+ * there. Merging here means none of those has to learn what a dependency is.
+ */
+bool deps_merge_interface(project_ctx *ctx, const prepared_deps *deps) {
+    /* The package name and version live past the manifest's own limit, so a
+       dependency may not take their slots. */
+    for(size_t i = 0; i < str_list_count(&deps->defines); i++) {
+        if(!deps_append_option(ctx->target.options.defines, &ctx->target.options.define_count,
+                               PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES,
+                               str_list_get(&deps->defines, i), "[target].defines"))
+            return false;
+    }
+    for(size_t i = 0; i < str_list_count(&deps->flags); i++) {
+        if(!deps_append_option(ctx->target.options.flags, &ctx->target.options.flag_count,
+                               PROJECT_MAX_OPTS, str_list_get(&deps->flags, i), "[target].flags"))
+            return false;
+    }
+    for(size_t i = 0; i < str_list_count(&deps->links); i++) {
+        const char *library = str_list_get(&deps->links, i);
+        if(ctx->target.link_count >= PROJECT_MAX_LINK) {
+            fprintf(stderr,
+                    "molto: [target].link has more than %d entries once dependencies are "
+                    "added\n",
+                    PROJECT_MAX_LINK);
+            return false;
+        }
+        if(!fs_format_path(ctx->target.link[ctx->target.link_count], PROJECT_LINK_NAME_MAX, "%s",
+                           library))
+            return fs_report_long_path(library);
+        ctx->target.link_count++;
+    }
+    return true;
 }

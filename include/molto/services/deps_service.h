@@ -129,4 +129,35 @@ void prepared_deps_free(prepared_deps *out);
 [[nodiscard]] bool deps_prepare_dev(const dep_graph *graph, prepared_deps *out, char *err,
                                     size_t err_size);
 
+/* --- what a command line makes of them --- */
+
+/* Append one entry to a fixed-size option array, refusing to overflow it: a
+   dropped define or library produces a green build of something else. `what`
+   names the table in the message. */
+[[nodiscard]] bool deps_append_option(char dest[][PROJECT_OPT_LEN], size_t *count, size_t capacity,
+                                      const char *value, const char *what);
+
+/* Fold what the dependencies export into `[target]`.
+ *
+ * A dependency's defines, flags and libraries are exactly the things `[target]`
+ * already carries, and everything downstream — the compile line, the link line,
+ * `molto lint`, the test build — reads them from there. Merging means none of
+ * those has to learn what a dependency is.
+ *
+ * It lives here rather than in the build because the build is not its only
+ * caller: `molto lint` analyses the same translation units and needs the same
+ * defines, since a `#ifdef` decides what even compiles and a linter that saw
+ * different ones would be reporting on code the build never sees. */
+[[nodiscard]] bool deps_merge_interface(project_ctx *ctx, const prepared_deps *deps);
+
+/* The "-I" flags a command line carries: the project's own `src/`, then one per
+   include directory a dependency exports.
+
+   Composed into a list rather than merged into `project_options` because a
+   dependency's include is an absolute path into the shared cache, and a
+   manifest option is sized for "-DFOO=1" — RFC-0003 caps one at 95 characters,
+   which a real cache path exceeds. */
+[[nodiscard]] bool deps_include_flags(const char *src_dir, const prepared_deps *deps,
+                                      str_list *out);
+
 #endif /* MOLTO_DEPS_SERVICE_H */

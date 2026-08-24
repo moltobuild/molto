@@ -1029,46 +1029,6 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     return ok;
 }
 
-/* The "-I" flags a compile line carries: the project's own src/, then one per
-   include directory a dependency exports.
-
-   Composed into a list rather than merged into project_options because a
-   dependency's include is an absolute path into the shared cache, and a
-   manifest option is sized for "-DFOO=1" — RFC-0003 caps one at 95 characters,
-   which a real cache path exceeds. */
-[[nodiscard]] static bool compose_include_flags(const char *src_dir, const str_list *dep_includes,
-                                                str_list *out) {
-    char flag[PATH_BUFFER_SIZE + 4];
-    if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, src_dir))
-        return fs_report_long_path(src_dir);
-    if(!str_list_push(out, flag))
-        return false;
-
-    for(size_t i = 0; dep_includes != NULL && i < str_list_count(dep_includes); i++) {
-        const char *directory = str_list_get(dep_includes, i);
-        if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
-            return fs_report_long_path(directory);
-        if(!str_list_push(out, flag))
-            return false;
-    }
-    return true;
-}
-
-/* Append one entry to a fixed-size option array, refusing to overflow it: a
-   dropped define or library produces a green build of something else. */
-[[nodiscard]] static bool append_option(char dest[][PROJECT_OPT_LEN], size_t *count,
-                                        size_t capacity, const char *value, const char *what) {
-    if(*count >= capacity) {
-        fprintf(stderr, "molto: %s has more than %zu entries once dependencies are added\n", what,
-                capacity);
-        return false;
-    }
-    if(!fs_format_path(dest[*count], PROJECT_OPT_LEN, "%s", value))
-        return fs_report_long_path(value);
-    (*count)++;
-    return true;
-}
-
 /* What one dependency is compiled with: its own defines and flags, and its own
    include directories as pre-composed "-I" flags. Deliberately not the
    project's, and no longer every other dependency's either: see the call
@@ -1076,13 +1036,13 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
 [[nodiscard]] static bool collect_unit_options(const prepared_unit *unit, project_options *options,
                                                str_list *include_flags) {
     for(size_t i = 0; i < str_list_count(&unit->defines); i++) {
-        if(!append_option(options->defines, &options->define_count, PROJECT_MAX_OPTS,
-                          str_list_get(&unit->defines, i), "a dependency's defines"))
+        if(!deps_append_option(options->defines, &options->define_count, PROJECT_MAX_OPTS,
+                               str_list_get(&unit->defines, i), "a dependency's defines"))
             return false;
     }
     for(size_t i = 0; i < str_list_count(&unit->flags); i++) {
-        if(!append_option(options->flags, &options->flag_count, PROJECT_MAX_OPTS,
-                          str_list_get(&unit->flags, i), "a dependency's flags"))
+        if(!deps_append_option(options->flags, &options->flag_count, PROJECT_MAX_OPTS,
+                               str_list_get(&unit->flags, i), "a dependency's flags"))
             return false;
     }
     char flag[PATH_BUFFER_SIZE + 4];
@@ -1208,44 +1168,6 @@ static build_unit_label label_for(const prepared_unit *unit) {
                 .label = &pass->labels[i],
             };
         }
-    }
-    return true;
-}
-
-/* Fold what the dependencies contribute into `[target]`.
- *
- * A dependency's include directories, defines, flags and libraries are exactly
- * the things `[target]` already carries, and everything downstream — the
- * compile line, the link line, `molto lint`, the test build — reads them from
- * there. Merging here means none of those has to learn what a dependency is.
- */
-[[nodiscard]] static bool merge_deps(project_ctx *ctx, const prepared_deps *deps) {
-    /* The package name and version live past the manifest's own limit, so a
-       dependency may not take their slots. */
-    for(size_t i = 0; i < str_list_count(&deps->defines); i++) {
-        if(!append_option(ctx->target.options.defines, &ctx->target.options.define_count,
-                          PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES, str_list_get(&deps->defines, i),
-                          "[target].defines"))
-            return false;
-    }
-    for(size_t i = 0; i < str_list_count(&deps->flags); i++) {
-        if(!append_option(ctx->target.options.flags, &ctx->target.options.flag_count,
-                          PROJECT_MAX_OPTS, str_list_get(&deps->flags, i), "[target].flags"))
-            return false;
-    }
-    for(size_t i = 0; i < str_list_count(&deps->links); i++) {
-        const char *library = str_list_get(&deps->links, i);
-        if(ctx->target.link_count >= PROJECT_MAX_LINK) {
-            fprintf(stderr,
-                    "molto: [target].link has more than %d entries once dependencies are "
-                    "added\n",
-                    PROJECT_MAX_LINK);
-            return false;
-        }
-        if(!fs_format_path(ctx->target.link[ctx->target.link_count], PROJECT_LINK_NAME_MAX, "%s",
-                           library))
-            return fs_report_long_path(library);
-        ctx->target.link_count++;
     }
     return true;
 }
@@ -1563,8 +1485,8 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
 
     /* The interface of the dependencies folds into `[target]`; what each of
        them compiles itself with becomes a pass of its own units. */
-    if(!merge_deps(ctx_out, &plan->deps) ||
-       !compose_include_flags(src_dir, &plan->deps.includes, include_flags_out) ||
+    if(!deps_merge_interface(ctx_out, &plan->deps) ||
+       !deps_include_flags(src_dir, &plan->deps, include_flags_out) ||
        !dep_pass_build(&plan->runtime_units, &plan->deps, &ctx_out->target))
         return exit_dependency_failure;
 
@@ -1908,13 +1830,14 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
         }
     }
     for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.defines); i++) {
-        if(!append_option(ctx.test.options.defines, &ctx.test.options.define_count,
-                          PROJECT_MAX_OPTS, str_list_get(&plan.dev.defines, i), "[test].defines"))
+        if(!deps_append_option(ctx.test.options.defines, &ctx.test.options.define_count,
+                               PROJECT_MAX_OPTS, str_list_get(&plan.dev.defines, i),
+                               "[test].defines"))
             result = exit_build_failure;
     }
     for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.flags); i++) {
-        if(!append_option(ctx.test.options.flags, &ctx.test.options.flag_count, PROJECT_MAX_OPTS,
-                          str_list_get(&plan.dev.flags, i), "[test].flags"))
+        if(!deps_append_option(ctx.test.options.flags, &ctx.test.options.flag_count,
+                               PROJECT_MAX_OPTS, str_list_get(&plan.dev.flags, i), "[test].flags"))
             result = exit_build_failure;
     }
     for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.links); i++) {

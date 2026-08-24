@@ -6,6 +6,7 @@
 #include <molto/project/project_ctx.h>
 #include <molto/project/style_config.h>
 #include <molto/services/build_service.h>
+#include <molto/services/deps_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
@@ -105,6 +106,15 @@ typedef struct {
     /* The translated configuration itself, not its path, because the path does
        not change when linter.json does. It goes into every fingerprint. */
     char *linter_config_text;
+    /* What the project depends on, reduced to what a command line needs.
+     *
+     * Analysis without them is analysis of different code: a dependency's
+     * headers are what its `#include` resolves to, and its defines are what a
+     * `#ifdef` decides on. Lint used to have neither, so a project with any
+     * dependency at all was told its own sources could not find their headers —
+     * a diagnostic that blames the user for a file Molto never looked for. */
+    prepared_deps deps;
+    str_list include_flags;
 } lint_setup;
 
 /* One source and everything the cache needs to decide about it (RFC-0006).
@@ -204,6 +214,17 @@ static bool push_compile_arguments(str_list *argv, const char *root, const lint_
            compile_flags_push_options(argv, root, profile_options_for(&setup->ctx, profile));
 }
 
+/* The project's own `src/` and then one per include a dependency exports, in
+   the order the build composes them — last on the line, exactly as a compile
+   line carries them, so lint and build resolve an `#include` the same way. */
+static bool push_include_flags(str_list *argv, const lint_setup *setup) {
+    for(size_t i = 0; i < str_list_count(&setup->include_flags); i++) {
+        if(!str_list_push(argv, str_list_get(&setup->include_flags, i)))
+            return false;
+    }
+    return true;
+}
+
 /* The syntax-only pass. The preset's warnings go before the project's own
    flags: in gcc and clang the last one wins, so a preset -Wall appended after a
    project's -Wno-unused would silently re-enable what it deliberately turned
@@ -230,11 +251,7 @@ static bool build_compiler_argv(str_list *argv, const char *root, const lint_set
     }
     if(ok)
         ok = push_compile_arguments(argv, root, setup, profile, is_cpp);
-
-    char include_src[PATH_BUFFER_SIZE];
-    if(!fs_format_path(include_src, sizeof include_src, ARG_INCLUDE_SRC, root))
-        return fs_report_long_path(root);
-    return ok && str_list_push(argv, include_src);
+    return ok && push_include_flags(argv, setup);
 }
 
 /* The linter pass, told where the translated configuration is and given the
@@ -249,11 +266,7 @@ static bool build_linter_argv(str_list *argv, const char *root, const lint_setup
               str_list_push(argv, ARG_QUIET) && str_list_push(argv, source) &&
               str_list_push(argv, ARG_SEPARATOR) &&
               push_compile_arguments(argv, root, setup, profile, source_is_cpp(source));
-
-    char include_src[PATH_BUFFER_SIZE];
-    if(!fs_format_path(include_src, sizeof include_src, ARG_INCLUDE_SRC, root))
-        return fs_report_long_path(root);
-    return ok && str_list_push(argv, include_src);
+    return ok && push_include_flags(argv, setup);
 }
 
 /* --- the result cache (RFC-0006) --- */
@@ -455,9 +468,31 @@ static int absorb(lint_task *task, diagnostic_list *out) {
 }
 
 /* Resolve everything the passes need, and translate the configuration. */
+/* Resolve the dependencies and fold what they export into `[target]`, exactly
+   as a build does and through the same two functions — one implementation, so
+   lint and build cannot come to disagree about what a source is compiled with.
+ *
+ * It fetches on a cold cache, which `molto lint` did not do before. That is not
+ * a cost being added for tidiness: the headers have to be on disk to be read,
+ * and analysis that skipped them was reporting on code that does not exist. */
+static bool prepare_deps(const char *root, lint_setup *setup) {
+    char err[CONFIG_ERROR_SIZE] = "";
+    if(!deps_prepare(&setup->ctx, &setup->deps, err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return false;
+    }
+    char src_dir[PATH_BUFFER_SIZE];
+    return fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) &&
+           deps_merge_interface(&setup->ctx, &setup->deps) &&
+           deps_include_flags(src_dir, &setup->deps, &setup->include_flags);
+}
+
 static int prepare(const char *root, const lint_request *request, lint_setup *setup,
                    const str_list *sources) {
     char err[CONFIG_ERROR_SIZE] = "";
+
+    if(!prepare_deps(root, setup))
+        return exit_dependency_failure;
 
     /* The database is opened only to reuse the recorded answers about the
        compiler and the linter, so lint does not pay pickup's cost every run. */
@@ -574,19 +609,33 @@ static bool task_is_recordable(const lint_task *task) {
            diagnostic_count_severity(&task->found, diagnostic_severity_error) > 0;
 }
 
+/* Everything the setup owns. One place, because this function has six ways out
+   and a field released on five of them is a leak nobody sees. */
+static void setup_free(lint_setup *setup) {
+    free(setup->linter_config_text);
+    setup->linter_config_text = NULL;
+    prepared_deps_free(&setup->deps);
+    str_list_free(&setup->include_flags);
+}
+
 int lint_project(const char *root, const lint_request *request, diagnostic_list *out) {
     lint_setup setup;
     memset(&setup, 0, sizeof setup);
+    prepared_deps_init(&setup.deps);
+    str_list_init(&setup.include_flags);
 
     int code = load_manifest(root, &setup.ctx);
-    if(code != exit_ok)
+    if(code != exit_ok) {
+        setup_free(&setup);
         return code;
+    }
 
     /* The configuration comes first because it decides which sources there are
        to analyze, and the sources decide what is asked of the toolchain. */
     char err[CONFIG_ERROR_SIZE] = "";
     if(!lint_config_load(root, &setup.config, err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err);
+        setup_free(&setup);
         return exit_invalid_manifest;
     }
 
@@ -594,17 +643,20 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     str_list_init(&sources);
     if(!collect_sources(root, &setup.config.paths, &sources)) {
         str_list_free(&sources);
+        setup_free(&setup);
         return exit_build_failure;
     }
     size_t source_count = str_list_count(&sources);
     if(source_count == 0) {
         str_list_free(&sources);
+        setup_free(&setup);
         return exit_ok;
     }
 
     code = prepare(root, request, &setup, &sources);
     if(code != exit_ok) {
         str_list_free(&sources);
+        setup_free(&setup);
         return code;
     }
 
@@ -617,7 +669,7 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
         free(tasks);
         free(argvs);
         free(files);
-        free(setup.linter_config_text);
+        setup_free(&setup);
         str_list_free(&sources);
         return exit_build_failure;
     }
@@ -697,7 +749,7 @@ int lint_project(const char *root, const lint_request *request, diagnostic_list 
     free(tasks);
     free(argvs);
     free(files);
-    free(setup.linter_config_text);
+    setup_free(&setup);
     str_list_free(&sources);
     return code;
 }
