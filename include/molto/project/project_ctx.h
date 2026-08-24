@@ -20,6 +20,9 @@ typedef enum {
 #define PROJECT_LINK_NAME_MAX 64
 #define PROJECT_MAX_OPTS 16
 #define PROJECT_OPT_LEN 96
+
+/* Room for the directory a manifest was read from. */
+#define PROJECT_ROOT_MAX 1024
 #define PROJECT_MAX_ENV 32
 #define PROJECT_ENV_NAME_MAX 64
 #define PROJECT_ENV_VALUE_MAX 256
@@ -125,6 +128,14 @@ typedef struct {
     project_registries registries;
     project_profiles profile;
     project_profile_options profile_options; /* per-profile extra options */
+    /* The directory the manifest was read from, absolute or as the caller
+       named it. A relative path in a manifest anchors here (RFC-0003), and
+       until something knows where "here" is, it cannot.
+
+       `project_load` fills it; `project_parse` leaves it empty, because a
+       string has no directory. Empty means the working directory, which is
+       what a relative path has always meant to the code that reads one. */
+    char root[PROJECT_ROOT_MAX];
 } project_ctx;
 
 /* Parse a Project.toml `toml` string into `*out`. Built-in profile defaults are

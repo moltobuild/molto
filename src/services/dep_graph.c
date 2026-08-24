@@ -342,9 +342,39 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
    recipe *is* its bytes, so there is no metadata to walk ahead of them. This
    is the one place the walk still downloads, and the reason a conflict between
    two path or git dependencies is reported rather than searched. */
-static bool visit_carried(const project_dep *dep, visited *out, char *err, size_t err_size) {
+/* Where a `path` dependency's directory actually is.
+ *
+ * A relative path in a manifest anchors at the project root (RFC-0003), and
+ * this origin was the one place that rule went unapplied: the directory was
+ * opened exactly as written, so it resolved only while the working directory
+ * happened to be the root. Every command finds its project by walking up, so
+ * running one from a subdirectory sent the build looking for `modules/x` under
+ * `src/`.
+ *
+ * Anchored on the copy and never on `dep->location`, which is deliberate and is
+ * the whole reason this is here rather than at load time. The lock file records
+ * the source as the manifest wrote it, and an anchored one would write this
+ * machine's absolute path into a file that is committed and read by everyone
+ * else — a lock that pins a directory none of them have.
+ *
+ * An empty root means the caller parsed a manifest without a directory, and
+ * then a relative path means the working directory, exactly as before. */
+static bool anchor_path(source_spec *spec, const char *root, char *err, size_t err_size) {
+    if(spec->origin != source_origin_path || spec->location[0] == '/' || root[0] == '\0')
+        return true;
+    char absolute[sizeof spec->location];
+    if((size_t)snprintf(absolute, sizeof absolute, "%s/%s", root, spec->location) >=
+       sizeof absolute)
+        return set_error(err, err_size, "the path '%s/%s' is too long", root, spec->location);
+    snprintf(spec->location, sizeof spec->location, "%s", absolute);
+    return true;
+}
+
+static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visited *out, char *err,
+                          size_t err_size) {
     source_spec spec;
-    if(!project_dep_to_source(dep, &spec, err, err_size))
+    if(!project_dep_to_source(dep, &spec, err, err_size) ||
+       !anchor_path(&spec, ctx->root, err, err_size))
         return false;
 
     /* A path dependency is used where it is, so it has no cache key and its
@@ -564,7 +594,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     char reason[512] = "";
     bool ok = dep->resolution == dep_resolution_registry
                   ? visit_registry(ctx, dep, creds, found, reason, sizeof reason)
-                  : visit_carried(dep, found, reason, sizeof reason);
+                  : visit_carried(ctx, dep, found, reason, sizeof reason);
     if(!ok) {
         free(found);
         return entry->required_by[0] == '\0'
