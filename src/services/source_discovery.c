@@ -73,3 +73,51 @@ bool source_discovery_collect(const char *root, str_list *out) {
 bool source_discovery_collect_styleable(const char *root, str_list *out) {
     return collect_sorted(root, is_styleable, out);
 }
+
+/* Where an entry of `[test].sources` is on disk: as written when absolute, and
+   anchored at the project root when not — the same rule every relative path in
+   a manifest obeys (RFC-0003). */
+static bool entry_path(const char *root, const char *entry, char *out, size_t out_size) {
+    return entry[0] == '/' ? fs_format_path(out, out_size, "%s", entry)
+                           : fs_format_path(out, out_size, "%s/%s", root, entry);
+}
+
+static bool collect_entry(const char *root, const char *entry, str_list *out, char *err,
+                          size_t err_size) {
+    char path[DISCOVERY_PATH_SIZE];
+    if(!entry_path(root, entry, path, sizeof path)) {
+        snprintf(err, err_size, "[test].sources '%s' does not fit in a path", entry);
+        return false;
+    }
+    if(fs_is_dir(path)) {
+        if(!source_discovery_collect(path, out)) {
+            snprintf(err, err_size, "could not read [test].sources '%s'", entry);
+            return false;
+        }
+        return true;
+    }
+    if(!fs_path_exists(path)) {
+        snprintf(err, err_size, "[test].sources '%s' does not exist", entry);
+        return false;
+    }
+    return str_list_push(out, path);
+}
+
+bool source_discovery_collect_tests(const char *root, const str_list *extra, str_list *out,
+                                    char *err, size_t err_size) {
+    char tests_dir[DISCOVERY_PATH_SIZE];
+    if(!fs_format_path(tests_dir, sizeof tests_dir, "%s/tests", root)) {
+        snprintf(err, err_size, "the path to the tests directory does not fit");
+        return false;
+    }
+    /* A missing or empty tests/ is not an error: there is simply nothing. */
+    if(fs_is_dir(tests_dir) && !source_discovery_collect(tests_dir, out)) {
+        snprintf(err, err_size, "could not read the tests under '%s'", tests_dir);
+        return false;
+    }
+    for(size_t i = 0; extra != NULL && i < str_list_count(extra); i++) {
+        if(!collect_entry(root, str_list_get(extra, i), out, err, err_size))
+            return false;
+    }
+    return true;
+}

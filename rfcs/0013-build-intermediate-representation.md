@@ -419,7 +419,14 @@ The document exists and the engine does not read it yet. As of molto 0.21.0:
   `GeneratedSource` are refused by name, with the reason, rather than silently
   absent.
 - **The native frontend** is `frontend_native.c`, and `molto ir` prints what it
-  produces.
+  produces. It describes the executable and the tests: `[test].mode` decides
+  whether the suite is one target per file or one for all of them, and each test
+  target `depends_on` the executable. That edge does not say "minus the entry
+  point" — two `main()` do not link, so the engine drops the executable's own
+  because a linker would refuse the alternative, which is a law rather than a
+  policy. When `Target` of kind `object` arrives with RFC-0015's graph, the
+  library objects become a target of their own that both depend on, and the law
+  stops needing to be applied.
 - **`molto ir`** is implemented, `--output` and `--profile` included, and its
   output is byte-identical between runs.
 

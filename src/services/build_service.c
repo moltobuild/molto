@@ -1651,40 +1651,20 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
            fs_report_long_path(test_source);
 }
 
-/* Collect what the tests are built from: everything under tests/, plus the
-   extra sources the manifest lists. A listed directory is walked; a listed
-   file is taken as it is. This is how a framework living outside src/ — with
-   the main() the tests do not have — gets compiled in. */
-static bool collect_test_sources(const char *root, const project_ctx *ctx, const char *tests_dir,
-                                 str_list *out) {
-    /* A missing or empty tests/ is not an error: there is simply nothing. */
-    if(fs_is_dir(tests_dir) && !source_discovery_collect(tests_dir, out)) {
-        fprintf(stderr, "molto: could not read the tests under '%s'\n", tests_dir);
-        return false;
-    }
-
-    for(size_t i = 0; i < ctx->test.source_count; i++) {
-        const char *entry = ctx->test.sources[i];
-        char path[PATH_BUFFER_SIZE];
-        bool composed = entry[0] == '/' ? fs_format_path(path, sizeof path, "%s", entry)
-                                        : fs_format_path(path, sizeof path, "%s/%s", root, entry);
-        if(!composed)
-            return fs_report_long_path(entry);
-
-        if(fs_is_dir(path)) {
-            if(!source_discovery_collect(path, out)) {
-                fprintf(stderr, "molto: could not read [test].sources '%s'\n", entry);
-                return false;
-            }
-        } else if(fs_path_exists(path)) {
-            if(!str_list_push(out, path))
-                return false;
-        } else {
-            fprintf(stderr, "molto: [test].sources '%s' does not exist\n", entry);
-            return false;
-        }
-    }
-    return true;
+/* Collect what the tests are built from. The walk itself lives in
+   source_discovery, because the native frontend needs the same answer to
+   describe the same tests; what stays here is saying so on stderr, which is a
+   build's job and not a collector's. */
+static bool collect_test_sources(const char *root, const project_ctx *ctx, str_list *out) {
+    str_list extra;
+    str_list_init(&extra);
+    char err[PATH_BUFFER_SIZE] = "out of memory reading [test].sources";
+    const bool ok = project_test_sources(&ctx->test, &extra) &&
+                    source_discovery_collect_tests(root, &extra, out, err, sizeof err);
+    str_list_free(&extra);
+    if(!ok)
+        fprintf(stderr, "molto: %s\n", err);
+    return ok;
 }
 
 /* Everything a test link needs beyond its own objects. */
@@ -1835,11 +1815,9 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     char main_source[PATH_BUFFER_SIZE];
     char main_object[PATH_BUFFER_SIZE];
     char src_dir[PATH_BUFFER_SIZE];
-    char tests_dir[PATH_BUFFER_SIZE];
     if(!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root) ||
        !object_path_for(root, profile_dir, main_source, main_object, sizeof main_object) ||
-       !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) ||
-       !fs_format_path(tests_dir, sizeof tests_dir, "%s/" DIR_TESTS, root)) {
+       !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
         (void)fs_report_long_path(root);
         build_plan_free(&plan);
         publish_compile_db(options.cdb, root);
@@ -1929,7 +1907,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
                 plan_add(&plan, &env, plan.dev_units.units, plan.dev_units.count, &lib_objects);
     }
 
-    if(result == exit_ok && !collect_test_sources(root, &ctx, tests_dir, &plan.test_sources))
+    if(result == exit_ok && !collect_test_sources(root, &ctx, &plan.test_sources))
         result = exit_build_failure;
 
     /* Compiled through the same path as the project's own sources, so tests get

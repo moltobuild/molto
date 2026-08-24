@@ -612,6 +612,278 @@ MOLTEST(frontend_native_leaves_out_what_the_profile_decides) {
     sandbox_teardown(&box);
 }
 
+/* --- the tests, as targets --- */
+
+/* A project with a manifest, a source and whatever test files are named. */
+static bool project_with_tests(const sandbox *box, const char *manifest, const char *const *tests,
+                               size_t count) {
+    char path[384];
+    snprintf(path, sizeof path, "%s/Project.toml", box->project);
+    if(!fs_write_file(path, manifest))
+        return false;
+
+    snprintf(path, sizeof path, "%s/src", box->project);
+    if(!fs_make_dirs(path))
+        return false;
+    snprintf(path, sizeof path, "%s/src/main.c", box->project);
+    if(!fs_write_file(path, "int main(void){return 0;}\n"))
+        return false;
+
+    for(size_t i = 0; i < count; i++) {
+        char file[512];
+        snprintf(file, sizeof file, "%s/%s", box->project, tests[i]);
+        char *slash = strrchr(file, '/');
+        if(slash != NULL) {
+            *slash = '\0';
+            if(!fs_make_dirs(file))
+                return false;
+            *slash = '/';
+        }
+        if(!fs_write_file(file, "int main(void){return 0;}\n"))
+            return false;
+    }
+    return true;
+}
+
+/* The target named `name`, or NULL. A test that indexed by position would break
+   the moment a target is added, and would break silently. */
+static const ir_target *target_named(const ir_document *doc, const char *name) {
+    for(size_t i = 0; i < doc->target_count; i++) {
+        if(doc->targets[i].name != NULL && strcmp(doc->targets[i].name, name) == 0)
+            return &doc->targets[i];
+    }
+    return NULL;
+}
+
+static bool carries_option(const ir_target *target, const char *value) {
+    for(size_t i = 0; i < target->option_count; i++) {
+        if(strcmp(target->options[i].value, value) == 0)
+            return true;
+    }
+    return false;
+}
+
+MOLTEST(frontend_native_describes_one_target_per_test_file) {
+    /* The default mode: each file brings its own main(), so each is a binary,
+       so each is a target. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_json.c", "tests/deep/test_io.cpp"};
+    ASSERT_TRUE(project_with_tests(
+        &box, "[package]\nname = \"app\"\nversion = \"1.0.0\"\n[target]\nstd = \"c17\"\n", tests,
+        2));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    ASSERT_EQ(3u, doc.target_count);
+
+    /* Named by the whole stem, which is where `molto test` puts the binary and
+       is what keeps two files of one basename from being one name. */
+    const ir_target *json = target_named(&doc, "tests/test_json");
+    ASSERT_TRUE(json != NULL);
+    EXPECT_EQ(ir_target_test, json->kind);
+    ASSERT_EQ(1u, json->source_count);
+    EXPECT_STREQ("tests/test_json.c", json->sources[0].path);
+    EXPECT_EQ(ir_language_c, json->sources[0].language);
+    EXPECT_TRUE(json->has_artifact);
+    EXPECT_EQ(ir_target_test, json->artifact.kind);
+    EXPECT_STREQ("tests/test_json", json->artifact.path);
+
+    /* The edge that says where the rest of its objects come from. */
+    ASSERT_EQ(1u, str_list_count(&json->depends_on));
+    EXPECT_STREQ("app", str_list_get(&json->depends_on, 0));
+
+    /* A nested C++ test keeps both its directory and its language. */
+    const ir_target *io = target_named(&doc, "tests/deep/test_io");
+    ASSERT_TRUE(io != NULL);
+    ASSERT_EQ(1u, io->source_count);
+    EXPECT_STREQ("tests/deep/test_io.cpp", io->sources[0].path);
+    EXPECT_EQ(ir_language_cpp, io->sources[0].language);
+    EXPECT_STREQ("tests/deep/test_io", io->artifact.path);
+
+    /* The executable is untouched by any of it. */
+    const ir_target *app = target_named(&doc, "app");
+    ASSERT_TRUE(app != NULL);
+    EXPECT_EQ(ir_target_executable, app->kind);
+    ASSERT_EQ(1u, app->source_count);
+    EXPECT_STREQ("src/main.c", app->sources[0].path);
+    EXPECT_EQ(0u, str_list_count(&app->depends_on));
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_describes_a_single_suite_when_asked_to) {
+    /* mode = "single" is one binary for every test file, which is what a
+       framework owning main() needs — so it is one target. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c", "tests/test_b.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[test]\nmode = \"single\"\n",
+                                   tests, 2));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    ASSERT_EQ(2u, doc.target_count);
+    const ir_target *suite = target_named(&doc, "app_tests");
+    ASSERT_TRUE(suite != NULL);
+    EXPECT_EQ(ir_target_test, suite->kind);
+    EXPECT_STREQ("tests/app_tests", suite->artifact.path);
+
+    ASSERT_EQ(2u, suite->source_count);
+    EXPECT_STREQ("tests/test_a.c", suite->sources[0].path);
+    EXPECT_STREQ("tests/test_b.c", suite->sources[1].path);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_describes_a_framework_outside_the_tests_directory) {
+    /* `[test].sources` is how a framework living outside tests/ gets compiled
+       in, and a document that left it out would describe a suite that does not
+       link. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c", "vendor/moltest/moltest.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[test]\nmode = \"single\"\n"
+                                   "sources = [\"vendor/moltest\"]\n",
+                                   tests, 2));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    const ir_target *suite = target_named(&doc, "app_tests");
+    ASSERT_TRUE(suite != NULL);
+    ASSERT_EQ(2u, suite->source_count);
+    EXPECT_STREQ("tests/test_a.c", suite->sources[0].path);
+    EXPECT_STREQ("vendor/moltest/moltest.c", suite->sources[1].path);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_keeps_test_options_out_of_the_executable) {
+    /* `[test]`'s own defines, includes and flags reach the tests and nothing
+       else. That separation is the whole point of the table, and a document
+       that folded them into the executable would describe a binary shipping
+       code that only its tests were meant to see. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[target]\ndefines = [\"APP=1\"]\n"
+                                   "[test]\ndefines = [\"TESTING=1\"]\n"
+                                   "include = [\"tests/support\"]\n",
+                                   tests, 1));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    const ir_target *test = target_named(&doc, "tests/test_a");
+    ASSERT_TRUE(test != NULL);
+    EXPECT_TRUE(carries_option(test, "-DTESTING=1"));
+    /* And what the whole project said, because a test compiles the project. */
+    EXPECT_TRUE(carries_option(test, "-DAPP=1"));
+
+    bool saw_support = false;
+    for(size_t i = 0; i < test->include_count; i++)
+        saw_support = saw_support || strcmp(test->includes[i].value, "tests/support") == 0;
+    EXPECT_TRUE(saw_support);
+
+    const ir_target *app = target_named(&doc, "app");
+    ASSERT_TRUE(app != NULL);
+    EXPECT_FALSE(carries_option(app, "-DTESTING=1"));
+    EXPECT_TRUE(carries_option(app, "-DAPP=1"));
+    for(size_t i = 0; i < app->include_count; i++)
+        EXPECT_FALSE(strcmp(app->includes[i].value, "tests/support") == 0);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_describes_no_test_target_when_there_are_no_tests) {
+    /* Not an empty one: a target that builds nothing is a target every consumer
+       has to special-case, and "there are no tests" is said by there being
+       none. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    ASSERT_TRUE(project_with_tests(&box, "[package]\nname = \"app\"\nversion = \"1.0.0\"\n",
+                                   NULL, 0));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    ASSERT_EQ(1u, doc.target_count);
+    EXPECT_STREQ("app", doc.targets[0].name);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_refuses_a_test_source_that_is_not_there) {
+    /* A missing tests/ is nothing; a `[test].sources` entry naming a file that
+       does not exist is a manifest describing a build that cannot happen. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[test]\nsources = [\"vendor/gone.c\"]\n",
+                                   NULL, 0));
+
+    ir_document doc;
+    char err[1024] = "";
+    EXPECT_FALSE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+    EXPECT_TRUE(strstr(err, "vendor/gone.c") != NULL);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
+MOLTEST(frontend_native_produces_a_document_that_validates) {
+    /* Every rule ir_validate applies to a document applies to this one: unique
+       names, an edge that resolves, no cycle, every path inside the bounds. A
+       frontend whose own answer would be refused from a plugin is a frontend
+       writing a document nobody can execute. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c", "tests/test_b.c"};
+    ASSERT_TRUE(project_with_tests(&box, "[package]\nname = \"app\"\nversion = \"1.0.0\"\n",
+                                   tests, 2));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    char build_dir[320];
+    ir_bounds bounds;
+    bounds_for(&box, build_dir, sizeof build_dir, &bounds);
+    EXPECT_TRUE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
 /* --- precedence --- */
 
 MOLTEST(frontend_run_prefers_the_native_manifest) {

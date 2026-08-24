@@ -7,6 +7,7 @@
 
 #include <molto/project/project_deps.h>
 #include <molto/services/manifest_service.h>
+#include <molto/util/str_list.h>
 
 /* Artifact kinds from RFC-0003 (spec section 9). */
 typedef enum {
@@ -136,5 +137,15 @@ typedef struct {
 
 /* Print the populated context for debugging. */
 void project_ctx_dump(const project_ctx *ctx, FILE *stream);
+
+/* `[test].sources` as a list.
+ *
+ * The table stores them as a fixed array of fixed strings, which is what a
+ * manifest with hard limits wants and what no consumer of it wants. The
+ * conversion lives here so that the two callers that need one — the build,
+ * which compiles those sources, and the native frontend, which describes them —
+ * cannot spell it two ways, and so that neither has to know the shape of the
+ * array. */
+[[nodiscard]] bool project_test_sources(const project_test *test, str_list *out);
 
 #endif /* MOLTO_PROJECT_CTX_H */
