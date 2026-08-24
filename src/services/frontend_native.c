@@ -175,6 +175,23 @@ static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile
     return true;
 }
 
+/* `src/` on the include path.
+ *
+ * Every Molto build has had it there and the manifest never says so: it is what
+ * lets a source under `src/` include a sibling by name. A document that left it
+ * out would describe a build whose every `#include "x.h"` between siblings
+ * fails — and it would fail only once the engine started taking includes from
+ * here, which is the worst moment to find out.
+ *
+ * Last, after everything the manifest named, because that is where the build
+ * puts it: it reaches the compile line from the composed `-I` list, which comes
+ * after every option a scope contributed. Include order decides which header
+ * wins when two directories carry the same name, so this is placement, not
+ * tidiness. */
+static bool fill_src_include(ir_target *target) {
+    return ir_add_include(&target->includes, &target->include_count, "src", ir_scope_target, false);
+}
+
 /* --- the tests --- */
 
 /* The name and the artifact path of a per-file test target: the source's path
@@ -218,7 +235,7 @@ static bool test_stem(const char *root, const char *source, char *out, size_t ou
 static bool fill_test(ir_target *target, const project_ctx *ctx, build_profile profile,
                       const char *artifact) {
     return fill_common(target, ctx, profile) &&
-           push_scope(target, &ctx->test.options, ir_scope_target) &&
+           push_scope(target, &ctx->test.options, ir_scope_target) && fill_src_include(target) &&
            str_list_push(&target->depends_on, ctx->project_name) &&
            ir_set_artifact(target, ir_target_test, artifact, NULL);
 }
@@ -350,7 +367,7 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
        document. */
     ir_target *target = ir_add_target(out, ctx.project_name, ir_target_executable);
     const bool described = target != NULL && push_sources(target, absolute, &ctx, &sources) &&
-                           fill_common(target, &ctx, which) &&
+                           fill_common(target, &ctx, which) && fill_src_include(target) &&
                            /* The artifact is relative to the profile's build directory, which is
                               where the engine puts it and is the only anchor an artifact path has
                               (RFC-0013). */
