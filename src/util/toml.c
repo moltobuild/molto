@@ -33,8 +33,11 @@
  * TOML_SECTION_MAX lives in the header: reading an array of tables means
  * holding a section name. */
 #define TOML_KEY_MAX 64
-/* Distinct [[name]] arrays one document may declare. */
-#define TOML_MAX_TABLE_ARRAYS 8
+/* Distinct [[name]] arrays one document may declare. Each element of a nested
+   array counts as its own name — the sources of the first target and those of
+   the second are two arrays, not one — so this is a count of arrays in the
+   document rather than of array names in its schema. */
+#define TOML_MAX_TABLE_ARRAYS 64
 #define TOML_VALUE_MAX 256
 #define TOML_LINE_MAX 1024
 
@@ -247,6 +250,80 @@ bool toml_table_array_section(const char *name, size_t index, char *out, size_t 
     return written > 0 && (size_t)written < out_size;
 }
 
+/* Append `text` to `out`, or fail rather than truncate. A header silently cut
+   short would name a different section than the one written. */
+static bool append(char *out, size_t out_size, const char *text) {
+    const size_t used = strlen(out);
+    const size_t needed = strlen(text);
+    if(used + needed >= out_size)
+        return false;
+    memcpy(out + used, text, needed + 1);
+    return true;
+}
+
+/* The current index of the array named `path`, or false when no [[path]] has
+   been seen. "Current" is the element the last [[path]] opened, which is what
+   a header nested inside it belongs to. */
+static bool current_index(const table_array_counter *counters, size_t counter_count,
+                          const char *path, size_t *out) {
+    for(size_t i = 0; i < counter_count; i++) {
+        if(strcmp(counters[i].name, path) == 0 && counters[i].seen > 0) {
+            *out = counters[i].seen - 1;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Qualify a dotted header with the element index of every ancestor that is an
+   array of tables: `targets.sources` becomes `targets[0].sources` while the
+   first [[targets]] is open.
+ *
+ * TOML says [[a.b]] appends to the array `b` inside the *current* element of
+ * `a`, and [a.b] declares a table inside it. Storing either under the bare name
+ * `a.b` loses which element it belonged to, so the sources of every target pile
+ * into one array and the second target's artifact replaces the first's — a
+ * document read as something other than what it says, which is the failure the
+ * flat (section, key) model has to be defended against once tables nest.
+ *
+ * Only ancestors are qualified. The last segment is the array being appended to
+ * or the table being opened, and the caller is what decides its index. */
+static bool qualify_header(const table_array_counter *counters, size_t counter_count,
+                           const char *name, char *out, size_t out_size) {
+    out[0] = '\0';
+    for(const char *segment = name; *segment != '\0';) {
+        const size_t length = strcspn(segment, ".");
+        if(length == 0)
+            return false;
+
+        char part[TOML_SECTION_MAX];
+        if(length >= sizeof part)
+            return false;
+        snprintf(part, sizeof part, "%.*s", (int)length, segment);
+
+        if(out[0] != '\0' && !append(out, out_size, "."))
+            return false;
+        if(!append(out, out_size, part))
+            return false;
+
+        segment += length;
+        const bool is_last = *segment == '\0';
+        if(*segment == '.')
+            segment++;
+
+        /* The final segment is the caller's to index; an ancestor's index is
+           whatever element of it is currently open. */
+        size_t index = 0;
+        if(!is_last && current_index(counters, counter_count, out, &index)) {
+            char suffix[32];
+            snprintf(suffix, sizeof suffix, "[%zu]", index);
+            if(!append(out, out_size, suffix))
+                return false;
+        }
+    }
+    return out[0] != '\0';
+}
+
 /* Parse a `[[name]]` header. Each occurrence becomes its own section — name[0],
    name[1], ... — so the flat (section, key) model holds unchanged and every
    existing accessor reads one of these tables with no special case. Without
@@ -273,18 +350,27 @@ static bool parse_table_array_header(char *text, table_array_counter *counters,
         }
     }
 
-    size_t index = 0;
-    if(!next_table_array_index(counters, counter_count, inside, &index, err, err_size, line))
+    /* Qualified before it is counted, so that [[targets.sources]] under the
+       second [[targets]] counts as `targets[1].sources` and not as more of the
+       first target's list. */
+    char qualified[TOML_SECTION_MAX];
+    if(!qualify_header(counters, *counter_count, inside, qualified, sizeof qualified)) {
+        set_err(err, err_size, line, "section name too long", inside);
         return false;
-    if(!toml_table_array_section(inside, index, section, size)) {
+    }
+
+    size_t index = 0;
+    if(!next_table_array_index(counters, counter_count, qualified, &index, err, err_size, line))
+        return false;
+    if(!toml_table_array_section(qualified, index, section, size)) {
         set_err(err, err_size, line, "section name too long", inside);
         return false;
     }
     return true;
 }
 
-static bool parse_header(char *text, char *section, size_t size, char *err, size_t err_size,
-                         int line) {
+static bool parse_header(char *text, const table_array_counter *counters, size_t counter_count,
+                         char *section, size_t size, char *err, size_t err_size, int line) {
     size_t len = strlen(text);
     if(text[len - 1] != ']') {
         set_err(err, err_size, line, "missing ']' in section header", text);
@@ -296,17 +382,20 @@ static bool parse_header(char *text, char *section, size_t size, char *err, size
         set_err(err, err_size, line, "empty section header", NULL);
         return false;
     }
-    if(strlen(inside) >= size) {
-        set_err(err, err_size, line, "section name too long", inside);
-        return false;
-    }
     for(char *p = inside; *p != '\0'; p++) {
         if(!is_bare_char(*p, true)) {
             set_err(err, err_size, line, "invalid character in section name", inside);
             return false;
         }
     }
-    snprintf(section, size, "%s", inside);
+    /* [targets.artifact] under an open [[targets]] is that target's artifact,
+       so the ancestor's index belongs in the stored name — the same rule the
+       array-of-tables header follows, and the length is checked after it rather
+       than before, because qualifying is what makes the name longer. */
+    if(!qualify_header(counters, counter_count, inside, section, size)) {
+        set_err(err, err_size, line, "section name too long", inside);
+        return false;
+    }
     return true;
 }
 
@@ -676,7 +765,8 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
             bool ok = trimmed[1] == '['
                           ? parse_table_array_header(trimmed, counters, &counter_count, section,
                                                      sizeof section, err, err_size, line_no)
-                          : parse_header(trimmed, section, sizeof section, err, err_size, line_no);
+                          : parse_header(trimmed, counters, counter_count, section, sizeof section,
+                                         err, err_size, line_no);
             if(!ok) {
                 toml_free(doc);
                 return NULL;
