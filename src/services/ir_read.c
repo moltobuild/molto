@@ -324,8 +324,8 @@ static bool read_artifact(doc_view target_node, ir_target *target, char *err, si
 }
 
 static bool read_target(doc_view node, ir_document *out, char *err, size_t err_size) {
-    static const char *const KNOWN[] = {"name",  "kind",       "sources",  "options", "includes",
-                                        "links", "depends_on", "artifact", NULL};
+    static const char *const KNOWN[] = {"name",     "package", "kind",       "sources",  "options",
+                                        "includes", "links",   "depends_on", "artifact", NULL};
 
     if(!reject_unknown_nodes(node, KNOWN, "a target", err, err_size))
         return false;
@@ -350,6 +350,14 @@ static bool read_target(doc_view node, ir_document *out, char *err, size_t err_s
 
     ir_target *target = ir_add_target(out, name, kind);
     if(target == NULL) {
+        IR_ERR(err, err_size, "out of memory reading target '%s'", name);
+        return false;
+    }
+
+    /* Absent for the targets the project owns, which is most of them. */
+    char package[IR_TEXT_MAX] = "";
+    if(doc_get_string(node, "", "package", package, sizeof package) &&
+       !ir_set_target_package(target, package)) {
         IR_ERR(err, err_size, "out of memory reading target '%s'", name);
         return false;
     }

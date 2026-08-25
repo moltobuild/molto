@@ -394,15 +394,40 @@ static bool graph_is_sound(const ir_document *doc, char *err, size_t err_size) {
 
 /* --- per-node checks --- */
 
+/* The dependency a target names, or NULL when it names none. */
+static const ir_dependency *package_of(const ir_document *doc, const ir_target *target) {
+    if(target->package == NULL)
+        return NULL;
+    for(size_t i = 0; i < doc->dependency_count; i++) {
+        if(doc->dependencies[i].name != NULL &&
+           strcmp(doc->dependencies[i].name, target->package) == 0)
+            return &doc->dependencies[i];
+    }
+    return NULL;
+}
+
 static bool target_is_allowed(const ir_document *doc, const ir_target *target,
                               const bounds_state *bounds, bool from_plugin, char *err,
                               size_t err_size) {
     char where[512];
     snprintf(where, sizeof where, "target '%s'", target->name);
 
+    /* A target that names a package has its paths relative to that package's
+       root rather than to the project's, because a dependency's bytes live in
+       the shared cache and a path relative to the project could not reach them
+       without climbing out of it. An unresolvable name is an error rather than
+       a fallback to the project root: falling back would anchor a dependency's
+       sources at the wrong place and look like a missing file much later. */
+    const ir_dependency *package = package_of(doc, target);
+    if(target->package != NULL && package == NULL) {
+        IR_ERR(err, err_size, "%s belongs to package '%s', which this document does not describe",
+               where, target->package);
+        return false;
+    }
+    const char *base = package != NULL ? package->root : doc->root;
+
     for(size_t i = 0; i < target->source_count; i++) {
-        if(!path_allowed(target->sources[i].path, doc->root, bounds, "a source", where, err,
-                         err_size))
+        if(!path_allowed(target->sources[i].path, base, bounds, "a source", where, err, err_size))
             return false;
         if(from_plugin && !options_allowed(target->sources[i].options,
                                            target->sources[i].option_count, where, err, err_size))
@@ -410,8 +435,8 @@ static bool target_is_allowed(const ir_document *doc, const ir_target *target,
     }
 
     for(size_t i = 0; i < target->include_count; i++) {
-        if(!path_allowed(target->includes[i].value, doc->root, bounds, "an include path", where,
-                         err, err_size))
+        if(!path_allowed(target->includes[i].value, base, bounds, "an include path", where, err,
+                         err_size))
             return false;
     }
 

@@ -197,6 +197,7 @@ static void free_includes(ir_include *includes, size_t count) {
 
 static void free_target(ir_target *target) {
     free(target->name);
+    free(target->package);
     for(size_t i = 0; i < target->source_count; i++) {
         free(target->sources[i].path);
         free_options(target->sources[i].options, target->sources[i].option_count);
@@ -283,6 +284,10 @@ ir_target *ir_add_target(ir_document *doc, const char *name, ir_target_kind kind
         return NULL;
     }
     return target;
+}
+
+bool ir_set_target_package(ir_target *target, const char *name) {
+    return target != NULL && set_string(&target->package, name);
 }
 
 ir_source *ir_add_source(ir_target *target, const char *path, ir_language language) {
@@ -416,6 +421,11 @@ static void write_sources(json_writer *writer, const ir_target *target) {
 static void write_target(json_writer *writer, const ir_target *target) {
     json_object_open(writer, NULL);
     json_write_field(writer, "name", target->name);
+    /* Omitted for the targets the project owns, rather than written empty: a
+       target that names no package and one that names a blank one would be the
+       same bytes, and only one of them is a document. */
+    if(target->package != NULL)
+        json_write_field(writer, "package", target->package);
     json_write_field(writer, "kind", ir_target_kind_name(target->kind));
     write_sources(writer, target);
     write_options(writer, "options", target->options, target->option_count);

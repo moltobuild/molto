@@ -241,6 +241,11 @@ rather than defaulted, because each names what a node *is*.
 
 ### Its paths stay inside three directories
 
+A target's paths are relative to `Project.root`, unless the target names a
+`package` — then they are relative to that `Dependency`'s `root`. Naming a
+package the document does not describe is refused; so is naming one and then
+climbing out of its root. The anchor moves, the fence does not.
+
 Every path in your document — a source, an include, a dependency root — must
 resolve inside the workspace root, the profile's build directory, or the global
 cache. By `..`, by an absolute prefix, or through a symlink alike. An artifact's

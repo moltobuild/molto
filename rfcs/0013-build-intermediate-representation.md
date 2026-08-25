@@ -446,15 +446,20 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
   holding only the published bytes folds them exactly as the engine does. It is
   required rather than defaulted, because a missing scope and a runtime scope
   would otherwise be the same document and only one of them is safe.
+- **`package` on `Target`** is carried. A target that names one has its paths
+  relative to that `Dependency`'s root rather than to `Project.root`, which is
+  how a package whose bytes live in the shared cache is described without
+  putting a machine's home directory in the document. Naming a package the
+  document does not describe is refused rather than falling back to the project
+  root, and the bounds check is unchanged: the anchor moves, the fence does not.
 
 Still ahead:
 
-- **A dependency's own sources as targets.** Everything the project and its
-  tests compile now has its command line read off the document; a dependency's
-  sources still do not, because a package is not a `Target` yet. Turning each
-  into one of kind `object` retires the last branch in `build_compile_argv`, and
-  needs a `Target` to be able to name the dependency its sources are relative
-  to — a package's bytes live in the shared cache, outside `Project.root`.
+- **A dependency's own sources as targets.** The node can say it now; nothing
+  produces it yet. Everything the project and its tests compile has its command
+  line read off the document, and a dependency's sources still take the
+  manifest's answer through `push_manifest` — the last branch in
+  `build_compile_argv`.
 
 Ordered by what blocks what:
 

@@ -137,9 +137,18 @@ typedef struct {
  * `depends_on` names targets, never files and never commands. It is the only
  * edge a producer may draw between two units of work, and a cycle in it is an
  * error at validation reported against the document — never a deadlock
- * discovered in the scheduler. */
+ * discovered in the scheduler.
+ *
+ * `package` names the `Dependency` whose sources this target compiles, and is
+ * NULL for the ones the project owns. It exists because a package's bytes live
+ * in the shared cache, outside `Project.root`, and RFC-0013 makes every path
+ * relative to a root so that two machines produce the same document. Writing
+ * them absolute would put `/home/someone` in the bytes; naming the dependency
+ * anchors them at `Dependency.root` instead, which is already the rule for that
+ * dependency's own include paths. */
 typedef struct {
     char *name;
+    char *package;
     ir_target_kind kind;
     ir_source *sources;
     size_t source_count;
@@ -229,6 +238,11 @@ void ir_document_free(ir_document *doc);
    caller filling several targets adds one, fills it, and only then adds the
    next. Returns NULL on allocation failure. */
 [[nodiscard]] ir_target *ir_add_target(ir_document *doc, const char *name, ir_target_kind kind);
+
+/* Say that a target compiles a dependency's sources rather than the project's.
+   `name` must match a `Dependency` in the same document, and every path on the
+   target is then relative to that dependency's root. NULL clears it. */
+[[nodiscard]] bool ir_set_target_package(ir_target *target, const char *name);
 
 /* Likewise for a source inside a target. */
 [[nodiscard]] ir_source *ir_add_source(ir_target *target, const char *path, ir_language language);

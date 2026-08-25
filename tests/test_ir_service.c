@@ -73,9 +73,16 @@ static bool build_sample(ir_document *doc) {
                           "/w/app/.cache/sqlite");
     if(dep == NULL)
         return false;
-    return ir_add_include(&dep->includes, &dep->include_count, "/w/app/.cache/sqlite",
-                          ir_scope_target, true) &&
-           ir_add_option(&dep->links, &dep->link_count, "dl", ir_scope_target);
+    if(!ir_add_include(&dep->includes, &dep->include_count, "/w/app/.cache/sqlite",
+                       ir_scope_target, true) ||
+       !ir_add_option(&dep->links, &dep->link_count, "dl", ir_scope_target))
+        return false;
+
+    /* That dependency's own sources, as a target of their own. Its paths are
+       relative to the package rather than to the project. */
+    ir_target *objects = ir_add_target(doc, "sqlite:objects", ir_target_object);
+    return objects != NULL && ir_set_target_package(objects, "sqlite") &&
+           ir_add_source(objects, "sqlite3.c", ir_language_c) != NULL;
 }
 
 /* --- the model and the wire --- */
@@ -100,7 +107,7 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     ASSERT_EQ(1u, str_list_count(&read.files_read));
     EXPECT_STREQ("Project.toml", str_list_get(&read.files_read, 0));
 
-    ASSERT_EQ(1u, read.target_count);
+    ASSERT_EQ(2u, read.target_count);
     const ir_target *target = &read.targets[0];
     EXPECT_STREQ("app", target->name);
     EXPECT_EQ(ir_target_executable, target->kind);
@@ -118,6 +125,15 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     EXPECT_TRUE(target->has_artifact);
     EXPECT_STREQ("app", target->artifact.path);
     EXPECT_NULL(target->artifact.install);
+
+    /* A package target comes back naming its package, and the project's own
+       target comes back naming none — the two are different documents. */
+    EXPECT_NULL(read.targets[0].package);
+    EXPECT_STREQ("sqlite:objects", read.targets[1].name);
+    EXPECT_STREQ("sqlite", read.targets[1].package);
+    EXPECT_EQ(ir_target_object, read.targets[1].kind);
+    ASSERT_EQ(1u, read.targets[1].source_count);
+    EXPECT_STREQ("sqlite3.c", read.targets[1].sources[0].path);
 
     ASSERT_EQ(1u, read.dependency_count);
     const ir_dependency *dep = &read.dependencies[0];
@@ -233,6 +249,7 @@ static const char *const SAMPLE_TOML = "schema = 2\n"
                                        "[[projects.targets]]\n"
                                        "name = \"probe\"\n"
                                        "kind = \"object\"\n"
+                                       "package = \"greet\"\n"
                                        "[[projects.targets.sources]]\n"
                                        "path = \"src/probe.cpp\"\n"
                                        "language = \"cpp\"\n";
@@ -247,6 +264,7 @@ static const char *const SAMPLE_JSON = "{\"schema\":2,\"files_read\":[\"meson.bu
                                        "\"includes\":[{\"value\":\"include\",\"scope\":\"target\","
                                        "\"system\":false}]},"
                                        "{\"name\":\"probe\",\"kind\":\"object\","
+                                       "\"package\":\"greet\","
                                        "\"sources\":[{\"path\":\"src/probe.cpp\","
                                        "\"language\":\"cpp\"}]}]}]}";
 
@@ -268,6 +286,9 @@ static void assert_sample(const ir_document *doc) {
        needed a nested table accessor. */
     EXPECT_STREQ("probe", doc->targets[1].name);
     EXPECT_EQ(ir_target_object, doc->targets[1].kind);
+    /* Whose sources these are, and therefore what its paths are relative to. */
+    EXPECT_STREQ("greet", doc->targets[1].package);
+    EXPECT_NULL(doc->targets[0].package);
     ASSERT_EQ(1u, doc->targets[1].source_count);
     EXPECT_STREQ("src/probe.cpp", doc->targets[1].sources[0].path);
     EXPECT_EQ(ir_language_cpp, doc->targets[1].sources[0].language);
@@ -523,6 +544,65 @@ MOLTEST(ir_allows_a_path_into_the_global_cache) {
     char err[512] = "";
     EXPECT_TRUE(ir_validate(&doc, &BOUNDS, err, sizeof err));
     EXPECT_STREQ("", err);
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_anchors_a_package_target_at_the_dependency_root) {
+    /* A dependency's bytes are in the shared cache, outside Project.root. The
+       target names the package, so its sources stay relative — which is what
+       keeps two machines producing the same document (RFC-0013). */
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
+    ASSERT_NOT_NULL(ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry,
+                                      ir_dep_scope_runtime,
+                                      "/home/u/.molto/cache/sources/sqlite/3.53.4/any"));
+
+    ir_target *objects = ir_add_target(&doc, "sqlite:objects", ir_target_object);
+    ASSERT_NOT_NULL(objects);
+    ASSERT_TRUE(ir_set_target_package(objects, "sqlite"));
+    /* Relative to the package, not to the project: anchored at Project.root
+       this would resolve to /w/app/sqlite3.c and there is no such file. */
+    ASSERT_NOT_NULL(ir_add_source(objects, "sqlite3.c", ir_language_c));
+    ASSERT_TRUE(
+        ir_add_include(&objects->includes, &objects->include_count, ".", ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_TRUE(ir_validate(&doc, &BOUNDS, err, sizeof err));
+    EXPECT_STREQ("", err);
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_refuses_a_target_naming_a_package_the_document_does_not_describe) {
+    /* Not a fallback to the project root. Falling back would anchor a
+       dependency's sources somewhere they are not, and the document would look
+       fine until a compile reported a missing file. */
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_set_target_package(target, "ghost"));
+    ASSERT_NOT_NULL(ir_add_source(target, "src/main.c", ir_language_c));
+    rejects(&doc, "package 'ghost'");
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_holds_a_package_target_to_the_same_bounds) {
+    /* Naming a package moves the anchor, it does not lift the fence: a source
+       that climbs out of the cache is refused exactly as one climbing out of
+       the workspace is. */
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
+    ASSERT_NOT_NULL(ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry,
+                                      ir_dep_scope_runtime,
+                                      "/home/u/.molto/cache/sources/sqlite/3.53.4/any"));
+
+    ir_target *objects = ir_add_target(&doc, "sqlite:objects", ir_target_object);
+    ASSERT_NOT_NULL(objects);
+    ASSERT_TRUE(ir_set_target_package(objects, "sqlite"));
+    ASSERT_NOT_NULL(ir_add_source(objects, "../../../../../etc/shadow", ir_language_c));
+
+    rejects(&doc, "outside the workspace");
     ir_document_free(&doc);
 }
 
