@@ -92,3 +92,45 @@ bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps, char
     }
     return true;
 }
+
+/* --- folding what they export into what compiles against them --- */
+
+/* One package's interface onto one target, in the order a command line receives
+   it: defines, then flags, then includes, then libraries. Appended after what
+   the target already carried, which is where the build has always put them. */
+static bool fold_one(ir_target *target, const prepared_interface *exports) {
+    return push_defines(&target->options, &target->option_count, &exports->defines) &&
+           push_options(&target->options, &target->option_count, &exports->flags) &&
+           push_includes(&target->includes, &target->include_count, &exports->includes) &&
+           push_options(&target->links, &target->link_count, &exports->links);
+}
+
+/* Every package in `deps`, onto every target `wanted` accepts. */
+static bool fold_all(ir_document *doc, const prepared_deps *deps, bool tests_only, char *err,
+                     size_t err_size) {
+    if(deps == NULL)
+        return true;
+    for(size_t t = 0; t < doc->target_count; t++) {
+        ir_target *target = &doc->targets[t];
+        if(tests_only && target->kind != ir_target_test)
+            continue;
+        for(size_t i = 0; i < deps->unit_count; i++) {
+            if(!fold_one(target, &deps->units[i].exports)) {
+                snprintf(err, err_size, "out of memory folding '%s' into target '%s'",
+                         deps->units[i].name, target->name != NULL ? target->name : "?");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool ir_transform_fold_dependencies(ir_document *doc, const prepared_deps *deps,
+                                    const prepared_deps *dev, char *err, size_t err_size) {
+    if(doc == NULL)
+        return true;
+    /* Runtime first and development second, so a test target receives them in
+       the order the build composes them: what everything compiles against, and
+       then what only the tests do. */
+    return fold_all(doc, deps, false, err, err_size) && fold_all(doc, dev, true, err, err_size);
+}
