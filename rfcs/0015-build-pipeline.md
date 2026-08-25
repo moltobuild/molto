@@ -289,11 +289,16 @@ define from a flag, which reorders `-D -I -F` into `-D -F -I` and misses the
 shared object cache once; and `-std` is a unit-scope option, so `[target].std`
 now wins over one written by hand into `flags`.
 
+The options half is now done for everything, the dependencies included. A
+package is a `Target` of kind `object` carrying its own recipe, so
+`build_compile_argv` reads one document and has no second branch, and
+`compile_unit` no longer carries the manifest's answer to the same question. The
+same reorder applies to a dependency's line as to the project's: `-std` is a
+unit-scope option and reaches it last, which misses the shared object cache
+once per package.
+
 Not implemented:
 
-- **A dependency's own sources**, which still take the manifest's answer through
-  `push_manifest`. It is the last branch in `build_compile_argv` and it closes
-  when a package becomes a `Target` of kind `object`.
 - **A topological order over targets**, which needs `Target` to be a node
   (RFC-0013). Today the only ordering in a build is "all objects, then the
   link".

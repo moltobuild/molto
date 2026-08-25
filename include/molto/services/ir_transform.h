@@ -79,4 +79,34 @@
  * False with a message in `err`. */
 [[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, char *err, size_t err_size);
 
+/* Say that a dependency's own sources are things that get built.
+ *
+ * One `Target` of kind `object` per package that ships sources, named
+ * `<package>:objects` so it cannot collide with anything a manifest names, and
+ * carrying `package` so its paths anchor at the dependency's root rather than
+ * at the project's — a package's bytes are in the shared cache, and a document
+ * that spelled them absolute would carry one machine's home directory.
+ *
+ * What each target carries is what that package asked for and nothing the
+ * consumer chose: its own defines and flags at target scope, its own include
+ * directories, and `-std` at unit scope per source language. No profile scope,
+ * deliberately — the consumer's defines would reach code that never asked for
+ * them, and its `src/` on the include path is where a dependency's
+ * `#include "config.h"` finds the application's. It is also what makes a
+ * package compile identically everywhere, which is what lets an object be
+ * shared between projects.
+ *
+ * `std` and `cpp_std` are what a package that names none in its recipe falls
+ * back to, which is the consumer's — the rule every package followed before
+ * recipes could say otherwise. Either may be empty.
+ *
+ * A source that is not under its package's root is refused rather than written
+ * absolute: writing it would put this machine in the document, and this is the
+ * transform whose whole reason to exist is that it does not.
+ *
+ * False with a message in `err`. */
+[[nodiscard]] bool ir_transform_dependency_targets(ir_document *doc, const prepared_deps *deps,
+                                                   const prepared_deps *dev, const char *std,
+                                                   const char *cpp_std, char *err, size_t err_size);
+
 #endif /* MOLTO_IR_TRANSFORM_H */

@@ -376,3 +376,168 @@ MOLTEST(ir_transform_folds_from_the_document_alone) {
 
     ir_document_free(&doc);
 }
+
+/* --- a dependency's own sources as targets --- */
+
+/* Give a unit sources under its root, the way `resolve` leaves them. */
+static bool add_source(prepared_unit *unit, const char *relative) {
+    char absolute[512];
+    snprintf(absolute, sizeof absolute, "%s/%s", unit->root, relative);
+    return str_list_push(&unit->sources, absolute);
+}
+
+static const ir_target *target_named(const ir_document *doc, const char *name) {
+    for(size_t i = 0; i < doc->target_count; i++) {
+        if(strcmp(doc->targets[i].name, name) == 0)
+            return &doc->targets[i];
+    }
+    return NULL;
+}
+
+MOLTEST(ir_transform_describes_a_package_relative_to_its_own_root) {
+    /* A package's bytes are in the shared cache. Writing them absolute would
+       put one machine's home directory in a document two machines are supposed
+       to be able to diff. */
+    ir_document doc;
+    document_for(&doc);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    prepared_unit *unit =
+        add_unit(&deps, "yyjson", "0.10.0", dep_source_version, "/home/u/.molto/cache/yyjson");
+    ASSERT_NOT_NULL(unit);
+    ASSERT_TRUE(add_source(unit, "src/yyjson.c"));
+    ASSERT_TRUE(str_list_push(&unit->includes, "/home/u/.molto/cache/yyjson/include"));
+    ASSERT_TRUE(str_list_push(&unit->defines, "YYJSON_STATIC=1"));
+    ASSERT_TRUE(str_list_push(&unit->flags, "-fno-strict-aliasing"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_dependency_targets(&doc, &deps, NULL, "c17", "", err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    const ir_target *target = target_named(&doc, "yyjson:objects");
+    ASSERT_NOT_NULL(target);
+    EXPECT_EQ(ir_target_object, target->kind);
+    EXPECT_STREQ("yyjson", target->package);
+
+    ASSERT_EQ(1u, target->source_count);
+    EXPECT_STREQ("src/yyjson.c", target->sources[0].path);
+    EXPECT_EQ(ir_language_c, target->sources[0].language);
+
+    /* Its own recipe, in the order a command line receives it. */
+    ASSERT_EQ(2u, target->option_count);
+    EXPECT_STREQ("-DYYJSON_STATIC=1", target->options[0].value);
+    EXPECT_STREQ("-fno-strict-aliasing", target->options[1].value);
+    ASSERT_EQ(1u, target->include_count);
+    EXPECT_STREQ("/home/u/.molto/cache/yyjson/include", target->includes[0].value);
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+}
+
+MOLTEST(ir_transform_gives_a_package_its_own_standard) {
+    /* A recipe that names one wins; a recipe that names none falls back to the
+       consumer's, which is what every package did before recipes could say. */
+    ir_document doc;
+    document_for(&doc);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    /* Both packages first, then the pointers: `add_unit` grows the array, so one
+       taken before the second call is left dangling by it. */
+    ASSERT_NOT_NULL(add_unit(&deps, "own", "1.0.0", dep_source_version, "/c/own"));
+    ASSERT_NOT_NULL(add_unit(&deps, "silent", "1.0.0", dep_source_version, "/c/silent"));
+    prepared_unit *own = &deps.units[0];
+    prepared_unit *silent = &deps.units[1];
+    snprintf(own->std, sizeof own->std, "%s", "c99");
+    ASSERT_TRUE(add_source(own, "a.c"));
+    ASSERT_TRUE(add_source(silent, "b.c"));
+    ASSERT_TRUE(add_source(silent, "c.cpp"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_dependency_targets(&doc, &deps, NULL, "c17", "c++20", err,
+                                                sizeof err));
+
+    const ir_target *named = target_named(&doc, "own:objects");
+    ASSERT_NOT_NULL(named);
+    ASSERT_EQ(1u, named->sources[0].option_count);
+    EXPECT_STREQ("-std=c99", named->sources[0].options[0].value);
+    /* Unit scope, so it is the last thing the compiler sees about that file. */
+    EXPECT_EQ(ir_scope_unit, named->sources[0].options[0].scope);
+
+    const ir_target *fell_back = target_named(&doc, "silent:objects");
+    ASSERT_NOT_NULL(fell_back);
+    ASSERT_EQ(2u, fell_back->source_count);
+    /* Per language, not per package: the .c and the .cpp are different files. */
+    EXPECT_STREQ("-std=c17", fell_back->sources[0].options[0].value);
+    EXPECT_EQ(ir_language_cpp, fell_back->sources[1].language);
+    EXPECT_STREQ("-std=c++20", fell_back->sources[1].options[0].value);
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+}
+
+MOLTEST(ir_transform_leaves_a_header_only_package_without_a_target) {
+    /* There is nothing to compile. An empty target would be a node the engine
+       has to know to skip rather than one it never had. */
+    ir_document doc;
+    document_for(&doc);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_NOT_NULL(add_unit(&deps, "headers", "1.0.0", dep_source_version, "/c/headers"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_dependency_targets(&doc, &deps, NULL, "", "", err, sizeof err));
+    EXPECT_EQ(0u, doc.target_count);
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+}
+
+MOLTEST(ir_transform_refuses_a_source_outside_its_package) {
+    /* Writing it absolute would be the one thing this transform exists to
+       avoid, so it says so instead of doing it. */
+    ir_document doc;
+    document_for(&doc);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    prepared_unit *unit = add_unit(&deps, "odd", "1.0.0", dep_source_version, "/c/odd");
+    ASSERT_NOT_NULL(unit);
+    ASSERT_TRUE(str_list_push(&unit->sources, "/elsewhere/stray.c"));
+
+    char err[512] = "";
+    EXPECT_FALSE(ir_transform_dependency_targets(&doc, &deps, NULL, "", "", err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "not under its root"));
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+}
+
+MOLTEST(ir_transform_keeps_the_fold_out_of_a_package) {
+    /* A package is compiled against its own recipe and nothing the consumer
+       resolved — not another dependency's headers, and not its own. It is what
+       makes one package compile identically everywhere, which is what lets an
+       object be shared between projects. */
+    ir_document doc;
+    document_for(&doc);
+
+    ir_target *objects = ir_add_target(&doc, "greet:objects", ir_target_object);
+    ASSERT_NOT_NULL(objects);
+    ASSERT_TRUE(ir_set_target_package(objects, "greet"));
+
+    ir_dependency *other =
+        ir_add_dependency(&doc, "other", "1.0.0", ir_dep_registry, ir_dep_scope_runtime, "/c/other");
+    ASSERT_NOT_NULL(other);
+    ASSERT_TRUE(ir_add_include(&other->includes, &other->include_count, "/c/other/include",
+                               ir_scope_target, false));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_fold_dependencies(&doc, err, sizeof err));
+
+    EXPECT_EQ(0u, objects->include_count);
+    EXPECT_EQ(0u, objects->option_count);
+
+    ir_document_free(&doc);
+}

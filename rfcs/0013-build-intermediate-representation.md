@@ -452,14 +452,11 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
   putting a machine's home directory in the document. Naming a package the
   document does not describe is refused rather than falling back to the project
   root, and the bounds check is unchanged: the anchor moves, the fence does not.
-
-Still ahead:
-
-- **A dependency's own sources as targets.** The node can say it now; nothing
-  produces it yet. Everything the project and its tests compile has its command
-  line read off the document, and a dependency's sources still take the
-  manifest's answer through `push_manifest` — the last branch in
-  `build_compile_argv`.
+- **A dependency's own sources are targets.** One `Target` of kind `object` per
+  package that ships sources, named `<package>:objects`, carrying that package's
+  own recipe and nothing the consumer resolved. Everything a build compiles now
+  has its command line read off the document, and `build_compile_argv` has one
+  branch instead of two.
 
 Ordered by what blocks what:
 

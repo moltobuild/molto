@@ -322,10 +322,11 @@ deliberate place.
   at all, and the contract has to be stable before the engine depends on it.
 - **`molto migrate` is not implemented.** It is specified as running a frontend
   once and serialising the result to a `Project.toml` — one parser, two products.
-- **A frontend still does not resolve.** Dependencies reach the document from a
-  transform that runs after `resolve`, not from the frontend, so the document a
-  plugin returns reports an empty `dependencies` list and the engine fills it.
-  This is deliberate: a frontend that resolved would make `molto ir` touch the
+- **A frontend still does not resolve.** Dependencies reach the document from
+  transforms that run after `resolve`, not from the frontend, so the document a
+  plugin returns reports an empty `dependencies` list and the engine fills it —
+  along with one `Target` of kind `object` per package that ships sources. This
+  is deliberate: a frontend that resolved would make `molto ir` touch the
   network.
 - **No sandbox**, as above.
 
