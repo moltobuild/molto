@@ -347,6 +347,21 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     return add_package_defines(out, err, err_size);
 }
 
+/* The directory `path` sits in, which is the project root. */
+static void manifest_dir(const char *path, char *out, size_t out_size) {
+    if((size_t)snprintf(out, out_size, "%s", path) >= out_size) {
+        out[0] = '\0'; /* too long to anchor against: the working directory it is */
+        return;
+    }
+    char *slash = strrchr(out, '/');
+    if(slash == NULL) {
+        out[0] = '\0'; /* a bare "Project.toml": the root is where we are */
+        return;
+    }
+    /* "/Project.toml" at the filesystem root leaves the slash rather than "". */
+    *(slash == out ? slash + 1 : slash) = '\0';
+}
+
 bool project_load(const char *path, project_ctx *out, char *err, size_t err_size) {
     char *toml = fs_read_file(path);
     if(toml == NULL) {
@@ -356,6 +371,9 @@ bool project_load(const char *path, project_ctx *out, char *err, size_t err_size
     }
     bool ok = project_parse(toml, out, err, err_size);
     free(toml);
+    /* After the parse, which zeroes the whole struct. */
+    if(ok)
+        manifest_dir(path, out->root, sizeof out->root);
     return ok;
 }
 

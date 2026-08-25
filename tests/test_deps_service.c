@@ -115,6 +115,69 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     sandbox_close(&at);
 }
 
+/* A manifest whose dependency is named *relatively*, as a real one is: the
+   fixtures above all write an absolute path, which is exactly why none of them
+   ever exercised the anchoring. */
+static bool parse_with_relative_dep(project_ctx *out, char *err, size_t err_size) {
+    static const char *const manifest = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+                                        "[deps]\nyyjson = { path = \"yyjson\" }\n";
+    return project_parse(manifest, out, err, err_size);
+}
+
+MOLTEST(deps_prepare_anchors_a_relative_path_at_the_project_root) {
+    /* The working directory here is not the sandbox, so a path used as written
+       cannot resolve. That is the whole bug: every command walks up to find its
+       project, so running one from a subdirectory used to send the build
+       looking for `modules/x` under `src/`. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, RECIPE));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_relative_dep(&ctx, err, sizeof err));
+    snprintf(ctx.root, sizeof ctx.root, "%s", at.root);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    ASSERT_EQ(1u, deps.unit_count);
+    EXPECT_STREQ("yyjson", deps.units[0].name);
+    /* Under the root it was anchored at, not under the working directory. */
+    EXPECT_EQ(0, strncmp(deps.units[0].root, at.root, strlen(at.root)));
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
+MOLTEST(deps_prepare_leaves_the_manifest_path_as_it_was_written) {
+    /* Anchoring happens on the copy that opens the directory and never on what
+       the manifest said, because what the manifest said is what the lock file
+       records. An anchored one would write this machine's absolute path into a
+       file that is committed and read by everyone else — a lock pinning a
+       directory none of them have. */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, RECIPE));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_relative_dep(&ctx, err, sizeof err));
+    snprintf(ctx.root, sizeof ctx.root, "%s", at.root);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+
+    ASSERT_EQ(1u, ctx.deps.count);
+    EXPECT_STREQ("yyjson", ctx.deps.items[0].location);
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
 MOLTEST(deps_prepare_records_what_each_package_exports) {
     /* The sum of every package's interface is what a compile line needs, and it
        cannot answer which package asked for what. A document's `Dependency`

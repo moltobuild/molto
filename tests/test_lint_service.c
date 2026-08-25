@@ -226,6 +226,45 @@ MOLTEST(lint_passes_the_project_settings_and_produces_no_build_output) {
     fixture_teardown(&fixture);
 }
 
+/* A sibling package the project depends on by path, exporting a header
+   directory and a define. */
+static bool add_dependency(const lint_fixture *fixture) {
+    return write_file(fixture->root, "modules/greet/recipe.toml",
+                      "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                      "name = \"greet\"\nversion = \"0.1.0\"\ntarget = \"any\"\n"
+                      "[artifacts]\ntype = \"source\"\nsources = [\"src/greet.c\"]\n"
+                      "include = [\"include\"]\ndefines = [\"GREET_STATIC=1\"]\n") &&
+           write_file(fixture->root, "modules/greet/include/greet.h", "int greet(void);\n") &&
+           write_file(fixture->root, "modules/greet/src/greet.c", "int greet(void){return 42;}\n") &&
+           write_file(fixture->root, "Project.toml",
+                      "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                      "\n[target]\nstd = \"c17\"\n"
+                      "\n[deps]\ngreet = { path = \"modules/greet\" }\n");
+}
+
+MOLTEST(lint_analyses_against_what_the_dependencies_export) {
+    /* Lint used to resolve nothing at all, so a project with any dependency was
+       told its own sources could not find their headers — a diagnostic that
+       blames the user for a file Molto never looked for. The defines matter for
+       the same reason the manifest's do: a `#ifdef` decides what compiles, and
+       a linter that saw different ones reports on code the build never sees. */
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+    ASSERT_TRUE(add_dependency(&fixture));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NOT_NULL(strstr(log, "modules/greet/include"));
+    EXPECT_NOT_NULL(strstr(log, "-DGREET_STATIC=1"));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
 MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
