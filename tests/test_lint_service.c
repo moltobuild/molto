@@ -265,6 +265,36 @@ MOLTEST(lint_analyses_against_what_the_dependencies_export) {
     fixture_teardown(&fixture);
 }
 
+MOLTEST(lint_resolves_the_standard_the_way_the_build_does) {
+    /* A compile line is composed from the document now, where `-std` is a
+       unit-scope option and unit scope reaches the line last (RFC-0013). So
+       `[target].std` wins over a `-std=` written by hand into `[target].flags`,
+       and lint has to reach the same answer: one that composed them the other
+       way round would analyse the file as a different language than the one it
+       is compiled as. */
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+    ASSERT_TRUE(write_file(fixture.root, "Project.toml",
+                           "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                           "\n[target]\nstd = \"c17\"\nflags = [\"-std=gnu11\"]\n"));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    const char *hand_written = strstr(log, "-std=gnu11");
+    const char *declared = strstr(log, "-std=c17");
+    ASSERT_NOT_NULL(hand_written);
+    ASSERT_NOT_NULL(declared);
+    /* The last one on the line is the one the compiler takes. */
+    EXPECT_TRUE(declared > hand_written);
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
 MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
@@ -274,8 +304,12 @@ MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
 
     char *log = fs_read_file(fixture.log);
     ASSERT_NOT_NULL(log);
-    /* A linter that does not see the build's flags is analysing other code. */
-    EXPECT_NOT_NULL(strstr(log, "-- -std=c17"));
+    /* A linter that does not see the build's flags is analysing other code.
+       They follow the separator; where in them the standard falls is
+       `push_compile_arguments`' business, and it puts it last. */
+    const char *separator = strstr(log, " -- ");
+    ASSERT_NOT_NULL(separator);
+    EXPECT_NOT_NULL(strstr(separator, "-std=c17"));
     EXPECT_NOT_NULL(strstr(log, "--config-file="));
     free(log);
 
