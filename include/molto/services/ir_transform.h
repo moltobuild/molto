@@ -49,4 +49,31 @@
 [[nodiscard]] bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps, char *err,
                                              size_t err_size);
 
+/* Fold what the dependencies export into the targets that compile against them.
+ *
+ * This is the transform `merge_deps` always was. Its own comment made the
+ * argument before transforms existed: a dependency's includes, defines, flags
+ * and libraries are exactly the things a target already carries, so folding
+ * them means nothing downstream has to learn what a dependency is.
+ *
+ * Runtime dependencies reach every target. Development dependencies reach the
+ * test targets and no others, which is what makes the separation real rather
+ * than documented: a source under `src/` that includes one fails to compile, on
+ * the first build, with "no such file" (RFC-0008).
+ *
+ * They are passed as two lists rather than read back from `doc->dependencies`
+ * because an `ir_dependency` has nowhere to say which of the two it is. Saying
+ * so would be a schema addition, and an unknown attribute is ignored by an
+ * older reader — which for this attribute means silently folding a development
+ * dependency into `src/`, the one thing the separation exists to prevent. That
+ * is a decision about RFC-0013 and not a detail to settle here.
+ *
+ * Appended after what the manifest named, in the order a command line receives
+ * them, so folding does not reorder anything a target already carried.
+ *
+ * False with a message in `err`. */
+[[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, const prepared_deps *deps,
+                                                  const prepared_deps *dev, char *err,
+                                                  size_t err_size);
+
 #endif /* MOLTO_IR_TRANSFORM_H */

@@ -1478,7 +1478,9 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
        because doing it there would make `molto ir` resolve, which means the
        network, for a command whose whole purpose is to show what is already
        known. */
-    if(!ir_transform_dependencies(&plan->doc, &plan->deps, frontend_err, sizeof frontend_err)) {
+    if(!ir_transform_dependencies(&plan->doc, &plan->deps, frontend_err, sizeof frontend_err) ||
+       !ir_transform_fold_dependencies(&plan->doc, &plan->deps, &plan->dev, frontend_err,
+                                       sizeof frontend_err)) {
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }

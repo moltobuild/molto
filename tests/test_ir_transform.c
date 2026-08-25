@@ -182,3 +182,129 @@ MOLTEST(ir_transform_keeps_what_the_document_already_named) {
     ir_document_free(&doc);
     prepared_deps_free(&deps);
 }
+
+/* --- folding --- */
+
+/* A document with an executable and a test target, as the native frontend
+   produces for a project that has both. */
+static void document_with_targets(ir_document *doc) {
+    document_for(doc);
+    ir_target *app = ir_add_target(doc, "app", ir_target_executable);
+    ASSERT_NOT_NULL(app);
+    ASSERT_TRUE(ir_add_include(&app->includes, &app->include_count, "src", ir_scope_target, false));
+    ir_target *test = ir_add_target(doc, "tests/test_a", ir_target_test);
+    ASSERT_NOT_NULL(test);
+    ASSERT_TRUE(
+        ir_add_include(&test->includes, &test->include_count, "src", ir_scope_target, false));
+}
+
+static bool carries_include(const ir_target *target, const char *value) {
+    for(size_t i = 0; i < target->include_count; i++) {
+        if(strcmp(target->includes[i].value, value) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool carries_option(const ir_target *target, const char *value) {
+    for(size_t i = 0; i < target->option_count; i++) {
+        if(strcmp(target->options[i].value, value) == 0)
+            return true;
+    }
+    return false;
+}
+
+MOLTEST(ir_transform_folds_a_runtime_dependency_into_every_target) {
+    ir_document doc;
+    document_with_targets(&doc);
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    prepared_unit *unit = add_unit(&deps, "greet", "1.0.0", dep_source_path, "/w/app/modules/greet");
+    ASSERT_NOT_NULL(unit);
+    ASSERT_TRUE(str_list_push(&unit->exports.includes, "/w/app/modules/greet/include"));
+    ASSERT_TRUE(str_list_push(&unit->exports.defines, "GREET_STATIC=1"));
+    ASSERT_TRUE(str_list_push(&unit->exports.links, "m"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_fold_dependencies(&doc, &deps, NULL, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    for(size_t i = 0; i < doc.target_count; i++) {
+        const ir_target *target = &doc.targets[i];
+        EXPECT_TRUE(carries_include(target, "/w/app/modules/greet/include"));
+        EXPECT_TRUE(carries_option(target, "-DGREET_STATIC=1"));
+        ASSERT_EQ(1u, target->link_count);
+        EXPECT_STREQ("m", target->links[0].value);
+        /* Appended after what the target already carried, which is where the
+           build has always put them: include order decides which header wins. */
+        EXPECT_STREQ("src", target->includes[0].value);
+        EXPECT_STREQ("/w/app/modules/greet/include", target->includes[1].value);
+    }
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+}
+
+MOLTEST(ir_transform_keeps_a_development_dependency_out_of_the_executable) {
+    /* The separation RFC-0008 calls enforcement rather than convention: a
+       source under src/ that includes one fails to compile, on the first
+       build, because the directory was never on its command line. */
+    ir_document doc;
+    document_with_targets(&doc);
+
+    prepared_deps dev;
+    prepared_deps_init(&dev);
+    prepared_unit *unit = add_unit(&dev, "moltest", "", dep_source_path, "/w/app/modules/moltest");
+    ASSERT_NOT_NULL(unit);
+    ASSERT_TRUE(str_list_push(&unit->exports.includes, "/w/app/modules/moltest/include"));
+    ASSERT_TRUE(str_list_push(&unit->exports.defines, "MOLTEST=1"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_fold_dependencies(&doc, NULL, &dev, err, sizeof err));
+
+    const ir_target *app = &doc.targets[0];
+    EXPECT_EQ(ir_target_executable, app->kind);
+    EXPECT_FALSE(carries_include(app, "/w/app/modules/moltest/include"));
+    EXPECT_FALSE(carries_option(app, "-DMOLTEST=1"));
+
+    const ir_target *test = &doc.targets[1];
+    EXPECT_EQ(ir_target_test, test->kind);
+    EXPECT_TRUE(carries_include(test, "/w/app/modules/moltest/include"));
+    EXPECT_TRUE(carries_option(test, "-DMOLTEST=1"));
+
+    ir_document_free(&doc);
+    prepared_deps_free(&dev);
+}
+
+MOLTEST(ir_transform_folds_runtime_before_development) {
+    /* A test target compiles against everything the project does and then some.
+       The order is the one the build composes: what everything sees, then what
+       only the tests do. */
+    ir_document doc;
+    document_with_targets(&doc);
+
+    prepared_deps deps;
+    prepared_deps deps_dev;
+    prepared_deps_init(&deps);
+    prepared_deps_init(&deps_dev);
+    prepared_unit *runtime = add_unit(&deps, "greet", "1.0.0", dep_source_path, "/w/g");
+    prepared_unit *devunit = add_unit(&deps_dev, "moltest", "", dep_source_path, "/w/m");
+    ASSERT_NOT_NULL(runtime);
+    ASSERT_NOT_NULL(devunit);
+    ASSERT_TRUE(str_list_push(&runtime->exports.includes, "/w/g/include"));
+    ASSERT_TRUE(str_list_push(&devunit->exports.includes, "/w/m/include"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_fold_dependencies(&doc, &deps, &deps_dev, err, sizeof err));
+
+    const ir_target *test = &doc.targets[1];
+    ASSERT_EQ(3u, test->include_count);
+    EXPECT_STREQ("src", test->includes[0].value);
+    EXPECT_STREQ("/w/g/include", test->includes[1].value);
+    EXPECT_STREQ("/w/m/include", test->includes[2].value);
+
+    ir_document_free(&doc);
+    prepared_deps_free(&deps);
+    prepared_deps_free(&deps_dev);
+}
