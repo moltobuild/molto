@@ -432,30 +432,15 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
 
 Still ahead, and unchanged in what blocks what:
 
-- **The engine reading a document's options.** `plan_project()` in
-  `src/services/build_service.c` now asks the native frontend for a document and
-  takes **what is compiled** from it: `document_sources()` is the seam, the walk
-  of the filesystem is gone from the build, and every `molto build` is therefore
-  a test of the frontend. What is *not* from the document yet is the compile
-  line — `[target]`, the profile and the link still reach `units_from()` through
-  `project_ctx`, which is why the manifest is read twice.
-
-  Lowering the options too is blocked on two decisions and one transform, and
-  none of the three is an implementation detail:
-
-  - **The argument order changes.** Today a scope reaches the line as defines,
-    then includes, then flags. A document does not carry that distinction — a
-    define is a `CompileOption` that already says `-D` — so a scope can only
-    reach the line as its options in array order and then its includes. The
-    result is semantically the same line unless a project hid an `-I` inside
-    `flags`, and it is a different *fingerprint*, so the first build after it
-    misses every object in the shared cache once.
-  - **Where `-std` lands.** It is a unit-scope option, and unit scope reaches
-    the line last, so a `flags = ["-std=gnu17"]` that overrides `[target].std`
-    today would stop overriding it. Arguably that is the accident being fixed
-    rather than a regression, but it is a decision and not a consequence.
-  - **The dependency transform**, below, without which a lowered document builds
-    a project against none of its dependencies' headers.
+- **A dependency's own sources as targets.** Everything the project and its
+  tests compile now has its command line read off the document; a dependency's
+  sources still do not, because a package is not a `Target` yet. Turning each
+  into one of kind `object` retires the last branch in `build_compile_argv`.
+- **A scope on `Dependency`.** The node cannot say whether a package is a
+  development dependency, so the fold is handed the two lists rather than
+  reading them back from the document. Adding the attribute is a schema
+  decision: an unknown attribute is ignored by an older reader, and for this one
+  that means silently folding a development dependency into `src/`.
 - **Transforms**, which is where `merge_deps()` belongs — its own comment argues
   that folding a dependency's interface into the target scope means "none of
   those has to learn what a dependency is", which is the argument for a

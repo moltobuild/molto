@@ -277,11 +277,21 @@ what a test binary links against — and `build_plan` now holds the document it 
 derived from. The line has not moved past that: everything the compile line says
 still comes from `project_ctx`.
 
+The options half is done for everything the project owns. `build_compile_argv`
+composes a unit's line by scope from the document — target, then profile, then
+unit, the order RFC-0013 fixes — and `merge_deps` and `compose_include_flags`
+are transforms rather than two hard-coded calls. Two consequences were chosen
+rather than discovered: a scope reaches the line as its options and then its
+includes, because a document cannot tell a define from a flag, which reorders
+`-D -I -F` into `-D -F -I` and misses the shared object cache once; and `-std`
+is a unit-scope option, so `[target].std` now wins over one written by hand into
+`flags`.
+
 Not implemented:
 
-- **The rest of the phase boundaries**: the options half of `plan_project()`,
-  which RFC-0013's status entry sets out the two decisions and one transform it
-  waits on.
+- **A dependency's own sources**, which still take the manifest's answer through
+  `push_manifest`. It is the last branch in `build_compile_argv` and it closes
+  when a package becomes a `Target` of kind `object`.
 - **A topological order over targets**, which needs `Target` to be a node
   (RFC-0013). Today the only ordering in a build is "all objects, then the
   link".

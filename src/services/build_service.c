@@ -271,6 +271,19 @@ static int run_str_argv(const str_list *argv, const project_env *env, char *capt
  */
 typedef struct {
     const char *source;
+    /* What the document says this unit is, when a document described it.
+     *
+     * The project's own sources and its tests come from here now: the frontend
+     * described them, the transforms folded the dependencies in, and the whole
+     * compile line below is read off the node rather than off the manifest.
+     *
+     * A dependency's own sources do not, yet. They are compiled against a
+     * `project_target` synthesised per package, and turning each package into a
+     * `Target` of kind `object` is what retires the two fields below and the
+     * branch in build_compile_argv with them (RFC-0015). Until then both are
+     * here, and which one applies is decided once, by whether `node` is set. */
+    const ir_target *node;
+    const ir_source *unit;
     const project_target *target;
     /* Absent for a dependency, which is compiled against the language standard
        and its own recipe and nothing else the project chose. */
@@ -287,6 +300,53 @@ typedef struct {
 /* Build the full compile command for one unit into `argv` (a str_list):
    driver, -c, source, -o, object, -O<n>, [-g], [-std], the unit's defines/
    includes/flags, -MMD -MF depfile, and its include flags. */
+/* One scope's options and then its includes, which is the only order a document
+   can express: it does not distinguish a define from a flag, because a define
+   already *is* `-DFOO=1` by the time it is a `CompileOption`.
+ *
+ * The three scopes reach the line in the order RFC-0013 fixes — target, then
+ * profile, then unit — and that order is contract rather than detail. A
+ * compiler takes the last of two contradictory flags, so the most specific
+ * statement about a unit has to be the one it sees last. It is why `-std` from
+ * `[target].std` now wins over one written by hand into `flags`, which is the
+ * accident being corrected rather than a rule being bent. */
+static bool push_scope(str_list *argv, const char *root, const ir_target *node,
+                       const ir_source *unit, ir_scope scope) {
+    bool ok = true;
+    for(size_t i = 0; ok && i < node->option_count; i++) {
+        if(node->options[i].scope == scope)
+            ok = str_list_push(argv, node->options[i].value);
+    }
+    for(size_t i = 0; ok && unit != NULL && i < unit->option_count; i++) {
+        if(unit->options[i].scope == scope)
+            ok = str_list_push(argv, unit->options[i].value);
+    }
+    for(size_t i = 0; ok && i < node->include_count; i++) {
+        if(node->includes[i].scope == scope)
+            ok = compile_flags_push_include(argv, root, node->includes[i].value);
+    }
+    return ok;
+}
+
+/* The compile line a document describes. */
+static bool push_document(str_list *argv, const char *root, const compile_unit *unit) {
+    return push_scope(argv, root, unit->node, unit->unit, ir_scope_target) &&
+           push_scope(argv, root, unit->node, unit->unit, ir_scope_profile) &&
+           push_scope(argv, root, unit->node, unit->unit, ir_scope_unit);
+}
+
+/* The compile line a manifest describes, which is still how a dependency's own
+   sources are compiled. Removed when a package becomes a `Target`. */
+static bool push_manifest(str_list *argv, const char *root, const compile_unit *unit, bool is_cpp) {
+    bool ok = compile_flags_push_std(argv, unit->target, is_cpp) &&
+              compile_flags_push_options(argv, root, &unit->target->options);
+    if(ok && unit->profile_opts != NULL)
+        ok = compile_flags_push_options(argv, root, unit->profile_opts);
+    if(ok && unit->extra_opts != NULL)
+        ok = compile_flags_push_options(argv, root, unit->extra_opts);
+    return ok;
+}
+
 static bool build_compile_argv(str_list *argv, const char *root, const compile_unit *unit,
                                const char *object, const manifest_profile *settings,
                                const char *depfile, const resolved_toolchain *chain) {
@@ -307,21 +367,21 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
     if(ok && settings->debug_info)
         ok = str_list_push(argv, ARG_DEBUG);
     if(ok)
-        ok = compile_flags_push_std(argv, unit->target, is_cpp);
-    if(ok)
-        ok = compile_flags_push_options(argv, root, &unit->target->options);
-    if(ok && unit->profile_opts != NULL)
-        ok = compile_flags_push_options(argv, root, unit->profile_opts);
-    if(ok && unit->extra_opts != NULL)
-        ok = compile_flags_push_options(argv, root, unit->extra_opts);
+        ok = unit->node != NULL ? push_document(argv, root, unit)
+                                : push_manifest(argv, root, unit, is_cpp);
     if(ok)
         ok = str_list_push(argv, ARG_DEPFILE_GEN) && str_list_push(argv, ARG_DEPFILE_OUT) &&
              str_list_push(argv, depfile);
     /* Pre-composed "-I" flags: the project's own src/, then one per include
        directory a dependency exports. They are composed by the caller rather
        than stored in project_options because a dependency's is an absolute
-       path into the cache, and a manifest option is sized for "-DFOO=1". */
-    for(size_t i = 0; ok && i < str_list_count(unit->include_flags); i++)
+       path into the cache, and a manifest option is sized for "-DFOO=1".
+     *
+       A unit the document describes has none: the same directories are
+       `IncludePath` nodes on its target, put there by the frontend and the
+       fold, and pushed with the scope they belong to. */
+    for(size_t i = 0; ok && unit->include_flags != NULL && i < str_list_count(unit->include_flags);
+        i++)
         ok = str_list_push(argv, str_list_get(unit->include_flags, i));
     return ok;
 }
@@ -711,29 +771,39 @@ static void share_in_object_cache(const char *source, const char *object, const 
         object_cache_put(object, cached);
 }
 
-/* Every source in `sources` as a unit with one command line: what a pass over
-   one package's own code needs, where nothing disagrees about its flags.
-
-   The units borrow `sources` and everything else handed in, so all of it has to
-   outlive them. Caller frees. NULL means the allocation failed, so callers with
-   nothing to compile do not ask. */
-[[nodiscard]] static compile_unit *units_from(const str_list *sources, const project_target *target,
-                                              const project_options *profile_opts,
-                                              const project_options *extra_opts,
-                                              const str_list *include_flags,
-                                              const build_unit_label *label) {
-    compile_unit *units = calloc(str_list_count(sources), sizeof *units);
+/* Every source of every target of one kind, as units the passes compile.
+ *
+ * It walks the document in the same order `document_sources` did, so the path
+ * at index i of `sources` is the source at index i here — which is what lets a
+ * unit keep borrowing the arena the plan already owns while pointing at the
+ * node that describes it.
+ *
+ * `target`, `profile_opts`, `extra_opts` and `include_flags` stay NULL: they
+ * are the manifest's answer to the same question, and a unit answers it once.
+ *
+ * The units borrow the document and the arena, so both have to outlive them.
+ * Caller frees. NULL means the allocation failed. */
+[[nodiscard]] static compile_unit *units_from_document(const ir_document *doc, bool tests,
+                                                       const str_list *sources,
+                                                       const build_unit_label *label) {
+    const size_t total = str_list_count(sources);
+    compile_unit *units = calloc(total, sizeof *units);
     if(units == NULL)
         return NULL;
-    for(size_t i = 0; i < str_list_count(sources); i++) {
-        units[i] = (compile_unit){
-            .source = str_list_get(sources, i),
-            .target = target,
-            .profile_opts = profile_opts,
-            .extra_opts = extra_opts,
-            .include_flags = include_flags,
-            .label = label,
-        };
+
+    size_t at = 0;
+    for(size_t t = 0; t < doc->target_count; t++) {
+        const ir_target *node = &doc->targets[t];
+        if((node->kind == ir_target_test) != tests)
+            continue;
+        for(size_t i = 0; i < node->source_count && at < total; i++, at++) {
+            units[at] = (compile_unit){
+                .source = str_list_get(sources, at),
+                .node = node,
+                .unit = &node->sources[i],
+                .label = label,
+            };
+        }
     }
     return units;
 }
@@ -1528,9 +1598,7 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     if(result != exit_ok)
         return result;
 
-    plan->project_units =
-        units_from(&plan->sources, &ctx_out->target, profile_options_for(ctx_out, profile), NULL,
-                   include_flags_out, &project_label);
+    plan->project_units = units_from_document(&plan->doc, false, &plan->sources, &project_label);
     if(plan->project_units == NULL)
         return exit_build_failure;
     return plan_add(plan, &env, plan->project_units, str_list_count(&plan->sources), objects_out);
@@ -1886,8 +1954,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     str_list test_objects;
     str_list_init(&test_objects);
     if(result == exit_ok && str_list_count(&plan.test_sources) > 0) {
-        plan.test_units = units_from(&plan.test_sources, &ctx.target, profile_opts,
-                                     &ctx.test.options, &test_include_flags, &tests_label);
+        plan.test_units = units_from_document(&plan.doc, true, &plan.test_sources, &tests_label);
         result = plan.test_units == NULL
                      ? exit_build_failure
                      : plan_add(&plan, &env, plan.test_units, str_list_count(&plan.test_sources),
