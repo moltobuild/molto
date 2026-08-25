@@ -209,9 +209,17 @@ static const project_options *profile_options_for(const project_ctx *ctx, build_
    dropping them would have lint and build disagree about what the code says. */
 static bool push_compile_arguments(str_list *argv, const char *root, const lint_setup *setup,
                                    build_profile profile, bool is_cpp) {
-    return compile_flags_push_std(argv, &setup->ctx.target, is_cpp) &&
-           compile_flags_push_options(argv, root, &setup->ctx.target.options) &&
-           compile_flags_push_options(argv, root, profile_options_for(&setup->ctx, profile));
+    /* The standard goes last, which is not cosmetic: it is where the build puts
+       it now that a compile line is composed from the document, where `-std`
+       is a unit-scope option and unit scope reaches the line after the rest
+       (RFC-0013). A compiler takes the last of two contradictory flags, so a
+       `-std=` written by hand into `[target].flags` loses to `[target].std` —
+       and lint composing it first would analyse the file as the other language.
+       This function's own comment is the rule being kept: lint and build must
+       not disagree about what the code says. */
+    return compile_flags_push_options(argv, root, &setup->ctx.target.options) &&
+           compile_flags_push_options(argv, root, profile_options_for(&setup->ctx, profile)) &&
+           compile_flags_push_std(argv, &setup->ctx.target, is_cpp);
 }
 
 /* The project's own `src/` and then one per include a dependency exports, in
