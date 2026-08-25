@@ -252,6 +252,10 @@ cache. By `..`, by an absolute prefix, or through a symlink alike. An artifact's
 path must be inside the build directory specifically: a target writing into
 `src/` is editing the user's code as a side effect of a build.
 
+Three and not four: RFC-0013 has a fourth bound — the directories the user's
+manifest authorised — and your document is validated before anything has been
+resolved, so there are none to authorise. Nothing you write can add one.
+
 ### Some options are refused from a plugin and not from `Project.toml`
 
 | Refused | Why |

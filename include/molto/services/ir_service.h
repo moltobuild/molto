@@ -300,10 +300,28 @@ void ir_document_free(ir_document *doc);
 /* The three places a path in a document is allowed to resolve inside. Absolute
    paths, and the caller's to supply: this service does not decide where a
    workspace is. `cache` may be NULL when there is none to allow. */
+/* Where a document's paths may resolve to.
+ *
+ * `roots` is the fourth bound and the one a caller supplies rather than
+ * derives: the directories the user's own manifest authorised, which is where
+ * `resolve` found the packages it fetched or was pointed at. A `[deps]` entry of
+ * `{ path = "../greet" }` is outside the workspace and inside nothing else, and
+ * it is a directory the person who wrote `Project.toml` named on purpose.
+ *
+ * It is supplied and never read back off the document, and that is the whole
+ * point: a producer that could widen its own bounds by writing a `Dependency`
+ * node would have no bounds. The engine passes what `resolve` returned — the one
+ * phase RFC-0015 closes to plugins — and a frontend passes none, because a
+ * document is validated before anything has been resolved. */
+/* Zero-initialise it. A caller that assigns field by field leaves whatever the
+   stack held in the ones it did not name, and `roots` is read through. */
 typedef struct {
     const char *workspace;
     const char *build_dir;
     const char *cache;
+    /* Absolute directories, borrowed for the call. NULL and 0 mean none. */
+    const char *const *roots;
+    size_t root_count;
 } ir_bounds;
 
 /* Refuse a document that describes work Molto will not do on a producer's
@@ -316,14 +334,13 @@ typedef struct {
  * decides what Molto will do on its behalf.** A design with only the first has
  * neither.
  *
- * Applied to every document: every path resolves inside `bounds`, target names
- * are unique, `depends_on` names a target in this document, and the graph is
- * acyclic. Applied only to a document from a plugin: options that load code
- * into the compiler, redirect the toolchain, or name an output are refused —
- * `Project.toml` is a file in the user's repository that their reviewer read
- * and their version control records, and a plugin's document is generated on
- * the fly by a binary fetched from a registry. The asymmetry is not a statement
- * about trust, and the day it stops being warranted is the day the first one
+ * Applied to every document, whatever its origin: every path resolves inside
+ * `bounds`, target names are unique, `depends_on` names a target in this
+ * document, and the graph is acyclic. Applied only to a document from a plugin: options that load
+ * code into the compiler, redirect the toolchain, or name an output are refused — `Project.toml` is
+ * a file in the user's repository that their reviewer read and their version control records, and a
+ * plugin's document is generated on the fly by a binary fetched from a registry. The asymmetry is
+ * not a statement about trust, and the day it stops being warranted is the day the first one
  * stopped being reviewable.
  *
  * False with a message naming the node and the rule. A caller reports it as a

@@ -221,12 +221,13 @@ MOLTEST(frontend_refuses_a_plugin_that_needs_a_newer_molto) {
 
 /* --- asking one --- */
 
-/* Bounds for the sandbox project, which is what a caller supplies. */
+/* Bounds for the sandbox project, which is what a caller supplies. Zeroed
+   first: every field not named here has to be absent rather than whatever the
+   stack held, and a caller that sets them one by one has no other way to say
+   so. */
 static void bounds_for(const sandbox *box, char *build_dir, size_t size, ir_bounds *out) {
     snprintf(build_dir, size, "%s/build/debug", box->project);
-    out->workspace = box->project;
-    out->build_dir = build_dir;
-    out->cache = NULL;
+    *out = (ir_bounds){.workspace = box->project, .build_dir = build_dir};
 }
 
 MOLTEST(frontend_reads_the_document_a_plugin_returns) {

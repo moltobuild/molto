@@ -1409,6 +1409,61 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     return true;
 }
 
+/* Hold the document to the one path rule, once every transform has spoken.
+ *
+ * RFC-0013 applies it to every document whatever its origin, and this is the
+ * native half of that: `Project.toml` is reviewable, but a path in it still gets
+ * to name only somewhere Molto may read from or write to.
+ *
+ * The fourth bound is what makes the rule fit a real project. A dependency's
+ * directory is not the workspace, not the build directory and not always the
+ * cache — `{ path = "../greet" }` is a sibling checkout — and it is authorised
+ * by the manifest the user wrote. The roots come from `resolve` and never from
+ * the document, so nothing a producer writes can widen what it is held to.
+ *
+ * False with a message in `err`. */
+[[nodiscard]] static bool document_is_allowed(const ir_document *doc, const char *root,
+                                              build_profile profile, const prepared_deps *deps,
+                                              const prepared_deps *dev, char *err,
+                                              size_t err_size) {
+    char build_dir[PATH_BUFFER_SIZE];
+    if(!fs_format_path(build_dir, sizeof build_dir, "%s/" DIR_BUILD "/%s", root,
+                       profile_name(profile)))
+        return fs_report_long_path(root);
+
+    char cache[PATH_BUFFER_SIZE];
+    const bool has_cache = source_cache_root(cache, sizeof cache);
+
+    /* Taken from what `resolve` returned and not from `doc->dependencies`, even
+       though a transform just wrote the same strings into it. Reading them back
+       off the document would let anything that can write a `Dependency` node
+       widen the bounds it is then held to, which is a check that checks
+       nothing. Here the list cannot be influenced by the document at all. */
+    const size_t count = deps->unit_count + dev->unit_count;
+    const char **roots = NULL;
+    if(count > 0) {
+        roots = (const char **)calloc(count, sizeof *roots);
+        if(roots == NULL) {
+            snprintf(err, err_size, "out of memory checking the document's paths");
+            return false;
+        }
+        size_t at = 0;
+        for(size_t i = 0; i < deps->unit_count; i++)
+            roots[at++] = deps->units[i].root;
+        for(size_t i = 0; i < dev->unit_count; i++)
+            roots[at++] = dev->units[i].root;
+    }
+
+    const ir_bounds bounds = {.workspace = root,
+                              .build_dir = build_dir,
+                              .cache = has_cache ? cache : NULL,
+                              .roots = roots,
+                              .root_count = count};
+    const bool ok = ir_validate(doc, &bounds, err, err_size);
+    free((void *)roots);
+    return ok;
+}
+
 /* Load the manifest, resolve what it depends on, and work out every unit the
    project's own build would compile — without compiling any of them. `objects`
    is caller-initialised and caller-freed; everything the units borrow belongs
@@ -1480,6 +1535,12 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     plan->labels = labels_for(&plan->doc);
     if(plan->labels == NULL)
         return exit_build_failure;
+
+    if(!document_is_allowed(&plan->doc, root, profile, &plan->deps, &plan->dev, frontend_err,
+                            sizeof frontend_err)) {
+        fprintf(stderr, "molto: %s\n", frontend_err);
+        return exit_build_failure;
+    }
 
     /* The interface of the dependencies folds into `[target]`, which is what
        the link line still reads. What each of them compiles itself with is a

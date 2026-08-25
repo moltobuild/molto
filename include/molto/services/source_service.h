@@ -95,6 +95,14 @@ typedef struct {
    gets changed in one of them. */
 [[nodiscard]] bool source_spec_validate(const source_spec *spec, char *err, size_t err_size);
 
+/* The root of the source cache: `$MOLTO_CACHE`, or ~/.molto/cache.
+
+   Exported because it is a bound a document is validated against (RFC-0013),
+   and a caller that composed it itself would miss the override and validate
+   against a directory this build never uses. False when there is no HOME and no
+   override, which is the one case where there is no cache to name. */
+[[nodiscard]] bool source_cache_root(char *out, size_t size);
+
 /* The directory the cache holds one coordinate under. Does not create it, and
    does not say whether anything is there.
 

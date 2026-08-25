@@ -606,6 +606,59 @@ MOLTEST(ir_holds_a_package_target_to_the_same_bounds) {
     ir_document_free(&doc);
 }
 
+MOLTEST(ir_allows_a_path_under_a_root_the_caller_authorised) {
+    /* The fourth bound. A `[deps]` entry of `{ path = "../greet" }` puts a
+       sibling checkout on the compile line, and that directory is none of the
+       three — it is authorised by the manifest the user wrote, which is what
+       the caller passes in. */
+    static const char *const ROOTS[] = {"/w/greet"};
+    const ir_bounds bounds = {.workspace = "/w/app",
+                              .build_dir = "/w/app/build/debug",
+                              .cache = "/home/u/.molto/cache",
+                              .roots = ROOTS,
+                              .root_count = 1};
+
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_add_include(&target->includes, &target->include_count, "/w/greet/include",
+                               ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_TRUE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    /* And the same document is refused without it, which is what makes the
+       bound a bound rather than a formality. */
+    EXPECT_FALSE(ir_validate(&doc, &BOUNDS, err, sizeof err));
+
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
+    /* An authorised root is a bound and not a hole: a recipe that names a
+       directory above its own package — and a recipe is something a remote
+       party wrote — is refused exactly as one climbing out of the workspace. */
+    static const char *const ROOTS[] = {"/w/greet"};
+    const ir_bounds bounds = {.workspace = "/w/app",
+                              .build_dir = "/w/app/build/debug",
+                              .cache = "/home/u/.molto/cache",
+                              .roots = ROOTS,
+                              .root_count = 1};
+
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_add_include(&target->includes, &target->include_count, "/w/greet/../../etc",
+                               ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_FALSE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "outside the workspace"));
+
+    ir_document_free(&doc);
+}
+
 MOLTEST(ir_does_not_mistake_a_sibling_directory_for_the_workspace) {
     /* Compared segment-wise: `/w/app-evil` shares a prefix with `/w/app` and is
        not inside it. A prefix test alone would let it through. */

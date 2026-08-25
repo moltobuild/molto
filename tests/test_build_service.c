@@ -599,6 +599,91 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
     (void)system(cmd);
 }
 
+MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
+    /* A recipe is something a remote party wrote, and its `include` list lands
+       on the consumer's own compile line. Nothing checked where it pointed
+       until the document was held to RFC-0013's path rule — so this is the
+       whole reason a native document is validated at all. */
+    char root[] = "/tmp/molto_bounds_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/greedy", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/greedy/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"greedy\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\nsources = [\"greedy.c\"]\n"
+                                    "include = [\".\", \"../../../../../../etc\"]\n"));
+    snprintf(path, sizeof path, "%s/greedy/greedy.h", root);
+    EXPECT_TRUE(fs_write_file(path, "int greedy_answer(void);\n"));
+    snprintf(path, sizeof path, "%s/greedy/greedy.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int greedy_answer(void) { return 1; }\n"));
+
+    char manifest[1024];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+             "[target]\nstd = \"c17\"\n"
+             "[deps]\ngreedy = { path = \"%s/greedy\" }\n",
+             root);
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, manifest));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read) {
+    /* The other half of the same rule, and the reason the bound is a fourth one
+       rather than a stricter three: a sibling checkout is outside the
+       workspace, outside the build directory and outside the cache, and the
+       manifest named it on purpose. */
+    char root[] = "/tmp/molto_sibling_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/app/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/sibling", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+
+    snprintf(path, sizeof path, "%s/sibling/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"sibling\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\nsources = [\"sibling.c\"]\n"
+                                    "include = [\".\"]\n"));
+    snprintf(path, sizeof path, "%s/sibling/sibling.h", root);
+    EXPECT_TRUE(fs_write_file(path, "int sibling_answer(void);\n"));
+    snprintf(path, sizeof path, "%s/sibling/sibling.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int sibling_answer(void) { return 1; }\n"));
+
+    /* Relative, and climbing out of the project: exactly the shape the three
+       bounds refuse and this one allows. */
+    snprintf(path, sizeof path, "%s/app/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+                                    "[target]\nstd = \"c17\"\n"
+                                    "[deps]\nsibling = { path = \"../sibling\" }\n"));
+    snprintf(path, sizeof path, "%s/app/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "#include <sibling.h>\n"
+                                    "int main(void) { return sibling_answer() - 1; }\n"));
+
+    char app[600];
+    snprintf(app, sizeof app, "%s/app", root);
+    EXPECT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
 /* A library written against an older standard is compiled against it, in a
    project that asked for a newer one. Both halves are checked by the
    preprocessor, so the test fails whichever way the standard leaks. */

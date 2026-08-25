@@ -2,6 +2,7 @@
 
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/source_service.h>
 #include <molto/util/json_write.h>
 #include <molto/util/semver.h>
 
@@ -342,7 +343,17 @@ frontend_result frontend_run(const char *root, const char *profile, ir_document 
         FRONTEND_ERR(err, err_size, "the build directory does not fit in a path");
         return frontend_failed;
     }
-    const ir_bounds bounds = {.workspace = root, .build_dir = build_dir, .cache = NULL};
+    /* The cache is a bound and not an omission: a dependency's bytes live there,
+       and a document validated without it would refuse the first one that
+       named them. No roots — nothing has been resolved when a frontend
+       answers, and a producer does not get to widen its own bounds. */
+    char cache[FRONTEND_PATH_MAX];
+    const bool has_cache = source_cache_root(cache, sizeof cache);
+    const ir_bounds bounds = {.workspace = root,
+                              .build_dir = build_dir,
+                              .cache = has_cache ? cache : NULL,
+                              .roots = NULL,
+                              .root_count = 0};
 
     for(size_t i = 0; i < count; i++) {
         const frontend_result asked =

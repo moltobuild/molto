@@ -343,8 +343,17 @@ it becomes a command, under rules that depend on where it came from:
 **Applied to every document, whatever its origin:**
 
 - A `path` **MUST** resolve inside the workspace root, the profile's build
-  directory, or the global cache. A path that escapes all three, whether by
-  `..`, by an absolute prefix or through a symlink, is a rejected document.
+  directory, the global cache, or a root the caller authorised. A path that
+  escapes all four, whether by `..`, by an absolute prefix or through a symlink,
+  is a rejected document.
+- The authorised roots are the directories `resolve` found the build's packages
+  in, and they are **supplied by the caller, never read back off the document**.
+  A `[deps]` entry of `{ path = "../greet" }` is a sibling checkout — outside the
+  first three and named on purpose by the person who wrote `Project.toml` — so a
+  rule with only three bounds would refuse a correct project. A producer that
+  could widen its own bounds by writing a `Dependency` node would be held to
+  nothing, which is why the list does not come from the document. A frontend's
+  answer is validated before anything has been resolved, so it is held to three.
 - A `BuildStep.program` is executed directly, never through a shell, and is
   resolved as an absolute path, a workspace-relative path, or a name found in
   the toolchain — never by searching an inherited `PATH`.
@@ -452,6 +461,11 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
   putting a machine's home directory in the document. Naming a package the
   document does not describe is refused rather than falling back to the project
   root, and the bounds check is unchanged: the anchor moves, the fence does not.
+- **The path rule reaches the native document.** `plan_project` validates what
+  the transforms produced, against the four bounds, before any of it becomes a
+  command. It is what turns a dependency's recipe — which a remote party wrote —
+  from something that could name any directory on the consumer's compile line
+  into something held to the same rule as everything else.
 - **A dependency's own sources are targets.** One `Target` of kind `object` per
   package that ships sources, named `<package>:objects`, carrying that package's
   own recipe and nothing the consumer resolved. Everything a build compiles now
