@@ -235,7 +235,14 @@ NOT** be applied to a document a machine produced.
 
 ## Schema, and the node it does not know
 
-Every document opens with an integer `schema`. This revision is `1`.
+Every document opens with an integer `schema`. This revision is `2`.
+
+Revision `2` adds `scope` to `Dependency`. It is a revision rather than a plain
+addition because the directional rule below cuts the wrong way for this one
+attribute: an older reader would ignore it and read a development dependency as
+a runtime one, folding it into `src/` — the exact leak RFC-0008 exists to
+prevent, arrived at silently. The revision is what turns that into a refusal
+that names itself.
 
 Two parties read an IR document and they read it in opposite directions: Molto
 reads what a plugin returned, and a plugin reads what Molto sent. Both will
@@ -429,23 +436,25 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
   stops needing to be applied.
 - **`molto ir`** is implemented, `--output` and `--profile` included, and its
   output is byte-identical between runs.
+- **Transforms** are implemented, and `merge_deps()` is one of them. Its own
+  comment made the argument before transforms existed: folding a dependency's
+  interface into the target scope means "none of those has to learn what a
+  dependency is". `ir_transform_dependencies` says what `resolve` found and
+  `ir_transform_fold_dependencies` folds it in.
+- **`scope` on `Dependency`** is carried, in revision `2`. The fold takes a
+  document and nothing else: the node says `runtime` or `dev`, so a consumer
+  holding only the published bytes folds them exactly as the engine does. It is
+  required rather than defaulted, because a missing scope and a runtime scope
+  would otherwise be the same document and only one of them is safe.
 
-Still ahead, and unchanged in what blocks what:
+Still ahead:
 
 - **A dependency's own sources as targets.** Everything the project and its
   tests compile now has its command line read off the document; a dependency's
   sources still do not, because a package is not a `Target` yet. Turning each
-  into one of kind `object` retires the last branch in `build_compile_argv`.
-- **A scope on `Dependency`.** The node cannot say whether a package is a
-  development dependency, so the fold is handed the two lists rather than
-  reading them back from the document. Adding the attribute is a schema
-  decision: an unknown attribute is ignored by an older reader, and for this one
-  that means silently folding a development dependency into `src/`.
-- **Transforms**, which is where `merge_deps()` belongs — its own comment argues
-  that folding a dependency's interface into the target scope means "none of
-  those has to learn what a dependency is", which is the argument for a
-  transform, written before transforms existed. Until one exists, a document's
-  `dependencies` list is empty.
+  into one of kind `object` retires the last branch in `build_compile_argv`, and
+  needs a `Target` to be able to name the dependency its sources are relative
+  to — a package's bytes live in the shared cache, outside `Project.root`.
 
 Ordered by what blocks what:
 

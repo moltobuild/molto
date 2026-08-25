@@ -280,12 +280,14 @@ still comes from `project_ctx`.
 The options half is done for everything the project owns. `build_compile_argv`
 composes a unit's line by scope from the document — target, then profile, then
 unit, the order RFC-0013 fixes — and `merge_deps` and `compose_include_flags`
-are transforms rather than two hard-coded calls. Two consequences were chosen
-rather than discovered: a scope reaches the line as its options and then its
-includes, because a document cannot tell a define from a flag, which reorders
-`-D -I -F` into `-D -F -I` and misses the shared object cache once; and `-std`
-is a unit-scope option, so `[target].std` now wins over one written by hand into
-`flags`.
+are transforms rather than two hard-coded calls. The fold is now a transform in
+full: IR schema 2 puts a `scope` on `Dependency`, so it takes a document and
+returns a document, and a consumer holding only the published bytes reproduces
+it exactly. Two consequences were chosen rather than discovered: a scope reaches
+the line as its options and then its includes, because a document cannot tell a
+define from a flag, which reorders `-D -I -F` into `-D -F -I` and misses the
+shared object cache once; and `-std` is a unit-scope option, so `[target].std`
+now wins over one written by hand into `flags`.
 
 Not implemented:
 

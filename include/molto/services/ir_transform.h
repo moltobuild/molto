@@ -39,6 +39,11 @@
  * that silently dropped what an earlier one wrote would be a composition rule
  * nobody could reason about.
  *
+ * The two sets are described together because the node says which it is: a
+ * runtime package is scoped `runtime` and a development one `dev`, and the fold
+ * below reads that back rather than being told again. `dev` may be NULL, which
+ * is a project with no `[dev-deps]`.
+ *
  * What it deliberately does not do is fold that interface into the targets'
  * scopes. That is a second transform, and it belongs with the change that makes
  * the engine read a target's options from here — writing it before then would
@@ -46,8 +51,8 @@
  * the other one.
  *
  * False with a message in `err`; `doc` is left as it was found. */
-[[nodiscard]] bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps, char *err,
-                                             size_t err_size);
+[[nodiscard]] bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps,
+                                             const prepared_deps *dev, char *err, size_t err_size);
 
 /* Fold what the dependencies export into the targets that compile against them.
  *
@@ -61,19 +66,17 @@
  * than documented: a source under `src/` that includes one fails to compile, on
  * the first build, with "no such file" (RFC-0008).
  *
- * They are passed as two lists rather than read back from `doc->dependencies`
- * because an `ir_dependency` has nowhere to say which of the two it is. Saying
- * so would be a schema addition, and an unknown attribute is ignored by an
- * older reader — which for this attribute means silently folding a development
- * dependency into `src/`, the one thing the separation exists to prevent. That
- * is a decision about RFC-0013 and not a detail to settle here.
+ * It takes nothing but the document. Everything it needs is already in there:
+ * `ir_transform_dependencies` wrote one node per package and said which scope
+ * each is, so the fold reads the document rather than being handed the same
+ * facts a second time. That is what a transform of RFC-0015 is — a document in,
+ * a document out — and it is what makes a published document reproducible: a
+ * consumer that has only the bytes can fold them exactly as the engine did.
  *
  * Appended after what the manifest named, in the order a command line receives
  * them, so folding does not reorder anything a target already carried.
  *
  * False with a message in `err`. */
-[[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, const prepared_deps *deps,
-                                                  const prepared_deps *dev, char *err,
-                                                  size_t err_size);
+[[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, char *err, size_t err_size);
 
 #endif /* MOLTO_IR_TRANSFORM_H */

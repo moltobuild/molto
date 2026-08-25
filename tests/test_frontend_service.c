@@ -97,7 +97,7 @@ static void answering_script(char *out, size_t size, const char *origin) {
              "#!/bin/sh\n"
              "cat > /dev/null\n"
              "cat <<'DOC'\n"
-             "{\"schema\":1,\"files_read\":[\"meson.build\"],\"projects\":[{"
+             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{"
              "\"name\":\"app\",\"version\":\"0.1.0\",\"root\":\"%%ROOT%%\","
              "\"origin\":\"%s\",\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"sources\":[{\"path\":\"src/main.c\",\"language\":\"c\"}]}]}]}\n"
@@ -121,7 +121,7 @@ static bool install_answering(const sandbox *box, const char *name, const char *
              at + strlen("%ROOT%"));
 
     char recipe[1024];
-    frontend_recipe(recipe, sizeof recipe, name, extension, 1, "0.1.0");
+    frontend_recipe(recipe, sizeof recipe, name, extension, IR_SCHEMA, "0.1.0");
     return install(box, name, patched, recipe);
 }
 
@@ -175,7 +175,7 @@ MOLTEST(frontend_candidates_skips_a_plugin_that_is_not_a_frontend) {
     ASSERT_TRUE(sandbox_setup(&box));
 
     char recipe[1024];
-    frontend_recipe(recipe, sizeof recipe, "deb", "meson.build", 1, "0.1.0");
+    frontend_recipe(recipe, sizeof recipe, "deb", "meson.build", IR_SCHEMA, "0.1.0");
     /* A packager, not a frontend. Being installed is not being asked. */
     char *at = strstr(recipe, "\"frontend\"");
     ASSERT_NOT_NULL(at);
@@ -266,7 +266,7 @@ MOLTEST(frontend_reads_the_document_a_plugin_returns) {
 static frontend_result ask_script(sandbox *box, const char *script, ir_document *out, char *err,
                                   size_t err_size) {
     char recipe[1024];
-    frontend_recipe(recipe, sizeof recipe, "meson", "meson.build", 1, "0.1.0");
+    frontend_recipe(recipe, sizeof recipe, "meson", "meson.build", IR_SCHEMA, "0.1.0");
     if(!install(box, "meson", script, recipe) || !touch_entry(box, "meson.build"))
         return frontend_failed;
 
@@ -326,7 +326,7 @@ MOLTEST(frontend_refuses_a_banner_on_standard_output) {
               ask_script(&box,
                          "#!/bin/sh\ncat > /dev/null\n"
                          "echo 'molto-meson 0.1.0'\n"
-                         "echo '{\"schema\":1}'\n",
+                         "echo '{\"schema\":2}'\n",
                          &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "JSON"));
 
@@ -372,7 +372,7 @@ MOLTEST(frontend_refuses_a_document_reporting_no_files_read) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":1,\"files_read\":[],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":2,\"files_read\":[],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\"}]}\n"
              "DOC\n",
              box.project);
@@ -395,7 +395,7 @@ MOLTEST(frontend_validates_before_it_hands_a_document_back) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":1,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"sources\":[{\"path\":\"../../etc/shadow\",\"language\":\"c\"}]}]}]}\n"
@@ -420,7 +420,7 @@ MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":1,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"options\":[{\"value\":\"-fplugin=/tmp/x.so\",\"scope\":\"target\"}]}]}]}\n"
@@ -446,7 +446,7 @@ MOLTEST(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":1,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"steps\":[{\"name\":\"gen\",\"program\":\"sh\",\"args\":[\"-c\",\"rm -rf ~\"]}]}]}\n"
              "DOC\n",

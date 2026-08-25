@@ -36,8 +36,15 @@
 
 /* This revision. A document declares it, and a plugin declares the one it
    speaks in its recipe, so a mismatch is a refusal before the process starts
-   rather than a half-read document (RFC-0014). */
-#define IR_SCHEMA 1
+   rather than a half-read document (RFC-0014).
+ *
+ * 2 adds `scope` to a dependency. The bump is what makes the attribute safe to
+ * add rather than a formality: this reader matches the revision exactly, so a
+ * molto that predates the attribute refuses the document and says why. Had it
+ * merely ignored what it did not know, it would have read a development
+ * dependency as a runtime one and folded it into `src/` — the one thing
+ * RFC-0008's separation exists to prevent, arrived at silently. */
+#define IR_SCHEMA 2
 
 /* Where an option sits in the compile line RFC-0007 composes. The order the
    three reach a command line is contract, not detail: it is the fingerprint,
@@ -78,6 +85,15 @@ typedef enum {
     ir_dep_git,
     ir_dep_archive,
 } ir_dep_origin;
+
+/* Why the project has this dependency, and therefore which targets may compile
+   against it. `runtime` reaches every target; `dev` reaches the test targets
+   and no others (RFC-0008). Carrying it on the node is what lets the fold read
+   from the document instead of being handed the two sets separately. */
+typedef enum {
+    ir_dep_scope_runtime,
+    ir_dep_scope_dev,
+} ir_dep_scope;
 
 /* `CompileOption` and `LinkOption`: a value and the scope it applies at. One
    struct for both, because the two differ in which array they live in and in
@@ -144,6 +160,7 @@ typedef struct {
     char *name;
     char *version;
     ir_dep_origin origin;
+    ir_dep_scope scope;
     char *root;
     ir_include *includes;
     size_t include_count;
@@ -226,7 +243,7 @@ void ir_document_free(ir_document *doc);
 
 [[nodiscard]] ir_dependency *ir_add_dependency(ir_document *doc, const char *name,
                                                const char *version, ir_dep_origin origin,
-                                               const char *root);
+                                               ir_dep_scope scope, const char *root);
 
 /* --- the wire --- */
 
@@ -309,10 +326,12 @@ typedef struct {
 [[nodiscard]] const char *ir_language_name(ir_language language);
 [[nodiscard]] const char *ir_target_kind_name(ir_target_kind kind);
 [[nodiscard]] const char *ir_dep_origin_name(ir_dep_origin origin);
+[[nodiscard]] const char *ir_dep_scope_name(ir_dep_scope scope);
 
 [[nodiscard]] bool ir_scope_from_name(const char *name, ir_scope *out);
 [[nodiscard]] bool ir_language_from_name(const char *name, ir_language *out);
 [[nodiscard]] bool ir_target_kind_from_name(const char *name, ir_target_kind *out);
 [[nodiscard]] bool ir_dep_origin_from_name(const char *name, ir_dep_origin *out);
+[[nodiscard]] bool ir_dep_scope_from_name(const char *name, ir_dep_scope *out);
 
 #endif /* MOLTO_IR_SERVICE_H */
