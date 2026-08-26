@@ -162,10 +162,11 @@ recipe and `"schema": 2` in the document you return; what you emit does not
 otherwise change, because the one node schema 2 altered is `Dependency`, and a
 frontend does not resolve.
 
-If you do return `Dependency` nodes, each one now needs a `scope` of `runtime`
-or `dev` — omitting it is refused rather than read as `runtime`, because a
-missing scope and a runtime scope would be the same document and only one of
-them is safe (RFC-0008).
+The one node schema 2 changed is one you do not write: **a frontend may not
+name dependencies at all**, and a document that does is refused. `Dependency`
+carries the version that was resolved, the origin it came from and the directory
+the bytes landed in — three answers `resolve` gives, and resolving is not a
+plugin's to do. Leave `dependencies` empty and the engine fills it.
 
 Set `molto_min` to the first Molto that speaks schema 2, so a user on an older
 one gets your refusal rather than Molto's.

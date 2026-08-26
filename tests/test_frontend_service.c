@@ -412,6 +412,35 @@ MOLTEST(frontend_validates_before_it_hands_a_document_back) {
     sandbox_teardown(&box);
 }
 
+MOLTEST(frontend_refuses_a_plugin_that_names_a_dependency) {
+    /* A frontend describes a project and not its graph. `Dependency` carries
+       the version that was resolved, the origin it came from and where the
+       bytes landed on this machine — all three are answers `resolve` gives, and
+       `resolve` is the phase RFC-0015 closes to plugins. */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    char script[2048];
+    snprintf(script, sizeof script,
+             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
+             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\",\"targets\":[],"
+             "\"dependencies\":[{\"name\":\"z\",\"version\":\"1.0.0\",\"origin\":\"registry\","
+             "\"scope\":\"runtime\",\"root\":\"%s\"}]}]}\n"
+             "DOC\n",
+             box.project, box.project);
+
+    ir_document doc;
+    char err[1024] = "";
+    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "not its graph"));
+    /* Singular, because one dependency is one dependency. */
+    EXPECT_NOT_NULL(strstr(err, "naming 1 dependency"));
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
 MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     /* The sandbox that would stop this does not exist yet, and it would not
        stop this anyway: the option is in a document, not in a syscall. */
