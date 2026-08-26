@@ -85,8 +85,10 @@ MOLTEST(ir_transform_says_what_each_dependency_exports) {
     EXPECT_STREQ("-DYYJSON_STATIC=1", dep->options[0].value);
     EXPECT_STREQ("-fno-strict-aliasing", dep->options[1].value);
 
+    /* A library reaches the document as the flag it already is, for the same
+       reason a define does: a LinkOption is what reaches the link line. */
     ASSERT_EQ(1u, dep->link_count);
-    EXPECT_STREQ("m", dep->links[0].value);
+    EXPECT_STREQ("-lm", dep->links[0].value);
 
     /* The transform touched nothing else. */
     EXPECT_STREQ("app", doc.name);
@@ -237,7 +239,7 @@ MOLTEST(ir_transform_folds_a_runtime_dependency_into_every_target) {
         EXPECT_TRUE(carries_include(target, "/w/app/modules/greet/include"));
         EXPECT_TRUE(carries_option(target, "-DGREET_STATIC=1"));
         ASSERT_EQ(1u, target->link_count);
-        EXPECT_STREQ("m", target->links[0].value);
+        EXPECT_STREQ("-lm", target->links[0].value);
         /* Appended after what the target already carried, which is where the
            build has always put them: include order decides which header wins. */
         EXPECT_STREQ("src", target->includes[0].value);

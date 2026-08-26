@@ -297,6 +297,15 @@ same reorder applies to a dependency's line as to the project's: `-std` is a
 unit-scope option and reaches it last, which misses the shared object cache
 once per package.
 
+The link line is read off the document too, as of IR schema 3. A `LinkOption` is
+what reaches the linker, so `build_link_argv` pushes one loop over the node's
+`links` by scope and never asks whether a value is a library or a flag. Two
+consequences, both chosen: `-o` moves ahead of them so the scopes stay
+contiguous, and a library sits with its scope rather than at the end of the
+line — every link is the same multiset, reordered, and a binary is relinked once.
+It also retired the three lists `build_tests` used to widen by hand for
+`[dev-deps]`: the fold puts them on targets of kind `test` and nothing else.
+
 Not implemented:
 
 - **A topological order over targets**, which needs `Target` to be a node

@@ -97,7 +97,7 @@ static void answering_script(char *out, size_t size, const char *origin) {
              "#!/bin/sh\n"
              "cat > /dev/null\n"
              "cat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{"
+             "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{"
              "\"name\":\"app\",\"version\":\"0.1.0\",\"root\":\"%%ROOT%%\","
              "\"origin\":\"%s\",\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"sources\":[{\"path\":\"src/main.c\",\"language\":\"c\"}]}]}]}\n"
@@ -327,7 +327,7 @@ MOLTEST(frontend_refuses_a_banner_on_standard_output) {
               ask_script(&box,
                          "#!/bin/sh\ncat > /dev/null\n"
                          "echo 'molto-meson 0.1.0'\n"
-                         "echo '{\"schema\":2}'\n",
+                         "echo '{\"schema\":3}'\n",
                          &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "JSON"));
 
@@ -373,7 +373,7 @@ MOLTEST(frontend_refuses_a_document_reporting_no_files_read) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":3,\"files_read\":[],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\"}]}\n"
              "DOC\n",
              box.project);
@@ -396,7 +396,7 @@ MOLTEST(frontend_validates_before_it_hands_a_document_back) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"sources\":[{\"path\":\"../../etc/shadow\",\"language\":\"c\"}]}]}]}\n"
@@ -423,7 +423,7 @@ MOLTEST(frontend_refuses_a_plugin_that_names_a_dependency) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\",\"targets\":[],"
              "\"dependencies\":[{\"name\":\"z\",\"version\":\"1.0.0\",\"origin\":\"registry\","
              "\"scope\":\"runtime\",\"root\":\"%s\"}]}]}\n"
@@ -450,7 +450,7 @@ MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
              "\"options\":[{\"value\":\"-fplugin=/tmp/x.so\",\"scope\":\"target\"}]}]}]}\n"
@@ -476,7 +476,7 @@ MOLTEST(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
     char script[2048];
     snprintf(script, sizeof script,
              "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
-             "{\"schema\":2,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
+             "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"steps\":[{\"name\":\"gen\",\"program\":\"sh\",\"args\":[\"-c\",\"rm -rf ~\"]}]}]}\n"
              "DOC\n",
@@ -614,8 +614,9 @@ MOLTEST(frontend_native_describes_a_manifest_and_its_sources) {
     ASSERT_EQ(2u, target->include_count);
     EXPECT_STREQ("include", target->includes[0].value);
     EXPECT_STREQ("src", target->includes[1].value);
+    /* `[target].link = ["m"]`, as it reaches the link line. */
     ASSERT_EQ(1u, target->link_count);
-    EXPECT_STREQ("m", target->links[0].value);
+    EXPECT_STREQ("-lm", target->links[0].value);
     EXPECT_TRUE(target->has_artifact);
     EXPECT_STREQ("app", target->artifact.path);
 

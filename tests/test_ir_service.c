@@ -64,7 +64,7 @@ static bool build_sample(ir_document *doc) {
     if(!ir_add_option(&target->options, &target->option_count, "-DVERSION=1", ir_scope_target) ||
        !ir_add_include(&target->includes, &target->include_count, "include", ir_scope_target,
                        false) ||
-       !ir_add_option(&target->links, &target->link_count, "m", ir_scope_target) ||
+       !ir_add_option(&target->links, &target->link_count, "-lm", ir_scope_target) ||
        !ir_set_artifact(target, ir_target_executable, "app", NULL))
         return false;
 
@@ -75,7 +75,7 @@ static bool build_sample(ir_document *doc) {
         return false;
     if(!ir_add_include(&dep->includes, &dep->include_count, "/w/app/.cache/sqlite",
                        ir_scope_target, true) ||
-       !ir_add_option(&dep->links, &dep->link_count, "dl", ir_scope_target))
+       !ir_add_option(&dep->links, &dep->link_count, "-ldl", ir_scope_target))
         return false;
 
     /* That dependency's own sources, as a target of their own. Its paths are
@@ -121,7 +121,7 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     EXPECT_STREQ("include", target->includes[0].value);
     EXPECT_FALSE(target->includes[0].system);
     ASSERT_EQ(1u, target->link_count);
-    EXPECT_STREQ("m", target->links[0].value);
+    EXPECT_STREQ("-lm", target->links[0].value);
     EXPECT_TRUE(target->has_artifact);
     EXPECT_STREQ("app", target->artifact.path);
     EXPECT_NULL(target->artifact.install);
@@ -144,7 +144,7 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     ASSERT_EQ(1u, dep->include_count);
     EXPECT_TRUE(dep->includes[0].system);
     ASSERT_EQ(1u, dep->link_count);
-    EXPECT_STREQ("dl", dep->links[0].value);
+    EXPECT_STREQ("-ldl", dep->links[0].value);
 
     ir_document_free(&read);
     ir_document_free(&written);
@@ -229,7 +229,7 @@ MOLTEST(ir_frees_a_document_twice_without_complaint) {
    frontend returns. Both go through the same assertions, so a backend that
    starts reading nesting differently from the other fails here. */
 
-static const char *const SAMPLE_TOML = "schema = 2\n"
+static const char *const SAMPLE_TOML = "schema = 3\n"
                                        "files_read = [\"meson.build\"]\n"
                                        "[[projects]]\n"
                                        "name = \"app\"\n"
@@ -254,7 +254,7 @@ static const char *const SAMPLE_TOML = "schema = 2\n"
                                        "path = \"src/probe.cpp\"\n"
                                        "language = \"cpp\"\n";
 
-static const char *const SAMPLE_JSON = "{\"schema\":2,\"files_read\":[\"meson.build\"],"
+static const char *const SAMPLE_JSON = "{\"schema\":3,\"files_read\":[\"meson.build\"],"
                                        "\"projects\":[{"
                                        "\"name\":\"app\",\"version\":\"0.1.0\","
                                        "\"root\":\"/w/app\",\"origin\":\"meson\","
@@ -338,16 +338,16 @@ static void refused(const char *json, const char *needle) {
 }
 
 MOLTEST(ir_refuses_a_schema_it_does_not_speak) {
-    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":4,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
-            "schema 3");
+            "schema 4");
     /* A revision behind is refused just as loudly as one ahead, and that is
-       what makes an added attribute safe: schema 1 has no `scope` on a
-       dependency, so a reader that shrugged at the revision would read a
-       development dependency as a runtime one and fold it into src/. */
-    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+       what makes a changed meaning safe: a schema 2 document's `links` hold
+       bare library names, so a reader that shrugged at the revision would hand
+       `m` to a linker as a raw flag. */
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
-            "schema 1");
+            "schema 2");
     refused("{\"projects\":[]}", "no 'schema'");
 }
 
@@ -355,7 +355,7 @@ MOLTEST(ir_refuses_an_unknown_node_type) {
     /* The directional rule of RFC-0013. An engine that skipped a node type it
        did not know would build something other than what it was handed, and
        report success — a green build of the wrong thing. */
-    refused("{\"schema\":2,\"toolchains\":[{\"name\":\"gcc\"}],"
+    refused("{\"schema\":3,\"toolchains\":[{\"name\":\"gcc\"}],"
             "\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "'toolchains'");
@@ -365,7 +365,7 @@ MOLTEST(ir_refuses_a_build_step_by_name) {
     /* Refused by name rather than as an unknown key, because the node type
        exists in the specification and the reason it is absent is a reason a
        plugin author needs to read: it lowers to a command. */
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"meson\",\"steps\":[{\"name\":\"gen\",\"program\":\"sh\"}]}]}",
             "BuildStep");
 }
@@ -374,7 +374,7 @@ MOLTEST(ir_refuses_a_generated_source_by_name) {
     /* The one case where "ignore what you don't know" points the wrong way: a
        GeneratedSource is a Source with two extra attributes, so ignoring them
        would compile a file nobody produced. */
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"meson\",\"targets\":[{\"name\":\"a\",\"kind\":\"executable\","
             "\"sources\":[{\"path\":\"src/gen.c\",\"language\":\"c\","
             "\"produced_by\":\"gen\",\"deterministic\":true}]}]}]}",
@@ -383,7 +383,7 @@ MOLTEST(ir_refuses_a_generated_source_by_name) {
 
 MOLTEST(ir_refuses_a_vocabulary_it_does_not_know) {
     static const char *const PREFIX =
-        "{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+        "{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
         "\"origin\":\"native\",";
 
     char json[1024];
@@ -421,28 +421,28 @@ MOLTEST(ir_refuses_a_dependency_that_does_not_say_who_may_use_it) {
        compiles against this" and "the producer did not say" — and picking the
        first hands a development dependency to src/, which is the one thing
        RFC-0008's separation exists to prevent. */
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\",\"dependencies\":[{\"name\":\"d\",\"origin\":\"path\","
             "\"root\":\"/w/d\"}]}]}",
             "missing a 'scope'");
 }
 
 MOLTEST(ir_refuses_a_document_that_is_not_exactly_one_project) {
-    refused("{\"schema\":2,\"projects\":[]}", "exactly one");
-    refused("{\"schema\":2,\"projects\":["
+    refused("{\"schema\":3,\"projects\":[]}", "exactly one");
+    refused("{\"schema\":3,\"projects\":["
             "{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\",\"origin\":\"native\"},"
             "{\"name\":\"b\",\"version\":\"1\",\"root\":\"/w\",\"origin\":\"native\"}]}",
             "exactly one");
 }
 
 MOLTEST(ir_refuses_a_node_missing_what_it_is) {
-    refused("{\"schema\":2,\"projects\":[{\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "'name'");
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\",\"targets\":[{\"name\":\"t\"}]}]}",
             "'kind'");
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\",\"targets\":[{\"name\":\"t\",\"kind\":\"executable\","
             "\"sources\":[{\"path\":\"a.c\"}]}]}]}",
             "'language'");
@@ -454,7 +454,7 @@ MOLTEST(ir_ignores_an_attribute_it_does_not_know) {
        the work described. */
     ir_document doc;
     char err[512] = "";
-    ASSERT_TRUE(ir_read_json("{\"schema\":2,\"generator\":\"meson 1.4\","
+    ASSERT_TRUE(ir_read_json("{\"schema\":3,\"generator\":\"meson 1.4\","
                              "\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
                              "\"origin\":\"native\",\"license\":\"MIT\","
                              "\"targets\":[{\"name\":\"t\",\"kind\":\"executable\","
