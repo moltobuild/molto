@@ -191,6 +191,8 @@ static bool cache_root(char *out, size_t size) {
     return fs_format_path(out, size, "%s/.molto/cache", home);
 }
 
+bool source_cache_root(char *out, size_t size) { return cache_root(out, size); }
+
 /* A coordinate segment that cannot escape the cache directory. The name and
    version of a registry dependency are checked by the registry, but the
    coordinate this path is built from arrives inside a recipe, and a recipe is

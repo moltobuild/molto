@@ -38,7 +38,7 @@ that can grow without freezing struct layouts at 1.0.
 ### What you receive
 
 ```json
-{"schema": 1, "request": "frontend", "root": "/w/app", "entry": "meson.build"}
+{"schema": 2, "request": "frontend", "root": "/w/app", "entry": "meson.build"}
 ```
 
 `root` is absolute, and every relative path in your answer is anchored at it.
@@ -54,7 +54,7 @@ An IR document, and nothing else, on standard output.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "files_read": ["meson.build", "src/meson.build"],
   "projects": [{
     "name": "app",
@@ -71,12 +71,23 @@ An IR document, and nothing else, on standard output.
       "depends_on": [],
       "artifact": {"kind": "executable", "path": "app"}
     }],
-    "dependencies": []
+    "dependencies": [{
+      "name": "greet",
+      "version": "1.2.0",
+      "origin": "registry",
+      "scope": "runtime",
+      "root": "/home/you/.molto/cache/greet-1.2.0",
+      "interface": {
+        "includes": [{"value": "include", "scope": "target", "system": false}],
+        "options": [],
+        "links": []
+      }
+    }]
   }]
 }
 ```
 
-Three fields carry more weight than they look like they do:
+Four fields carry more weight than they look like they do:
 
 - **`origin` must be your plugin's own name.** Not `native`, which is reserved
   for `Project.toml`. Molto checks it and refuses the document otherwise, and
@@ -89,6 +100,12 @@ Three fields carry more weight than they look like they do:
 - **`projects` is an array with exactly one element.** One project per document
   in this revision. The array is an array so that the day workspaces are
   specified the schema widens without a new revision.
+- **A dependency's `scope` says which targets may compile against it.**
+  `runtime` reaches every target; `dev` reaches the test targets and no others,
+  and that is what makes RFC-0008's separation real rather than documented — a
+  source under `src/` that includes a development dependency fails to compile.
+  It is required rather than defaulted to `runtime`, because a missing scope and
+  a runtime scope would be the same document and only one of them is safe.
 
 ### Exit codes
 
@@ -123,7 +140,7 @@ kind = "plugin"
 capabilities = ["frontend"]
 extensions = ["meson.build"]
 permissions = ["ir.write", "project.read"]
-ir_schema = 1
+ir_schema = 2
 molto_min = "0.21.0"
 ```
 
@@ -201,7 +218,7 @@ A frontend describes. It does not produce.
 
 ### It cannot emit a node type this schema does not carry
 
-Two exist in the specification and are not in schema 1, and both are refused **by
+Two exist in the specification and are not in schema 2, and both are refused **by
 name** so the message tells you which:
 
 - **`BuildStep`** — a command that is not a compile and not a link. This is what
@@ -224,11 +241,20 @@ rather than defaulted, because each names what a node *is*.
 
 ### Its paths stay inside three directories
 
+A target's paths are relative to `Project.root`, unless the target names a
+`package` — then they are relative to that `Dependency`'s `root`. Naming a
+package the document does not describe is refused; so is naming one and then
+climbing out of its root. The anchor moves, the fence does not.
+
 Every path in your document — a source, an include, a dependency root — must
 resolve inside the workspace root, the profile's build directory, or the global
 cache. By `..`, by an absolute prefix, or through a symlink alike. An artifact's
 path must be inside the build directory specifically: a target writing into
 `src/` is editing the user's code as a side effect of a build.
+
+Three and not four: RFC-0013 has a fourth bound — the directories the user's
+manifest authorised — and your document is validated before anything has been
+resolved, so there are none to authorise. Nothing you write can add one.
 
 ### Some options are refused from a plugin and not from `Project.toml`
 
@@ -300,9 +326,12 @@ deliberate place.
   at all, and the contract has to be stable before the engine depends on it.
 - **`molto migrate` is not implemented.** It is specified as running a frontend
   once and serialising the result to a `Project.toml` — one parser, two products.
-- **No transforms.** A dependency's interface is folded into a target's scope by
-  a transform, and there are none, so the native frontend reports an empty
-  `dependencies` list.
+- **A frontend still does not resolve.** Dependencies reach the document from
+  transforms that run after `resolve`, not from the frontend, so the document a
+  plugin returns reports an empty `dependencies` list and the engine fills it —
+  along with one `Target` of kind `object` per package that ships sources. This
+  is deliberate: a frontend that resolved would make `molto ir` touch the
+  network.
 - **No sandbox**, as above.
 
 ## Where the rules come from

@@ -44,6 +44,11 @@ static const ir_word DEP_ORIGINS[] = {
     {"archive", ir_dep_archive},
 };
 
+static const ir_word DEP_SCOPES[] = {
+    {"runtime", ir_dep_scope_runtime},
+    {"dev", ir_dep_scope_dev},
+};
+
 static const char *word_name(const ir_word *words, size_t count, int value) {
     for(size_t i = 0; i < count; i++) {
         if(words[i].value == value)
@@ -82,7 +87,11 @@ const char *ir_dep_origin_name(ir_dep_origin origin) {
     return word_name(DEP_ORIGINS, COUNT_OF(DEP_ORIGINS), (int)origin);
 }
 
-/* The four readers share a shape and differ only in which table they consult;
+const char *ir_dep_scope_name(ir_dep_scope scope) {
+    return word_name(DEP_SCOPES, COUNT_OF(DEP_SCOPES), (int)scope);
+}
+
+/* The five readers share a shape and differ only in which table they consult;
    spelling them out keeps the enum types honest at every call site. */
 bool ir_scope_from_name(const char *name, ir_scope *out) {
     int value = 0;
@@ -113,6 +122,14 @@ bool ir_dep_origin_from_name(const char *name, ir_dep_origin *out) {
     if(!word_value(DEP_ORIGINS, COUNT_OF(DEP_ORIGINS), name, &value))
         return false;
     *out = (ir_dep_origin)value;
+    return true;
+}
+
+bool ir_dep_scope_from_name(const char *name, ir_dep_scope *out) {
+    int value = 0;
+    if(!word_value(DEP_SCOPES, COUNT_OF(DEP_SCOPES), name, &value))
+        return false;
+    *out = (ir_dep_scope)value;
     return true;
 }
 
@@ -180,6 +197,7 @@ static void free_includes(ir_include *includes, size_t count) {
 
 static void free_target(ir_target *target) {
     free(target->name);
+    free(target->package);
     for(size_t i = 0; i < target->source_count; i++) {
         free(target->sources[i].path);
         free_options(target->sources[i].options, target->sources[i].option_count);
@@ -268,6 +286,10 @@ ir_target *ir_add_target(ir_document *doc, const char *name, ir_target_kind kind
     return target;
 }
 
+bool ir_set_target_package(ir_target *target, const char *name) {
+    return target != NULL && set_string(&target->package, name);
+}
+
 ir_source *ir_add_source(ir_target *target, const char *path, ir_language language) {
     if(target == NULL)
         return NULL;
@@ -331,7 +353,7 @@ bool ir_set_artifact(ir_target *target, ir_target_kind kind, const char *path,
 }
 
 ir_dependency *ir_add_dependency(ir_document *doc, const char *name, const char *version,
-                                 ir_dep_origin origin, const char *root) {
+                                 ir_dep_origin origin, ir_dep_scope scope, const char *root) {
     if(doc == NULL)
         return NULL;
 
@@ -341,6 +363,7 @@ ir_dependency *ir_add_dependency(ir_document *doc, const char *name, const char 
         return NULL;
 
     dep->origin = origin;
+    dep->scope = scope;
     if(!set_string(&dep->name, name) || !set_string(&dep->version, version) ||
        !set_string(&dep->root, root)) {
         free_dependency(dep);
@@ -398,6 +421,11 @@ static void write_sources(json_writer *writer, const ir_target *target) {
 static void write_target(json_writer *writer, const ir_target *target) {
     json_object_open(writer, NULL);
     json_write_field(writer, "name", target->name);
+    /* Omitted for the targets the project owns, rather than written empty: a
+       target that names no package and one that names a blank one would be the
+       same bytes, and only one of them is a document. */
+    if(target->package != NULL)
+        json_write_field(writer, "package", target->package);
     json_write_field(writer, "kind", ir_target_kind_name(target->kind));
     write_sources(writer, target);
     write_options(writer, "options", target->options, target->option_count);
@@ -430,6 +458,11 @@ static void write_dependency(json_writer *writer, const ir_dependency *dep) {
     if(dep->version != NULL)
         json_write_field(writer, "version", dep->version);
     json_write_field(writer, "origin", ir_dep_origin_name(dep->origin));
+    /* Which targets may compile against it, written for every dependency
+       rather than only for the development ones: a reader that had to infer
+       `runtime` from an absent key could not tell a runtime dependency from a
+       producer that forgot to say (RFC-0008). */
+    json_write_field(writer, "scope", ir_dep_scope_name(dep->scope));
     json_write_field(writer, "root", dep->root);
 
     json_object_open(writer, "interface");

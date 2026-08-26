@@ -143,14 +143,24 @@ static bool anchor(const char *path, const char *base, char *out, size_t size) {
     return normalise(joined, out, size);
 }
 
-/* The three bounds twice over: as written, and with every symlink resolved.
+/* One bound in the two forms the rule needs. */
+typedef struct {
+    char path[IR_PATH_MAX];
+    char real[IR_PATH_MAX];
+} bound_root;
+
+/* Every bound twice over: as written, and with every symlink resolved.
  *
  * Two forms because the rule has two halves and one form cannot answer both. A
  * lexical comparison catches `..` and an absolute prefix, and it is the only one
  * available for a file that does not exist yet. A symlink escapes lexically
  * undetected and needs the filesystem — but a bound may itself sit behind a
  * link, so the resolved path has to be compared against resolved bounds or a
- * project under a symlinked home is rejected for existing. */
+ * project under a symlinked home is rejected for existing.
+ *
+ * `roots` is heap-allocated because there is one per resolved package and a
+ * project may depend on many: a fixed array here would be a cap on a document a
+ * machine produced, which RFC-0013 refuses. */
 typedef struct {
     char workspace[IR_PATH_MAX];
     char build_dir[IR_PATH_MAX];
@@ -159,6 +169,8 @@ typedef struct {
     char real_workspace[IR_PATH_MAX];
     char real_build_dir[IR_PATH_MAX];
     char real_cache[IR_PATH_MAX];
+    bound_root *roots;
+    size_t root_count;
 } bounds_state;
 
 /* Resolve every symlink in `path`, or fall back to `path` itself when it does
@@ -175,6 +187,34 @@ static bool resolve_links(const char *path, char *out, size_t size) {
     return written >= 0 && (size_t)written < size;
 }
 
+/* The directories the caller authorised, in both forms. An empty list is a
+   document validated before anything was resolved, which is every document a
+   frontend returns. */
+static bool prepare_roots(const ir_bounds *bounds, bounds_state *out) {
+    if(bounds->roots == NULL || bounds->root_count == 0)
+        return true;
+
+    out->roots = calloc(bounds->root_count, sizeof *out->roots);
+    if(out->roots == NULL)
+        return false;
+    out->root_count = bounds->root_count;
+
+    for(size_t i = 0; i < out->root_count; i++) {
+        const char *root = bounds->roots[i];
+        if(root == NULL || root[0] == '\0' ||
+           !normalise(root, out->roots[i].path, sizeof out->roots[i].path) ||
+           !resolve_links(out->roots[i].path, out->roots[i].real, sizeof out->roots[i].real))
+            return false;
+    }
+    return true;
+}
+
+static void bounds_release(bounds_state *state) {
+    free(state->roots);
+    state->roots = NULL;
+    state->root_count = 0;
+}
+
 static bool bounds_prepare(const ir_bounds *bounds, bounds_state *out) {
     memset(out, 0, sizeof *out);
     if(!normalise(bounds->workspace, out->workspace, sizeof out->workspace) ||
@@ -186,13 +226,19 @@ static bool bounds_prepare(const ir_bounds *bounds, bounds_state *out) {
 
     return resolve_links(out->workspace, out->real_workspace, sizeof out->real_workspace) &&
            resolve_links(out->build_dir, out->real_build_dir, sizeof out->real_build_dir) &&
-           (!out->has_cache || resolve_links(out->cache, out->real_cache, sizeof out->real_cache));
+           (!out->has_cache ||
+            resolve_links(out->cache, out->real_cache, sizeof out->real_cache)) &&
+           prepare_roots(bounds, out);
 }
 
 static bool within_bounds(const char *resolved, const bounds_state *bounds) {
     if(inside(resolved, bounds->workspace) || inside(resolved, bounds->build_dir) ||
        (bounds->has_cache && inside(resolved, bounds->cache)))
         return true;
+    for(size_t i = 0; i < bounds->root_count; i++) {
+        if(inside(resolved, bounds->roots[i].path))
+            return true;
+    }
     return false;
 }
 
@@ -203,15 +249,17 @@ static bool within_bounds_through_links(const char *resolved, const bounds_state
     if(real == NULL)
         return true;
 
-    const bool ok = inside(real, bounds->real_workspace) || inside(real, bounds->real_build_dir) ||
-                    (bounds->has_cache && inside(real, bounds->real_cache));
+    bool ok = inside(real, bounds->real_workspace) || inside(real, bounds->real_build_dir) ||
+              (bounds->has_cache && inside(real, bounds->real_cache));
+    for(size_t i = 0; !ok && i < bounds->root_count; i++)
+        ok = inside(real, bounds->roots[i].real);
     free(real);
     return ok;
 }
 
-/* The one path rule: resolved, it is the workspace, the build directory or the
-   global cache, or somewhere under one of them — by `..`, by an absolute prefix
-   or through a symlink alike.
+/* The one path rule: resolved, it is the workspace, the build directory, the
+   global cache or a root the caller authorised, or somewhere under one of them
+   — by `..`, by an absolute prefix or through a symlink alike.
 
    `what` and `where` name the node so a rejection is a diagnostic rather than a
    complaint. */
@@ -225,8 +273,8 @@ static bool path_allowed(const char *path, const char *base, const bounds_state 
 
     if(!within_bounds(resolved, bounds)) {
         IR_ERR(err, err_size,
-               "%s of %s resolves to '%s', which is outside the workspace, the build directory "
-               "and the cache",
+               "%s of %s resolves to '%s', which is outside the workspace, the build directory, "
+               "the cache and every dependency this build resolved",
                what, where, resolved);
         return false;
     }
@@ -394,15 +442,40 @@ static bool graph_is_sound(const ir_document *doc, char *err, size_t err_size) {
 
 /* --- per-node checks --- */
 
+/* The dependency a target names, or NULL when it names none. */
+static const ir_dependency *package_of(const ir_document *doc, const ir_target *target) {
+    if(target->package == NULL)
+        return NULL;
+    for(size_t i = 0; i < doc->dependency_count; i++) {
+        if(doc->dependencies[i].name != NULL &&
+           strcmp(doc->dependencies[i].name, target->package) == 0)
+            return &doc->dependencies[i];
+    }
+    return NULL;
+}
+
 static bool target_is_allowed(const ir_document *doc, const ir_target *target,
                               const bounds_state *bounds, bool from_plugin, char *err,
                               size_t err_size) {
     char where[512];
     snprintf(where, sizeof where, "target '%s'", target->name);
 
+    /* A target that names a package has its paths relative to that package's
+       root rather than to the project's, because a dependency's bytes live in
+       the shared cache and a path relative to the project could not reach them
+       without climbing out of it. An unresolvable name is an error rather than
+       a fallback to the project root: falling back would anchor a dependency's
+       sources at the wrong place and look like a missing file much later. */
+    const ir_dependency *package = package_of(doc, target);
+    if(target->package != NULL && package == NULL) {
+        IR_ERR(err, err_size, "%s belongs to package '%s', which this document does not describe",
+               where, target->package);
+        return false;
+    }
+    const char *base = package != NULL ? package->root : doc->root;
+
     for(size_t i = 0; i < target->source_count; i++) {
-        if(!path_allowed(target->sources[i].path, doc->root, bounds, "a source", where, err,
-                         err_size))
+        if(!path_allowed(target->sources[i].path, base, bounds, "a source", where, err, err_size))
             return false;
         if(from_plugin && !options_allowed(target->sources[i].options,
                                            target->sources[i].option_count, where, err, err_size))
@@ -410,8 +483,8 @@ static bool target_is_allowed(const ir_document *doc, const ir_target *target,
     }
 
     for(size_t i = 0; i < target->include_count; i++) {
-        if(!path_allowed(target->includes[i].value, doc->root, bounds, "an include path", where,
-                         err, err_size))
+        if(!path_allowed(target->includes[i].value, base, bounds, "an include path", where, err,
+                         err_size))
             return false;
     }
 
@@ -479,8 +552,11 @@ bool ir_validate(const ir_document *doc, const ir_bounds *bounds, char *err, siz
     }
     if(!bounds_prepare(bounds, state)) {
         IR_ERR(err, err_size,
-               "the workspace, build directory or cache is not a path this can "
-               "resolve");
+               "the workspace, build directory, cache or a resolved dependency is not a path this "
+               "can resolve");
+        /* It may have failed after allocating the roots, so the release runs on
+           the failure path too. */
+        bounds_release(state);
         free(state);
         return false;
     }
@@ -494,6 +570,7 @@ bool ir_validate(const ir_document *doc, const ir_bounds *bounds, char *err, siz
     for(size_t i = 0; ok && i < doc->dependency_count; i++)
         ok = dependency_is_allowed(&doc->dependencies[i], state, from_plugin, err, err_size);
 
+    bounds_release(state);
     free(state);
     return ok;
 }

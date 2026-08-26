@@ -324,8 +324,8 @@ static bool read_artifact(doc_view target_node, ir_target *target, char *err, si
 }
 
 static bool read_target(doc_view node, ir_document *out, char *err, size_t err_size) {
-    static const char *const KNOWN[] = {"name",  "kind",       "sources",  "options", "includes",
-                                        "links", "depends_on", "artifact", NULL};
+    static const char *const KNOWN[] = {"name",     "package", "kind",       "sources",  "options",
+                                        "includes", "links",   "depends_on", "artifact", NULL};
 
     if(!reject_unknown_nodes(node, KNOWN, "a target", err, err_size))
         return false;
@@ -354,6 +354,14 @@ static bool read_target(doc_view node, ir_document *out, char *err, size_t err_s
         return false;
     }
 
+    /* Absent for the targets the project owns, which is most of them. */
+    char package[IR_TEXT_MAX] = "";
+    if(doc_get_string(node, "", "package", package, sizeof package) &&
+       !ir_set_target_package(target, package)) {
+        IR_ERR(err, err_size, "out of memory reading target '%s'", name);
+        return false;
+    }
+
     char where[IR_LABEL_MAX];
     label_for(where, sizeof where, "target", name);
 
@@ -377,7 +385,8 @@ static bool read_target(doc_view node, ir_document *out, char *err, size_t err_s
 /* --- dependencies --- */
 
 static bool read_dependency(doc_view node, ir_document *out, char *err, size_t err_size) {
-    static const char *const KNOWN[] = {"name", "version", "origin", "root", "interface", NULL};
+    static const char *const KNOWN[] = {"name", "version",   "origin", "scope",
+                                        "root", "interface", NULL};
     static const char *const INTERFACE_KNOWN[] = {"includes", "options", "links", NULL};
 
     if(!reject_unknown_nodes(node, KNOWN, "a dependency", err, err_size))
@@ -402,6 +411,21 @@ static bool read_dependency(doc_view node, ir_document *out, char *err, size_t e
         return false;
     }
 
+    /* Required, and deliberately not defaulted to `runtime`. A missing scope
+       has two readings — "everything compiles against this" and "the producer
+       did not say" — and picking the first silently grants a development
+       dependency to `src/` (RFC-0008). Refusing costs a producer one key. */
+    char scope_name[32] = "";
+    ir_dep_scope scope = ir_dep_scope_runtime;
+    if(!doc_get_string(node, "", "scope", scope_name, sizeof scope_name)) {
+        IR_ERR(err, err_size, "%s is missing a 'scope'", where);
+        return false;
+    }
+    if(!ir_dep_scope_from_name(scope_name, &scope)) {
+        IR_ERR(err, err_size, "%s is scoped '%s', which is not runtime or dev", where, scope_name);
+        return false;
+    }
+
     char root[IR_TEXT_MAX];
     if(!read_required(node, "root", root, sizeof root, where, err, err_size))
         return false;
@@ -411,7 +435,8 @@ static bool read_dependency(doc_view node, ir_document *out, char *err, size_t e
     char version[IR_TEXT_MAX] = "";
     const bool has_version = doc_get_string(node, "", "version", version, sizeof version);
 
-    ir_dependency *dep = ir_add_dependency(out, name, has_version ? version : NULL, origin, root);
+    ir_dependency *dep =
+        ir_add_dependency(out, name, has_version ? version : NULL, origin, scope, root);
     if(dep == NULL) {
         IR_ERR(err, err_size, "out of memory reading %s", where);
         return false;

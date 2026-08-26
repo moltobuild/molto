@@ -69,12 +69,20 @@ static bool build_sample(ir_document *doc) {
         return false;
 
     ir_dependency *dep =
-        ir_add_dependency(doc, "sqlite", "3.53.4", ir_dep_registry, "/w/app/.cache/sqlite");
+        ir_add_dependency(doc, "sqlite", "3.53.4", ir_dep_registry, ir_dep_scope_runtime,
+                          "/w/app/.cache/sqlite");
     if(dep == NULL)
         return false;
-    return ir_add_include(&dep->includes, &dep->include_count, "/w/app/.cache/sqlite",
-                          ir_scope_target, true) &&
-           ir_add_option(&dep->links, &dep->link_count, "dl", ir_scope_target);
+    if(!ir_add_include(&dep->includes, &dep->include_count, "/w/app/.cache/sqlite",
+                       ir_scope_target, true) ||
+       !ir_add_option(&dep->links, &dep->link_count, "dl", ir_scope_target))
+        return false;
+
+    /* That dependency's own sources, as a target of their own. Its paths are
+       relative to the package rather than to the project. */
+    ir_target *objects = ir_add_target(doc, "sqlite:objects", ir_target_object);
+    return objects != NULL && ir_set_target_package(objects, "sqlite") &&
+           ir_add_source(objects, "sqlite3.c", ir_language_c) != NULL;
 }
 
 /* --- the model and the wire --- */
@@ -99,7 +107,7 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     ASSERT_EQ(1u, str_list_count(&read.files_read));
     EXPECT_STREQ("Project.toml", str_list_get(&read.files_read, 0));
 
-    ASSERT_EQ(1u, read.target_count);
+    ASSERT_EQ(2u, read.target_count);
     const ir_target *target = &read.targets[0];
     EXPECT_STREQ("app", target->name);
     EXPECT_EQ(ir_target_executable, target->kind);
@@ -118,11 +126,21 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     EXPECT_STREQ("app", target->artifact.path);
     EXPECT_NULL(target->artifact.install);
 
+    /* A package target comes back naming its package, and the project's own
+       target comes back naming none — the two are different documents. */
+    EXPECT_NULL(read.targets[0].package);
+    EXPECT_STREQ("sqlite:objects", read.targets[1].name);
+    EXPECT_STREQ("sqlite", read.targets[1].package);
+    EXPECT_EQ(ir_target_object, read.targets[1].kind);
+    ASSERT_EQ(1u, read.targets[1].source_count);
+    EXPECT_STREQ("sqlite3.c", read.targets[1].sources[0].path);
+
     ASSERT_EQ(1u, read.dependency_count);
     const ir_dependency *dep = &read.dependencies[0];
     EXPECT_STREQ("sqlite", dep->name);
     EXPECT_STREQ("3.53.4", dep->version);
     EXPECT_EQ(ir_dep_registry, dep->origin);
+    EXPECT_EQ(ir_dep_scope_runtime, dep->scope);
     ASSERT_EQ(1u, dep->include_count);
     EXPECT_TRUE(dep->includes[0].system);
     ASSERT_EQ(1u, dep->link_count);
@@ -179,7 +197,8 @@ MOLTEST(ir_omits_the_version_of_a_path_dependency) {
     ir_document doc;
     ir_document_init(&doc);
     ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
-    ASSERT_NOT_NULL(ir_add_dependency(&doc, "http", NULL, ir_dep_path, "/w/app/modules/http"));
+    ASSERT_NOT_NULL(
+        ir_add_dependency(&doc, "http", NULL, ir_dep_path, ir_dep_scope_dev, "/w/app/modules/http"));
 
     char json[4096];
     ASSERT_TRUE(rendered(&doc, json, sizeof json));
@@ -210,7 +229,7 @@ MOLTEST(ir_frees_a_document_twice_without_complaint) {
    frontend returns. Both go through the same assertions, so a backend that
    starts reading nesting differently from the other fails here. */
 
-static const char *const SAMPLE_TOML = "schema = 1\n"
+static const char *const SAMPLE_TOML = "schema = 2\n"
                                        "files_read = [\"meson.build\"]\n"
                                        "[[projects]]\n"
                                        "name = \"app\"\n"
@@ -230,11 +249,12 @@ static const char *const SAMPLE_TOML = "schema = 1\n"
                                        "[[projects.targets]]\n"
                                        "name = \"probe\"\n"
                                        "kind = \"object\"\n"
+                                       "package = \"greet\"\n"
                                        "[[projects.targets.sources]]\n"
                                        "path = \"src/probe.cpp\"\n"
                                        "language = \"cpp\"\n";
 
-static const char *const SAMPLE_JSON = "{\"schema\":1,\"files_read\":[\"meson.build\"],"
+static const char *const SAMPLE_JSON = "{\"schema\":2,\"files_read\":[\"meson.build\"],"
                                        "\"projects\":[{"
                                        "\"name\":\"app\",\"version\":\"0.1.0\","
                                        "\"root\":\"/w/app\",\"origin\":\"meson\","
@@ -244,6 +264,7 @@ static const char *const SAMPLE_JSON = "{\"schema\":1,\"files_read\":[\"meson.bu
                                        "\"includes\":[{\"value\":\"include\",\"scope\":\"target\","
                                        "\"system\":false}]},"
                                        "{\"name\":\"probe\",\"kind\":\"object\","
+                                       "\"package\":\"greet\","
                                        "\"sources\":[{\"path\":\"src/probe.cpp\","
                                        "\"language\":\"cpp\"}]}]}]}";
 
@@ -265,6 +286,9 @@ static void assert_sample(const ir_document *doc) {
        needed a nested table accessor. */
     EXPECT_STREQ("probe", doc->targets[1].name);
     EXPECT_EQ(ir_target_object, doc->targets[1].kind);
+    /* Whose sources these are, and therefore what its paths are relative to. */
+    EXPECT_STREQ("greet", doc->targets[1].package);
+    EXPECT_NULL(doc->targets[0].package);
     ASSERT_EQ(1u, doc->targets[1].source_count);
     EXPECT_STREQ("src/probe.cpp", doc->targets[1].sources[0].path);
     EXPECT_EQ(ir_language_cpp, doc->targets[1].sources[0].language);
@@ -314,9 +338,16 @@ static void refused(const char *json, const char *needle) {
 }
 
 MOLTEST(ir_refuses_a_schema_it_does_not_speak) {
-    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
-            "schema 2");
+            "schema 3");
+    /* A revision behind is refused just as loudly as one ahead, and that is
+       what makes an added attribute safe: schema 1 has no `scope` on a
+       dependency, so a reader that shrugged at the revision would read a
+       development dependency as a runtime one and fold it into src/. */
+    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+            "\"origin\":\"native\"}]}",
+            "schema 1");
     refused("{\"projects\":[]}", "no 'schema'");
 }
 
@@ -324,7 +355,7 @@ MOLTEST(ir_refuses_an_unknown_node_type) {
     /* The directional rule of RFC-0013. An engine that skipped a node type it
        did not know would build something other than what it was handed, and
        report success — a green build of the wrong thing. */
-    refused("{\"schema\":1,\"toolchains\":[{\"name\":\"gcc\"}],"
+    refused("{\"schema\":2,\"toolchains\":[{\"name\":\"gcc\"}],"
             "\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "'toolchains'");
@@ -334,7 +365,7 @@ MOLTEST(ir_refuses_a_build_step_by_name) {
     /* Refused by name rather than as an unknown key, because the node type
        exists in the specification and the reason it is absent is a reason a
        plugin author needs to read: it lowers to a command. */
-    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"meson\",\"steps\":[{\"name\":\"gen\",\"program\":\"sh\"}]}]}",
             "BuildStep");
 }
@@ -343,7 +374,7 @@ MOLTEST(ir_refuses_a_generated_source_by_name) {
     /* The one case where "ignore what you don't know" points the wrong way: a
        GeneratedSource is a Source with two extra attributes, so ignoring them
        would compile a file nobody produced. */
-    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"meson\",\"targets\":[{\"name\":\"a\",\"kind\":\"executable\","
             "\"sources\":[{\"path\":\"src/gen.c\",\"language\":\"c\","
             "\"produced_by\":\"gen\",\"deterministic\":true}]}]}]}",
@@ -352,7 +383,7 @@ MOLTEST(ir_refuses_a_generated_source_by_name) {
 
 MOLTEST(ir_refuses_a_vocabulary_it_does_not_know) {
     static const char *const PREFIX =
-        "{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+        "{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
         "\"origin\":\"native\",";
 
     char json[1024];
@@ -373,27 +404,45 @@ MOLTEST(ir_refuses_a_vocabulary_it_does_not_know) {
     refused(json, "'everywhere'");
 
     snprintf(json, sizeof json,
-             "%s\"dependencies\":[{\"name\":\"d\",\"origin\":\"ftp\",\"root\":\"/w/d\"}]}]}",
+             "%s\"dependencies\":[{\"name\":\"d\",\"origin\":\"ftp\",\"scope\":\"runtime\","
+             "\"root\":\"/w/d\"}]}]}",
              PREFIX);
     refused(json, "'ftp'");
+
+    snprintf(json, sizeof json,
+             "%s\"dependencies\":[{\"name\":\"d\",\"origin\":\"path\",\"scope\":\"build\","
+             "\"root\":\"/w/d\"}]}]}",
+             PREFIX);
+    refused(json, "'build'");
+}
+
+MOLTEST(ir_refuses_a_dependency_that_does_not_say_who_may_use_it) {
+    /* Not defaulted to `runtime`. A missing scope has two readings — "everything
+       compiles against this" and "the producer did not say" — and picking the
+       first hands a development dependency to src/, which is the one thing
+       RFC-0008's separation exists to prevent. */
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+            "\"origin\":\"native\",\"dependencies\":[{\"name\":\"d\",\"origin\":\"path\","
+            "\"root\":\"/w/d\"}]}]}",
+            "missing a 'scope'");
 }
 
 MOLTEST(ir_refuses_a_document_that_is_not_exactly_one_project) {
-    refused("{\"schema\":1,\"projects\":[]}", "exactly one");
-    refused("{\"schema\":1,\"projects\":["
+    refused("{\"schema\":2,\"projects\":[]}", "exactly one");
+    refused("{\"schema\":2,\"projects\":["
             "{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\",\"origin\":\"native\"},"
             "{\"name\":\"b\",\"version\":\"1\",\"root\":\"/w\",\"origin\":\"native\"}]}",
             "exactly one");
 }
 
 MOLTEST(ir_refuses_a_node_missing_what_it_is) {
-    refused("{\"schema\":1,\"projects\":[{\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":2,\"projects\":[{\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "'name'");
-    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\",\"targets\":[{\"name\":\"t\"}]}]}",
             "'kind'");
-    refused("{\"schema\":1,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
+    refused("{\"schema\":2,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\",\"targets\":[{\"name\":\"t\",\"kind\":\"executable\","
             "\"sources\":[{\"path\":\"a.c\"}]}]}]}",
             "'language'");
@@ -405,7 +454,7 @@ MOLTEST(ir_ignores_an_attribute_it_does_not_know) {
        the work described. */
     ir_document doc;
     char err[512] = "";
-    ASSERT_TRUE(ir_read_json("{\"schema\":1,\"generator\":\"meson 1.4\","
+    ASSERT_TRUE(ir_read_json("{\"schema\":2,\"generator\":\"meson 1.4\","
                              "\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
                              "\"origin\":\"native\",\"license\":\"MIT\","
                              "\"targets\":[{\"name\":\"t\",\"kind\":\"executable\","
@@ -487,13 +536,126 @@ MOLTEST(ir_allows_a_path_into_the_global_cache) {
     ir_document doc;
     ir_document_init(&doc);
     ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
-    ir_dependency *dep = ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry,
-                                           "/home/u/.molto/cache/sources/sqlite/3.53.4/any");
+    ir_dependency *dep =
+        ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry, ir_dep_scope_runtime,
+                          "/home/u/.molto/cache/sources/sqlite/3.53.4/any");
     ASSERT_NOT_NULL(dep);
 
     char err[512] = "";
     EXPECT_TRUE(ir_validate(&doc, &BOUNDS, err, sizeof err));
     EXPECT_STREQ("", err);
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_anchors_a_package_target_at_the_dependency_root) {
+    /* A dependency's bytes are in the shared cache, outside Project.root. The
+       target names the package, so its sources stay relative — which is what
+       keeps two machines producing the same document (RFC-0013). */
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
+    ASSERT_NOT_NULL(ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry,
+                                      ir_dep_scope_runtime,
+                                      "/home/u/.molto/cache/sources/sqlite/3.53.4/any"));
+
+    ir_target *objects = ir_add_target(&doc, "sqlite:objects", ir_target_object);
+    ASSERT_NOT_NULL(objects);
+    ASSERT_TRUE(ir_set_target_package(objects, "sqlite"));
+    /* Relative to the package, not to the project: anchored at Project.root
+       this would resolve to /w/app/sqlite3.c and there is no such file. */
+    ASSERT_NOT_NULL(ir_add_source(objects, "sqlite3.c", ir_language_c));
+    ASSERT_TRUE(
+        ir_add_include(&objects->includes, &objects->include_count, ".", ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_TRUE(ir_validate(&doc, &BOUNDS, err, sizeof err));
+    EXPECT_STREQ("", err);
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_refuses_a_target_naming_a_package_the_document_does_not_describe) {
+    /* Not a fallback to the project root. Falling back would anchor a
+       dependency's sources somewhere they are not, and the document would look
+       fine until a compile reported a missing file. */
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_set_target_package(target, "ghost"));
+    ASSERT_NOT_NULL(ir_add_source(target, "src/main.c", ir_language_c));
+    rejects(&doc, "package 'ghost'");
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_holds_a_package_target_to_the_same_bounds) {
+    /* Naming a package moves the anchor, it does not lift the fence: a source
+       that climbs out of the cache is refused exactly as one climbing out of
+       the workspace is. */
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", "/w/app", IR_ORIGIN_NATIVE));
+    ASSERT_NOT_NULL(ir_add_dependency(&doc, "sqlite", "3.53.4", ir_dep_registry,
+                                      ir_dep_scope_runtime,
+                                      "/home/u/.molto/cache/sources/sqlite/3.53.4/any"));
+
+    ir_target *objects = ir_add_target(&doc, "sqlite:objects", ir_target_object);
+    ASSERT_NOT_NULL(objects);
+    ASSERT_TRUE(ir_set_target_package(objects, "sqlite"));
+    ASSERT_NOT_NULL(ir_add_source(objects, "../../../../../etc/shadow", ir_language_c));
+
+    rejects(&doc, "outside the workspace");
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_allows_a_path_under_a_root_the_caller_authorised) {
+    /* The fourth bound. A `[deps]` entry of `{ path = "../greet" }` puts a
+       sibling checkout on the compile line, and that directory is none of the
+       three — it is authorised by the manifest the user wrote, which is what
+       the caller passes in. */
+    static const char *const ROOTS[] = {"/w/greet"};
+    const ir_bounds bounds = {.workspace = "/w/app",
+                              .build_dir = "/w/app/build/debug",
+                              .cache = "/home/u/.molto/cache",
+                              .roots = ROOTS,
+                              .root_count = 1};
+
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_add_include(&target->includes, &target->include_count, "/w/greet/include",
+                               ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_TRUE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    /* And the same document is refused without it, which is what makes the
+       bound a bound rather than a formality. */
+    EXPECT_FALSE(ir_validate(&doc, &BOUNDS, err, sizeof err));
+
+    ir_document_free(&doc);
+}
+
+MOLTEST(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
+    /* An authorised root is a bound and not a hole: a recipe that names a
+       directory above its own package — and a recipe is something a remote
+       party wrote — is refused exactly as one climbing out of the workspace. */
+    static const char *const ROOTS[] = {"/w/greet"};
+    const ir_bounds bounds = {.workspace = "/w/app",
+                              .build_dir = "/w/app/build/debug",
+                              .cache = "/home/u/.molto/cache",
+                              .roots = ROOTS,
+                              .root_count = 1};
+
+    ir_document doc;
+    ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
+    ASSERT_NOT_NULL(target);
+    ASSERT_TRUE(ir_add_include(&target->includes, &target->include_count, "/w/greet/../../etc",
+                               ir_scope_target, false));
+
+    char err[512] = "";
+    EXPECT_FALSE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "outside the workspace"));
+
     ir_document_free(&doc);
 }
 
@@ -658,7 +820,8 @@ MOLTEST(ir_refuses_a_plugin_option_wherever_it_hides) {
     ir_document with_dep;
     ir_document_init(&with_dep);
     ASSERT_TRUE(ir_set_project(&with_dep, "app", "0.1.0", "/w/app", "meson"));
-    ir_dependency *dep = ir_add_dependency(&with_dep, "d", "1.0.0", ir_dep_registry, "/w/app/d");
+    ir_dependency *dep =
+        ir_add_dependency(&with_dep, "d", "1.0.0", ir_dep_registry, ir_dep_scope_runtime, "/w/app/d");
     ASSERT_NOT_NULL(dep);
     ASSERT_TRUE(ir_add_option(&dep->options, &dep->option_count, "-B/tmp", ir_scope_target));
     rejects(&with_dep, "a plugin may not");

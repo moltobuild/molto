@@ -36,8 +36,15 @@
 
 /* This revision. A document declares it, and a plugin declares the one it
    speaks in its recipe, so a mismatch is a refusal before the process starts
-   rather than a half-read document (RFC-0014). */
-#define IR_SCHEMA 1
+   rather than a half-read document (RFC-0014).
+ *
+ * 2 adds `scope` to a dependency. The bump is what makes the attribute safe to
+ * add rather than a formality: this reader matches the revision exactly, so a
+ * molto that predates the attribute refuses the document and says why. Had it
+ * merely ignored what it did not know, it would have read a development
+ * dependency as a runtime one and folded it into `src/` — the one thing
+ * RFC-0008's separation exists to prevent, arrived at silently. */
+#define IR_SCHEMA 2
 
 /* Where an option sits in the compile line RFC-0007 composes. The order the
    three reach a command line is contract, not detail: it is the fingerprint,
@@ -78,6 +85,15 @@ typedef enum {
     ir_dep_git,
     ir_dep_archive,
 } ir_dep_origin;
+
+/* Why the project has this dependency, and therefore which targets may compile
+   against it. `runtime` reaches every target; `dev` reaches the test targets
+   and no others (RFC-0008). Carrying it on the node is what lets the fold read
+   from the document instead of being handed the two sets separately. */
+typedef enum {
+    ir_dep_scope_runtime,
+    ir_dep_scope_dev,
+} ir_dep_scope;
 
 /* `CompileOption` and `LinkOption`: a value and the scope it applies at. One
    struct for both, because the two differ in which array they live in and in
@@ -121,9 +137,18 @@ typedef struct {
  * `depends_on` names targets, never files and never commands. It is the only
  * edge a producer may draw between two units of work, and a cycle in it is an
  * error at validation reported against the document — never a deadlock
- * discovered in the scheduler. */
+ * discovered in the scheduler.
+ *
+ * `package` names the `Dependency` whose sources this target compiles, and is
+ * NULL for the ones the project owns. It exists because a package's bytes live
+ * in the shared cache, outside `Project.root`, and RFC-0013 makes every path
+ * relative to a root so that two machines produce the same document. Writing
+ * them absolute would put `/home/someone` in the bytes; naming the dependency
+ * anchors them at `Dependency.root` instead, which is already the rule for that
+ * dependency's own include paths. */
 typedef struct {
     char *name;
+    char *package;
     ir_target_kind kind;
     ir_source *sources;
     size_t source_count;
@@ -144,6 +169,7 @@ typedef struct {
     char *name;
     char *version;
     ir_dep_origin origin;
+    ir_dep_scope scope;
     char *root;
     ir_include *includes;
     size_t include_count;
@@ -213,6 +239,11 @@ void ir_document_free(ir_document *doc);
    next. Returns NULL on allocation failure. */
 [[nodiscard]] ir_target *ir_add_target(ir_document *doc, const char *name, ir_target_kind kind);
 
+/* Say that a target compiles a dependency's sources rather than the project's.
+   `name` must match a `Dependency` in the same document, and every path on the
+   target is then relative to that dependency's root. NULL clears it. */
+[[nodiscard]] bool ir_set_target_package(ir_target *target, const char *name);
+
 /* Likewise for a source inside a target. */
 [[nodiscard]] ir_source *ir_add_source(ir_target *target, const char *path, ir_language language);
 
@@ -226,7 +257,7 @@ void ir_document_free(ir_document *doc);
 
 [[nodiscard]] ir_dependency *ir_add_dependency(ir_document *doc, const char *name,
                                                const char *version, ir_dep_origin origin,
-                                               const char *root);
+                                               ir_dep_scope scope, const char *root);
 
 /* --- the wire --- */
 
@@ -269,10 +300,28 @@ void ir_document_free(ir_document *doc);
 /* The three places a path in a document is allowed to resolve inside. Absolute
    paths, and the caller's to supply: this service does not decide where a
    workspace is. `cache` may be NULL when there is none to allow. */
+/* Where a document's paths may resolve to.
+ *
+ * `roots` is the fourth bound and the one a caller supplies rather than
+ * derives: the directories the user's own manifest authorised, which is where
+ * `resolve` found the packages it fetched or was pointed at. A `[deps]` entry of
+ * `{ path = "../greet" }` is outside the workspace and inside nothing else, and
+ * it is a directory the person who wrote `Project.toml` named on purpose.
+ *
+ * It is supplied and never read back off the document, and that is the whole
+ * point: a producer that could widen its own bounds by writing a `Dependency`
+ * node would have no bounds. The engine passes what `resolve` returned — the one
+ * phase RFC-0015 closes to plugins — and a frontend passes none, because a
+ * document is validated before anything has been resolved. */
+/* Zero-initialise it. A caller that assigns field by field leaves whatever the
+   stack held in the ones it did not name, and `roots` is read through. */
 typedef struct {
     const char *workspace;
     const char *build_dir;
     const char *cache;
+    /* Absolute directories, borrowed for the call. NULL and 0 mean none. */
+    const char *const *roots;
+    size_t root_count;
 } ir_bounds;
 
 /* Refuse a document that describes work Molto will not do on a producer's
@@ -285,14 +334,13 @@ typedef struct {
  * decides what Molto will do on its behalf.** A design with only the first has
  * neither.
  *
- * Applied to every document: every path resolves inside `bounds`, target names
- * are unique, `depends_on` names a target in this document, and the graph is
- * acyclic. Applied only to a document from a plugin: options that load code
- * into the compiler, redirect the toolchain, or name an output are refused —
- * `Project.toml` is a file in the user's repository that their reviewer read
- * and their version control records, and a plugin's document is generated on
- * the fly by a binary fetched from a registry. The asymmetry is not a statement
- * about trust, and the day it stops being warranted is the day the first one
+ * Applied to every document, whatever its origin: every path resolves inside
+ * `bounds`, target names are unique, `depends_on` names a target in this
+ * document, and the graph is acyclic. Applied only to a document from a plugin: options that load
+ * code into the compiler, redirect the toolchain, or name an output are refused — `Project.toml` is
+ * a file in the user's repository that their reviewer read and their version control records, and a
+ * plugin's document is generated on the fly by a binary fetched from a registry. The asymmetry is
+ * not a statement about trust, and the day it stops being warranted is the day the first one
  * stopped being reviewable.
  *
  * False with a message naming the node and the rule. A caller reports it as a
@@ -309,10 +357,12 @@ typedef struct {
 [[nodiscard]] const char *ir_language_name(ir_language language);
 [[nodiscard]] const char *ir_target_kind_name(ir_target_kind kind);
 [[nodiscard]] const char *ir_dep_origin_name(ir_dep_origin origin);
+[[nodiscard]] const char *ir_dep_scope_name(ir_dep_scope scope);
 
 [[nodiscard]] bool ir_scope_from_name(const char *name, ir_scope *out);
 [[nodiscard]] bool ir_language_from_name(const char *name, ir_language *out);
 [[nodiscard]] bool ir_target_kind_from_name(const char *name, ir_target_kind *out);
 [[nodiscard]] bool ir_dep_origin_from_name(const char *name, ir_dep_origin *out);
+[[nodiscard]] bool ir_dep_scope_from_name(const char *name, ir_dep_scope *out);
 
 #endif /* MOLTO_IR_SERVICE_H */

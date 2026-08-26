@@ -78,6 +78,88 @@
 static const build_unit_label project_label = {.origin = build_origin_project};
 static const build_unit_label tests_label = {.origin = build_origin_tests};
 
+/* Which targets of a document one question is about.
+ *
+ * A build makes up to four passes over one document, and they differ only in
+ * which of its targets they compile. Naming the four here is what lets the walk
+ * that collects the paths and the walk that builds the units agree by
+ * construction rather than by two matching conditions. */
+typedef enum {
+    doc_targets_project,          /* what the project owns, tests excluded */
+    doc_targets_tests,            /* its tests */
+    doc_targets_runtime_packages, /* a runtime dependency's own sources */
+    doc_targets_dev_packages,     /* a development dependency's own sources */
+} doc_target_set;
+
+/* The dependency a target belongs to, or NULL when it belongs to the project. */
+static const ir_dependency *package_of(const ir_document *doc, const ir_target *target) {
+    if(target->package == NULL)
+        return NULL;
+    for(size_t i = 0; i < doc->dependency_count; i++) {
+        if(doc->dependencies[i].name != NULL &&
+           strcmp(doc->dependencies[i].name, target->package) == 0)
+            return &doc->dependencies[i];
+    }
+    /* Unreachable for a document the transforms produced: the same pass writes
+       the `Target` and the `Dependency` it names. A plugin's document is held
+       to it by ir_validate, which refuses an unresolvable name outright. */
+    return NULL;
+}
+
+static bool in_set(const ir_document *doc, const ir_target *target, doc_target_set set) {
+    const ir_dependency *package = package_of(doc, target);
+    if(package != NULL) {
+        return package->scope == ir_dep_scope_dev ? set == doc_targets_dev_packages
+                                                  : set == doc_targets_runtime_packages;
+    }
+    return set == doc_targets_tests ? target->kind == ir_target_test
+                                    : set == doc_targets_project && target->kind != ir_target_test;
+}
+
+/* What a target's paths are relative to: its package's root where it has one,
+   and the project's otherwise (RFC-0013). */
+static const char *target_root(const ir_document *doc, const ir_target *target, const char *root) {
+    const ir_dependency *package = package_of(doc, target);
+    return package != NULL && package->root != NULL ? package->root : root;
+}
+
+/* How the report names one target's units.
+ *
+ * Only two answers reach a line for a package — a registry package states a
+ * version someone can verify, and everything else is a module whose bytes are
+ * wherever the manifest said. Which of git, path or archive it was stays in the
+ * lock, where it can be acted on.
+ *
+ * It borrows the document's own strings, so the labels die with the document
+ * they were built from. */
+static build_unit_label label_for_target(const ir_document *doc, const ir_target *target) {
+    const ir_dependency *package = package_of(doc, target);
+    if(package == NULL)
+        return target->kind == ir_target_test ? tests_label : project_label;
+    return (build_unit_label){
+        .origin = package->origin == ir_dep_registry ? build_origin_registry : build_origin_module,
+        .name = package->name,
+        .version = package->version,
+        .source = package->root,
+    };
+}
+
+/* One label per target, indexed by the target's position in the document.
+
+   Built once every transform has finished adding targets, and that ordering is
+   the contract: the index is a position, so a target added afterwards would
+   have no label and the units of the one before it would borrow the wrong name.
+
+   Caller frees. NULL means the allocation failed. */
+[[nodiscard]] static build_unit_label *labels_for(const ir_document *doc) {
+    build_unit_label *labels = calloc(doc->target_count + 1, sizeof *labels);
+    if(labels == NULL)
+        return NULL;
+    for(size_t t = 0; t < doc->target_count; t++)
+        labels[t] = label_for_target(doc, &doc->targets[t]);
+    return labels;
+}
+
 /* Compose the output executable path for a package. */
 [[nodiscard]] static bool compose_binary_path(const char *root, build_profile profile,
                                               const char *name, char *out, size_t out_size) {
@@ -271,28 +353,15 @@ static int run_str_argv(const str_list *argv, const project_env *env, char *capt
  */
 typedef struct {
     const char *source;
-    /* What the document says this unit is, when a document described it.
-     *
-     * The project's own sources and its tests come from here now: the frontend
-     * described them, the transforms folded the dependencies in, and the whole
-     * compile line below is read off the node rather than off the manifest.
-     *
-     * A dependency's own sources do not, yet. They are compiled against a
-     * `project_target` synthesised per package, and turning each package into a
-     * `Target` of kind `object` is what retires the two fields below and the
-     * branch in build_compile_argv with them (RFC-0015). Until then both are
-     * here, and which one applies is decided once, by whether `node` is set. */
+    /* What the document says this unit is. Everything a build compiles comes
+       from here: the frontend described the project and its tests, the
+       transforms said what the dependencies are and what they export, and a
+       package's own sources are a `Target` of kind `object` like any other. The
+       whole compile line below is read off the node. */
     const ir_target *node;
     const ir_source *unit;
-    const project_target *target;
-    /* Absent for a dependency, which is compiled against the language standard
-       and its own recipe and nothing else the project chose. */
-    const project_options *profile_opts;
-    /* Applied last, so it can add to the rest. Absent when there is none. */
-    const project_options *extra_opts;
-    const str_list *include_flags;
     /* Who this unit belongs to, for the report. One label is shared by every
-       unit of a package, so naming forty sources costs one struct. Nothing
+       unit of a target, so naming forty sources costs one struct. Nothing
        here reads it: it is carried, not used. */
     const build_unit_label *label;
 } compile_unit;
@@ -335,18 +404,6 @@ static bool push_document(str_list *argv, const char *root, const compile_unit *
            push_scope(argv, root, unit->node, unit->unit, ir_scope_unit);
 }
 
-/* The compile line a manifest describes, which is still how a dependency's own
-   sources are compiled. Removed when a package becomes a `Target`. */
-static bool push_manifest(str_list *argv, const char *root, const compile_unit *unit, bool is_cpp) {
-    bool ok = compile_flags_push_std(argv, unit->target, is_cpp) &&
-              compile_flags_push_options(argv, root, &unit->target->options);
-    if(ok && unit->profile_opts != NULL)
-        ok = compile_flags_push_options(argv, root, unit->profile_opts);
-    if(ok && unit->extra_opts != NULL)
-        ok = compile_flags_push_options(argv, root, unit->extra_opts);
-    return ok;
-}
-
 static bool build_compile_argv(str_list *argv, const char *root, const compile_unit *unit,
                                const char *object, const manifest_profile *settings,
                                const char *depfile, const resolved_toolchain *chain) {
@@ -367,22 +424,10 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
     if(ok && settings->debug_info)
         ok = str_list_push(argv, ARG_DEBUG);
     if(ok)
-        ok = unit->node != NULL ? push_document(argv, root, unit)
-                                : push_manifest(argv, root, unit, is_cpp);
+        ok = push_document(argv, root, unit);
     if(ok)
         ok = str_list_push(argv, ARG_DEPFILE_GEN) && str_list_push(argv, ARG_DEPFILE_OUT) &&
              str_list_push(argv, depfile);
-    /* Pre-composed "-I" flags: the project's own src/, then one per include
-       directory a dependency exports. They are composed by the caller rather
-       than stored in project_options because a dependency's is an absolute
-       path into the cache, and a manifest option is sized for "-DFOO=1".
-     *
-       A unit the document describes has none: the same directories are
-       `IncludePath` nodes on its target, put there by the frontend and the
-       fold, and pushed with the scope they belong to. */
-    for(size_t i = 0; ok && unit->include_flags != NULL && i < str_list_count(unit->include_flags);
-        i++)
-        ok = str_list_push(argv, str_list_get(unit->include_flags, i));
     return ok;
 }
 
@@ -771,21 +816,22 @@ static void share_in_object_cache(const char *source, const char *object, const 
         object_cache_put(object, cached);
 }
 
-/* Every source of every target of one kind, as units the passes compile.
+/* Every source of every target of one set, as units the passes compile.
  *
  * It walks the document in the same order `document_sources` did, so the path
  * at index i of `sources` is the source at index i here — which is what lets a
  * unit keep borrowing the arena the plan already owns while pointing at the
  * node that describes it.
  *
- * `target`, `profile_opts`, `extra_opts` and `include_flags` stay NULL: they
- * are the manifest's answer to the same question, and a unit answers it once.
+ * `labels` is indexed by the target's position in the document, so a package's
+ * units are named after the package and the project's after the project,
+ * without a unit having to carry a copy of either.
  *
  * The units borrow the document and the arena, so both have to outlive them.
  * Caller frees. NULL means the allocation failed. */
-[[nodiscard]] static compile_unit *units_from_document(const ir_document *doc, bool tests,
+[[nodiscard]] static compile_unit *units_from_document(const ir_document *doc, doc_target_set set,
                                                        const str_list *sources,
-                                                       const build_unit_label *label) {
+                                                       const build_unit_label *labels) {
     const size_t total = str_list_count(sources);
     compile_unit *units = calloc(total, sizeof *units);
     if(units == NULL)
@@ -794,14 +840,14 @@ static void share_in_object_cache(const char *source, const char *object, const 
     size_t at = 0;
     for(size_t t = 0; t < doc->target_count; t++) {
         const ir_target *node = &doc->targets[t];
-        if((node->kind == ir_target_test) != tests)
+        if(!in_set(doc, node, set))
             continue;
         for(size_t i = 0; i < node->source_count && at < total; i++, at++) {
             units[at] = (compile_unit){
                 .source = str_list_get(sources, at),
                 .node = node,
                 .unit = &node->sources[i],
-                .label = label,
+                .label = &labels[t],
             };
         }
     }
@@ -1099,149 +1145,6 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     return ok;
 }
 
-/* What one dependency is compiled with: its own defines and flags, and its own
-   include directories as pre-composed "-I" flags. Deliberately not the
-   project's, and no longer every other dependency's either: see the call
-   site. */
-[[nodiscard]] static bool collect_unit_options(const prepared_unit *unit, project_options *options,
-                                               str_list *include_flags) {
-    for(size_t i = 0; i < str_list_count(&unit->defines); i++) {
-        if(!deps_append_option(options->defines, &options->define_count, PROJECT_MAX_OPTS,
-                               str_list_get(&unit->defines, i), "a dependency's defines"))
-            return false;
-    }
-    for(size_t i = 0; i < str_list_count(&unit->flags); i++) {
-        if(!deps_append_option(options->flags, &options->flag_count, PROJECT_MAX_OPTS,
-                               str_list_get(&unit->flags, i), "a dependency's flags"))
-            return false;
-    }
-    char flag[PATH_BUFFER_SIZE + 4];
-    for(size_t i = 0; i < str_list_count(&unit->includes); i++) {
-        const char *directory = str_list_get(&unit->includes, i);
-        if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory))
-            return fs_report_long_path(directory);
-        if(!str_list_push(include_flags, flag))
-            return false;
-    }
-    return true;
-}
-
-/*
- * The pass that compiles dependencies: every source of every dependency, each
- * with the command line its own package asked for.
- *
- * It is one pass and not one per package on purpose. A pass is a thread pool
- * and a barrier at the end of it, so a pass per dependency would compile them
- * one package at a time — the flags become per unit, the parallelism stays
- * whole-build.
- *
- * Everything here borrows the `prepared_deps` it was built from, which must
- * outlive it, and nothing borrows the pass's own arrays, which is why growing
- * them is not allowed once the units point into them.
- */
-typedef struct {
-    compile_unit *units;
-    size_t count;
-    project_options *options; /* one per dependency */
-    str_list *include_flags;  /* one per dependency */
-    project_target *targets;  /* one per dependency: the language standard */
-    build_unit_label *labels; /* one per dependency: how the report names it */
-    size_t package_count;     /* how many of the four above are initialised */
-} dep_pass;
-
-static void dep_pass_free(dep_pass *pass) {
-    for(size_t i = 0; i < pass->package_count; i++)
-        str_list_free(&pass->include_flags[i]);
-    free(pass->include_flags);
-    free(pass->options);
-    free(pass->targets);
-    free(pass->labels);
-    free(pass->units);
-    memset(pass, 0, sizeof *pass);
-}
-
-/* What one dependency is compiled as: the consumer's target with everything it
-   chose stripped out, and the standard the recipe named where it named one.
- *
- * A target per package rather than one for the pass, because the standard is
- * the one thing left in here that two dependencies can disagree about. A
- * package that names none keeps the consumer's, which is what every package
- * did before recipes could say otherwise. */
-static project_target target_for(const project_target *base, const prepared_unit *unit) {
-    project_target target = *base;
-    memset(&target.options, 0, sizeof target.options);
-    target.link_count = 0;
-    if(unit->std[0] != '\0')
-        snprintf(target.std, sizeof target.std, "%s", unit->std);
-    if(unit->cpp_std[0] != '\0')
-        snprintf(target.cpp_std, sizeof target.cpp_std, "%s", unit->cpp_std);
-    return target;
-}
-
-/* How the report names one dependency. It borrows the package's own strings,
-   which is sound for exactly the reason the pass is: both die with the
-   `prepared_deps` they were built from.
-
-   Only two answers reach a line — a registry package states a version someone
-   can verify, and everything else is a module whose bytes are wherever the
-   manifest said. Which of git, path or archive it was stays in the lock, where
-   it can be acted on. */
-static build_unit_label label_for(const prepared_unit *unit) {
-    return (build_unit_label){
-        .origin = unit->origin == dep_source_version ? build_origin_registry : build_origin_module,
-        .name = unit->name,
-        .version = unit->version[0] != '\0' ? unit->version : NULL,
-        .source = unit->root,
-    };
-}
-
-[[nodiscard]] static bool dep_pass_build(dep_pass *pass, const prepared_deps *deps,
-                                         const project_target *base) {
-    memset(pass, 0, sizeof *pass);
-
-    size_t total = 0;
-    for(size_t i = 0; i < deps->unit_count; i++)
-        total += str_list_count(&deps->units[i].sources);
-    if(total == 0)
-        return true;
-
-    pass->options = calloc(deps->unit_count, sizeof *pass->options);
-    pass->include_flags = calloc(deps->unit_count, sizeof *pass->include_flags);
-    pass->targets = calloc(deps->unit_count, sizeof *pass->targets);
-    pass->labels = calloc(deps->unit_count, sizeof *pass->labels);
-    pass->units = calloc(total, sizeof *pass->units);
-    if(pass->options == NULL || pass->include_flags == NULL || pass->targets == NULL ||
-       pass->labels == NULL || pass->units == NULL)
-        return false;
-    pass->package_count = deps->unit_count;
-
-    for(size_t i = 0; i < deps->unit_count; i++) {
-        const prepared_unit *unit = &deps->units[i];
-        str_list_init(&pass->include_flags[i]);
-        pass->targets[i] = target_for(base, unit);
-        pass->labels[i] = label_for(unit);
-        if(!collect_unit_options(unit, &pass->options[i], &pass->include_flags[i]))
-            return false;
-        for(size_t j = 0; j < str_list_count(&unit->sources); j++) {
-            pass->units[pass->count++] = (compile_unit){
-                .source = str_list_get(&unit->sources, j),
-                .target = &pass->targets[i],
-                /* No profile scope: the consumer's defines would reach code
-                   that never asked for them, and its src/ on the include path
-                   is where a dependency's `#include "config.h"` finds the
-                   application's. It is also what makes one dependency compile
-                   identically everywhere, which is what lets an object be
-                   shared. */
-                .profile_opts = NULL,
-                .extra_opts = &pass->options[i],
-                .include_flags = &pass->include_flags[i],
-                .label = &pass->labels[i],
-            };
-        }
-    }
-    return true;
-}
-
 /*
  * Resolve the whole graph, reduce it to flags, and write down what was
  * resolved.
@@ -1385,12 +1288,17 @@ typedef struct {
     ir_document doc;
     prepared_deps deps; /* runtime dependencies */
     prepared_deps dev;  /* development dependencies, resolved with them */
-    dep_pass runtime_units;
-    dep_pass dev_units;
+    /* One per target of the document, indexed by its position in it: how the
+       report names the units that target describes. */
+    build_unit_label *labels;
     str_list sources;
     str_list test_sources;
+    str_list package_sources;
+    str_list dev_package_sources;
     compile_unit *project_units;
     compile_unit *test_units;
+    compile_unit *package_units;
+    compile_unit *dev_package_units;
 } build_plan;
 
 static void build_plan_init(build_plan *plan) {
@@ -1400,6 +1308,8 @@ static void build_plan_init(build_plan *plan) {
     prepared_deps_init(&plan->dev);
     str_list_init(&plan->sources);
     str_list_init(&plan->test_sources);
+    str_list_init(&plan->package_sources);
+    str_list_init(&plan->dev_package_sources);
 }
 
 static void build_plan_free(build_plan *plan) {
@@ -1408,12 +1318,15 @@ static void build_plan_free(build_plan *plan) {
             free(plan->passes[i].units[j].command);
         free(plan->passes[i].units);
     }
+    free(plan->dev_package_units);
+    free(plan->package_units);
     free(plan->project_units);
     free(plan->test_units);
+    free(plan->labels);
+    str_list_free(&plan->dev_package_sources);
+    str_list_free(&plan->package_sources);
     str_list_free(&plan->test_sources);
     str_list_free(&plan->sources);
-    dep_pass_free(&plan->dev_units);
-    dep_pass_free(&plan->runtime_units);
     prepared_deps_free(&plan->dev);
     prepared_deps_free(&plan->deps);
     ir_document_free(&plan->doc);
@@ -1477,16 +1390,17 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
  * `molto test` used to walk for itself, because the frontend fills them from
  * that same sorted list — one target per file, in order.
  */
-[[nodiscard]] static bool document_sources(const ir_document *doc, const char *root, bool tests,
-                                           str_list *out) {
+[[nodiscard]] static bool document_sources(const ir_document *doc, const char *root,
+                                           doc_target_set set, str_list *out) {
     for(size_t t = 0; t < doc->target_count; t++) {
         const ir_target *target = &doc->targets[t];
-        if((target->kind == ir_target_test) != tests)
+        if(!in_set(doc, target, set))
             continue;
+        const char *base = target_root(doc, target, root);
         for(size_t i = 0; i < target->source_count; i++) {
             const char *relative = target->sources[i].path;
             char path[PATH_BUFFER_SIZE];
-            if(!fs_format_path(path, sizeof path, "%s/%s", root, relative))
+            if(!fs_format_path(path, sizeof path, "%s/%s", base, relative))
                 return fs_report_long_path(relative);
             if(!str_list_push(out, path))
                 return false;
@@ -1495,15 +1409,69 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     return true;
 }
 
+/* Hold the document to the one path rule, once every transform has spoken.
+ *
+ * RFC-0013 applies it to every document whatever its origin, and this is the
+ * native half of that: `Project.toml` is reviewable, but a path in it still gets
+ * to name only somewhere Molto may read from or write to.
+ *
+ * The fourth bound is what makes the rule fit a real project. A dependency's
+ * directory is not the workspace, not the build directory and not always the
+ * cache — `{ path = "../greet" }` is a sibling checkout — and it is authorised
+ * by the manifest the user wrote. The roots come from `resolve` and never from
+ * the document, so nothing a producer writes can widen what it is held to.
+ *
+ * False with a message in `err`. */
+[[nodiscard]] static bool document_is_allowed(const ir_document *doc, const char *root,
+                                              build_profile profile, const prepared_deps *deps,
+                                              const prepared_deps *dev, char *err,
+                                              size_t err_size) {
+    char build_dir[PATH_BUFFER_SIZE];
+    if(!fs_format_path(build_dir, sizeof build_dir, "%s/" DIR_BUILD "/%s", root,
+                       profile_name(profile)))
+        return fs_report_long_path(root);
+
+    char cache[PATH_BUFFER_SIZE];
+    const bool has_cache = source_cache_root(cache, sizeof cache);
+
+    /* Taken from what `resolve` returned and not from `doc->dependencies`, even
+       though a transform just wrote the same strings into it. Reading them back
+       off the document would let anything that can write a `Dependency` node
+       widen the bounds it is then held to, which is a check that checks
+       nothing. Here the list cannot be influenced by the document at all. */
+    const size_t count = deps->unit_count + dev->unit_count;
+    const char **roots = NULL;
+    if(count > 0) {
+        roots = (const char **)calloc(count, sizeof *roots);
+        if(roots == NULL) {
+            snprintf(err, err_size, "out of memory checking the document's paths");
+            return false;
+        }
+        size_t at = 0;
+        for(size_t i = 0; i < deps->unit_count; i++)
+            roots[at++] = deps->units[i].root;
+        for(size_t i = 0; i < dev->unit_count; i++)
+            roots[at++] = dev->units[i].root;
+    }
+
+    const ir_bounds bounds = {.workspace = root,
+                              .build_dir = build_dir,
+                              .cache = has_cache ? cache : NULL,
+                              .roots = roots,
+                              .root_count = count};
+    const bool ok = ir_validate(doc, &bounds, err, err_size);
+    free((void *)roots);
+    return ok;
+}
+
 /* Load the manifest, resolve what it depends on, and work out every unit the
    project's own build would compile — without compiling any of them. `objects`
-   and `include_flags` are caller-initialised and caller-freed; everything the
-   units borrow belongs to `plan`. Shared by build_project and build_tests. */
+   is caller-initialised and caller-freed; everything the units borrow belongs
+   to `plan`. Shared by build_project and build_tests. */
 [[nodiscard]] static int plan_project(const char *root, build_profile profile, wsdb *db,
                                       bool refresh_toolchain, const pass_options *options,
                                       project_ctx *ctx_out, resolved_toolchain *chain_out,
-                                      str_list *objects_out, str_list *include_flags_out,
-                                      build_plan *plan) {
+                                      str_list *objects_out, build_plan *plan) {
     int result = load_project(root, ctx_out);
     if(result != exit_ok)
         return result;
@@ -1540,27 +1508,52 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }
-    if(!document_sources(&plan->doc, root, false, &plan->sources))
+    if(!document_sources(&plan->doc, root, doc_targets_project, &plan->sources))
         return exit_build_failure;
 
     /* What `resolve` found, said in the document. It runs here and not in the
        frontend because a frontend describes a project and not its graph — and
        because doing it there would make `molto ir` resolve, which means the
        network, for a command whose whole purpose is to show what is already
-       known. */
-    if(!ir_transform_dependencies(&plan->doc, &plan->deps, frontend_err, sizeof frontend_err) ||
-       !ir_transform_fold_dependencies(&plan->doc, &plan->deps, &plan->dev, frontend_err,
-                                       sizeof frontend_err)) {
+       known.
+     *
+       The order is the list RFC-0015 asks for: what the dependencies are, then
+       what they export to the targets, then the targets they are themselves.
+       The last runs after the fold so that a package is described carrying its
+       own recipe and nothing the consumer resolved — which the fold also
+       refuses on its own, so the two cannot drift. */
+    if(!ir_transform_dependencies(&plan->doc, &plan->deps, &plan->dev, frontend_err,
+                                  sizeof frontend_err) ||
+       !ir_transform_fold_dependencies(&plan->doc, frontend_err, sizeof frontend_err) ||
+       !ir_transform_dependency_targets(&plan->doc, &plan->deps, &plan->dev, ctx_out->target.std,
+                                        ctx_out->target.cpp_std, frontend_err,
+                                        sizeof frontend_err)) {
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }
 
-    /* The interface of the dependencies folds into `[target]`; what each of
-       them compiles itself with becomes a pass of its own units. */
-    if(!deps_merge_interface(ctx_out, &plan->deps) ||
-       !deps_include_flags(src_dir, &plan->deps, include_flags_out) ||
-       !dep_pass_build(&plan->runtime_units, &plan->deps, &ctx_out->target))
+    plan->labels = labels_for(&plan->doc);
+    if(plan->labels == NULL)
+        return exit_build_failure;
+
+    if(!document_is_allowed(&plan->doc, root, profile, &plan->deps, &plan->dev, frontend_err,
+                            sizeof frontend_err)) {
+        fprintf(stderr, "molto: %s\n", frontend_err);
+        return exit_build_failure;
+    }
+
+    /* The interface of the dependencies folds into `[target]`, which is what
+       the link line still reads. What each of them compiles itself with is a
+       target of its own in the document now, so this pass is built the same way
+       the project's is. */
+    if(!deps_merge_interface(ctx_out, &plan->deps))
         return exit_dependency_failure;
+    if(!document_sources(&plan->doc, root, doc_targets_runtime_packages, &plan->package_sources))
+        return exit_build_failure;
+    plan->package_units = units_from_document(&plan->doc, doc_targets_runtime_packages,
+                                              &plan->package_sources, plan->labels);
+    if(plan->package_units == NULL)
+        return exit_build_failure;
 
     if(str_list_count(&plan->sources) == 0) {
         fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
@@ -1573,8 +1566,8 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     bool needs_cpp = false;
     for(size_t i = 0; i < str_list_count(&plan->sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->sources, i));
-    for(size_t i = 0; i < plan->runtime_units.count; i++)
-        needs_cpp = needs_cpp || source_is_cpp(plan->runtime_units.units[i].source);
+    for(size_t i = 0; i < str_list_count(&plan->package_sources); i++)
+        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->package_sources, i));
     result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
     if(result != exit_ok)
         return result;
@@ -1593,12 +1586,13 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
        against the language standard and its own recipe, so what reaches the
        compiler is the same in every project that depends on it — which is what
        makes one compiled object worth sharing. */
-    result =
-        plan_add(plan, &env, plan->runtime_units.units, plan->runtime_units.count, objects_out);
+    result = plan_add(plan, &env, plan->package_units, str_list_count(&plan->package_sources),
+                      objects_out);
     if(result != exit_ok)
         return result;
 
-    plan->project_units = units_from_document(&plan->doc, false, &plan->sources, &project_label);
+    plan->project_units =
+        units_from_document(&plan->doc, doc_targets_project, &plan->sources, plan->labels);
     if(plan->project_units == NULL)
         return exit_build_failure;
     return plan_add(plan, &env, plan->project_units, str_list_count(&plan->sources), objects_out);
@@ -1636,17 +1630,15 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
     project_ctx ctx;
     resolved_toolchain chain;
     str_list objects;
-    str_list include_flags;
     str_list_init(&objects);
-    str_list_init(&include_flags);
     bool any_compiled = false;
     /* The plan resolves development dependencies too — they share the graph and
        the version check — but this build compiles and links none of them. */
     build_plan plan;
     build_plan_init(&plan);
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result = plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
-                              &objects, &include_flags, &plan);
+    int result =
+        plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain, &objects, &plan);
     if(result == exit_ok) {
         report_plan(&plan, root, report);
         build_report_begin(report, plan.to_build);
@@ -1661,7 +1653,6 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
         char binary[PATH_BUFFER_SIZE];
         if(!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
             str_list_free(&objects);
-            str_list_free(&include_flags);
             (void)wsdb_close(db);
             return exit_build_failure;
         }
@@ -1684,7 +1675,6 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
     }
 
     str_list_free(&objects);
-    str_list_free(&include_flags);
     warn_if_not_saved(db);
     return result;
 }
@@ -1810,9 +1800,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     project_ctx ctx;
     resolved_toolchain chain;
     str_list objects;
-    str_list include_flags;
     str_list_init(&objects);
-    str_list_init(&include_flags);
     bool any_compiled = false;
     build_plan plan;
     build_plan_init(&plan);
@@ -1821,14 +1809,13 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
        what makes `molto test` the command that leaves an editor able to follow
        a test into the code it exercises. */
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result = plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain,
-                              &objects, &include_flags, &plan);
+    int result =
+        plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain, &objects, &plan);
     if(result != exit_ok) {
         build_plan_free(&plan);
         publish_compile_db(options.cdb, root);
         compile_db_destroy(options.cdb);
         str_list_free(&objects);
-        str_list_free(&include_flags);
         warn_if_not_saved(db);
         return result;
     }
@@ -1860,7 +1847,6 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
         publish_compile_db(options.cdb, root);
         compile_db_destroy(options.cdb);
         str_list_free(&objects);
-        str_list_free(&include_flags);
         warn_if_not_saved(db);
         return exit_build_failure;
     }
@@ -1878,27 +1864,12 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
      * this `ctx`'s link list — both local to this function, so the binary
      * `molto build` produces never sees them.
      *
-     * The include directories go into a list of their own, and never into
-     * `include_flags` with more pushed onto it: the units that compile `src/`
-     * hold a pointer to that one, and adding to it here would put a
-     * development dependency's headers on their command line — the separation
-     * above, undone by the list it is written next to.
+     * Their include directories are not composed here at all any more. They
+     * reach the line that compiles `tests/` as `IncludePath` nodes on the test
+     * targets, put there by the fold, which only folds a development dependency
+     * into a target of kind `test`. The separation is one rule in one place
+     * rather than a list this function has to remember not to widen.
      */
-    str_list test_include_flags;
-    str_list_init(&test_include_flags);
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&include_flags); i++) {
-        if(!str_list_push(&test_include_flags, str_list_get(&include_flags, i)))
-            result = exit_build_failure;
-    }
-    if(result == exit_ok && str_list_count(&plan.dev.includes) > 0) {
-        char flag[PATH_BUFFER_SIZE + 4];
-        for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.includes); i++) {
-            const char *directory = str_list_get(&plan.dev.includes, i);
-            if(!fs_format_path(flag, sizeof flag, INCLUDE_FLAG_FORMAT, directory) ||
-               !str_list_push(&test_include_flags, flag))
-                result = exit_build_failure;
-        }
-    }
     for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.defines); i++) {
         if(!deps_append_option(ctx.test.options.defines, &ctx.test.options.define_count,
                                PROJECT_MAX_OPTS, str_list_get(&plan.dev.defines, i),
@@ -1937,15 +1908,20 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     /* A development dependency's own sources are compiled in their own pass,
        each against its own options, exactly as a runtime one's are — and their
        objects join the test link rather than the project's. */
-    if(result == exit_ok && plan.dev.unit_count > 0) {
-        if(!dep_pass_build(&plan.dev_units, &plan.dev, &ctx.target))
-            result = exit_build_failure;
-        else
-            result =
-                plan_add(&plan, &env, plan.dev_units.units, plan.dev_units.count, &lib_objects);
+    if(result == exit_ok &&
+       !document_sources(&plan.doc, root, doc_targets_dev_packages, &plan.dev_package_sources))
+        result = exit_build_failure;
+    if(result == exit_ok && str_list_count(&plan.dev_package_sources) > 0) {
+        plan.dev_package_units = units_from_document(&plan.doc, doc_targets_dev_packages,
+                                                     &plan.dev_package_sources, plan.labels);
+        result = plan.dev_package_units == NULL
+                     ? exit_build_failure
+                     : plan_add(&plan, &env, plan.dev_package_units,
+                                str_list_count(&plan.dev_package_sources), &lib_objects);
     }
 
-    if(result == exit_ok && !document_sources(&plan.doc, root, true, &plan.test_sources))
+    if(result == exit_ok &&
+       !document_sources(&plan.doc, root, doc_targets_tests, &plan.test_sources))
         result = exit_build_failure;
 
     /* Compiled through the same path as the project's own sources, so tests get
@@ -1954,7 +1930,8 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     str_list test_objects;
     str_list_init(&test_objects);
     if(result == exit_ok && str_list_count(&plan.test_sources) > 0) {
-        plan.test_units = units_from_document(&plan.doc, true, &plan.test_sources, &tests_label);
+        plan.test_units =
+            units_from_document(&plan.doc, doc_targets_tests, &plan.test_sources, plan.labels);
         result = plan.test_units == NULL
                      ? exit_build_failure
                      : plan_add(&plan, &env, plan.test_units, str_list_count(&plan.test_sources),
@@ -2008,8 +1985,7 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     str_list_free(&test_objects);
     str_list_free(&lib_objects);
     str_list_free(&objects);
-    str_list_free(&test_include_flags);
-    str_list_free(&include_flags);
+
     warn_if_not_saved(db);
     return result;
 }

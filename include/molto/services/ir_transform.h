@@ -39,6 +39,11 @@
  * that silently dropped what an earlier one wrote would be a composition rule
  * nobody could reason about.
  *
+ * The two sets are described together because the node says which it is: a
+ * runtime package is scoped `runtime` and a development one `dev`, and the fold
+ * below reads that back rather than being told again. `dev` may be NULL, which
+ * is a project with no `[dev-deps]`.
+ *
  * What it deliberately does not do is fold that interface into the targets'
  * scopes. That is a second transform, and it belongs with the change that makes
  * the engine read a target's options from here — writing it before then would
@@ -46,8 +51,8 @@
  * the other one.
  *
  * False with a message in `err`; `doc` is left as it was found. */
-[[nodiscard]] bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps, char *err,
-                                             size_t err_size);
+[[nodiscard]] bool ir_transform_dependencies(ir_document *doc, const prepared_deps *deps,
+                                             const prepared_deps *dev, char *err, size_t err_size);
 
 /* Fold what the dependencies export into the targets that compile against them.
  *
@@ -61,19 +66,47 @@
  * than documented: a source under `src/` that includes one fails to compile, on
  * the first build, with "no such file" (RFC-0008).
  *
- * They are passed as two lists rather than read back from `doc->dependencies`
- * because an `ir_dependency` has nowhere to say which of the two it is. Saying
- * so would be a schema addition, and an unknown attribute is ignored by an
- * older reader — which for this attribute means silently folding a development
- * dependency into `src/`, the one thing the separation exists to prevent. That
- * is a decision about RFC-0013 and not a detail to settle here.
+ * It takes nothing but the document. Everything it needs is already in there:
+ * `ir_transform_dependencies` wrote one node per package and said which scope
+ * each is, so the fold reads the document rather than being handed the same
+ * facts a second time. That is what a transform of RFC-0015 is — a document in,
+ * a document out — and it is what makes a published document reproducible: a
+ * consumer that has only the bytes can fold them exactly as the engine did.
  *
  * Appended after what the manifest named, in the order a command line receives
  * them, so folding does not reorder anything a target already carried.
  *
  * False with a message in `err`. */
-[[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, const prepared_deps *deps,
-                                                  const prepared_deps *dev, char *err,
-                                                  size_t err_size);
+[[nodiscard]] bool ir_transform_fold_dependencies(ir_document *doc, char *err, size_t err_size);
+
+/* Say that a dependency's own sources are things that get built.
+ *
+ * One `Target` of kind `object` per package that ships sources, named
+ * `<package>:objects` so it cannot collide with anything a manifest names, and
+ * carrying `package` so its paths anchor at the dependency's root rather than
+ * at the project's — a package's bytes are in the shared cache, and a document
+ * that spelled them absolute would carry one machine's home directory.
+ *
+ * What each target carries is what that package asked for and nothing the
+ * consumer chose: its own defines and flags at target scope, its own include
+ * directories, and `-std` at unit scope per source language. No profile scope,
+ * deliberately — the consumer's defines would reach code that never asked for
+ * them, and its `src/` on the include path is where a dependency's
+ * `#include "config.h"` finds the application's. It is also what makes a
+ * package compile identically everywhere, which is what lets an object be
+ * shared between projects.
+ *
+ * `std` and `cpp_std` are what a package that names none in its recipe falls
+ * back to, which is the consumer's — the rule every package followed before
+ * recipes could say otherwise. Either may be empty.
+ *
+ * A source that is not under its package's root is refused rather than written
+ * absolute: writing it would put this machine in the document, and this is the
+ * transform whose whole reason to exist is that it does not.
+ *
+ * False with a message in `err`. */
+[[nodiscard]] bool ir_transform_dependency_targets(ir_document *doc, const prepared_deps *deps,
+                                                   const prepared_deps *dev, const char *std,
+                                                   const char *cpp_std, char *err, size_t err_size);
 
 #endif /* MOLTO_IR_TRANSFORM_H */
