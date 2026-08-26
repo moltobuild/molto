@@ -337,13 +337,16 @@ This is the first revision of the frontend capability, and it stops in a
 deliberate place.
 
 - **`molto build` does not yet build from a plugin's document.** It builds from
-  a *document* now — the native frontend's — and takes from it what is compiled:
-  the targets, their sources and each source's language. What it still takes
-  from `Project.toml` directly is the compile line, and it asks the native
-  frontend by name rather than asking whichever frontend understands the
-  directory. So a plugin's document is still produced, inspected and validated
-  rather than built, which is what a frontend author needs in order to write one
-  at all, and the contract has to be stable before the engine depends on it.
+  a *document* now — the native frontend's — and the whole compile line is read
+  off it: the project's sources, its tests, and each dependency's own. What it
+  still takes from `Project.toml` is the **link line** (`Target.links` is
+  written and nothing reads it), the profiles, `[target].requires`, `[test]` and
+  `[env]`. And it asks the native frontend **by name** rather than asking
+  whichever frontend understands the directory — a directory with only a
+  `meson.build` is not recognised as a workspace at all. So a plugin's document
+  is still produced, inspected and validated rather than built, which is what a
+  frontend author needs in order to write one at all, and the contract has to be
+  stable before the engine depends on it.
 - **`molto migrate` is not implemented.** It is specified as running a frontend
   once and serialising the result to a `Project.toml` — one parser, two products.
 - **A frontend still does not resolve.** Dependencies reach the document from
