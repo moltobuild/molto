@@ -378,6 +378,14 @@ native frontend:**
 - A `BuildStep` requires the `generator` capability, declared in the plugin's
   recipe, and is refused from a plugin that only declared `frontend` or
   `transform`.
+- A `Dependency` node is refused outright. It is not a declaration of a need: it
+  carries the version that was resolved, the origin it came from and the
+  directory the bytes landed in on this machine, and all three are answers
+  `resolve` gives. `resolve` is the phase RFC-0015 closes to plugins, because a
+  plugin that could influence which versions a build uses would make a lock file
+  a suggestion. A frontend describes a project; it does not describe its graph.
+  The day a frontend needs to say "this project wants zlib", that is a node this
+  schema does not have.
 
 The asymmetry is deliberate and it is not a statement about trust.
 `Project.toml` is a file in the user's repository, which they wrote, which

@@ -206,6 +206,32 @@ static bool answer_is_sound(const frontend_choice *choice, const ir_document *do
                      choice->name);
         return false;
     }
+
+    /* A frontend describes a project. It does not describe the graph.
+     *
+       `Dependency` is not a declaration of a need — it carries the version that
+       was resolved, the origin it came from, and the directory the bytes landed
+       in on this machine. All three are answers `resolve` gives, and `resolve`
+       is the one phase RFC-0015 closes to plugins, because a plugin that could
+       influence which versions a build uses would make a lock file a
+       suggestion. A frontend cannot know any of the three, and a document that
+       stated them would be stating them from somewhere.
+
+       Refused here rather than in ir_validate, which sees the same document
+       again after the transforms have added the real ones: this is a rule about
+       what a plugin may *answer*, not about what the engine may lower.
+
+       The day a frontend needs to say "this project wants zlib", that is a node
+       this schema does not have, and adding it is a decision about RFC-0013 —
+       not a reuse of the one that means something else. */
+    if(doc->dependency_count > 0) {
+        FRONTEND_ERR(err, err_size,
+                     "'%s' returned a document naming %zu %s: a frontend describes a project and "
+                     "not its graph, and resolving is not a plugin's to do",
+                     choice->name, doc->dependency_count,
+                     doc->dependency_count == 1 ? "dependency" : "dependencies");
+        return false;
+    }
     return true;
 }
 
