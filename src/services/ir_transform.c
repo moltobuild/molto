@@ -58,6 +58,21 @@ static bool push_defines(ir_option **array, size_t *count, const str_list *value
     return true;
 }
 
+/* A library reaches the document as the flag it already is, for the reason a
+   define does: a `LinkOption` is what reaches the link line, so the engine
+   composing one never has to tell a library from a `-flto`. */
+static bool push_links(ir_option **array, size_t *count, const str_list *values) {
+    for(size_t i = 0; i < str_list_count(values); i++) {
+        char flag[PROJECT_OPT_LEN + 4];
+        const int written = snprintf(flag, sizeof flag, "-l%s", str_list_get(values, i));
+        if(written < 0 || (size_t)written >= sizeof flag)
+            return false;
+        if(!ir_add_option(array, count, flag, ir_scope_target))
+            return false;
+    }
+    return true;
+}
+
 static bool push_includes(ir_include **array, size_t *count, const str_list *values) {
     for(size_t i = 0; i < str_list_count(values); i++) {
         /* Not `system`, and that is a decision rather than an omission: -isystem
@@ -89,7 +104,7 @@ static bool describe_all(ir_document *doc, const prepared_deps *deps, ir_dep_sco
            !push_includes(&dep->includes, &dep->include_count, &unit->exports.includes) ||
            !push_defines(&dep->options, &dep->option_count, &unit->exports.defines) ||
            !push_options(&dep->options, &dep->option_count, &unit->exports.flags) ||
-           !push_options(&dep->links, &dep->link_count, &unit->exports.links)) {
+           !push_links(&dep->links, &dep->link_count, &unit->exports.links)) {
             snprintf(err, err_size, "out of memory describing dependency '%s'", unit->name);
             return false;
         }

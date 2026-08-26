@@ -90,7 +90,7 @@ arrival is what retires "there is exactly one executable per package".
 | `sources` | array[`Source` \| `GeneratedSource`] | The translation units |
 | `options` | array[`CompileOption`] | Its own compile scope |
 | `includes` | array[`IncludePath`] | Its own include scope |
-| `links` | array[`LinkOption`] | What its link line names |
+| `links` | array[`LinkOption`] | Its link line, as the linker receives it |
 | `depends_on` | array[string] | Other target names in this project |
 | `artifact` | `Artifact` | What it produces |
 
@@ -129,6 +129,11 @@ the vocabulary of this document rather than a second one.
 
 The three option nodes share a shape: a `value`, and a `scope` of `target`,
 `profile` or `unit`.
+
+The `value` is what reaches the command line, whole: `-DFOO=1` and `-lm`, never
+`FOO=1` and never `m`. A consumer reads an option without knowing which manifest
+table it came from, and an engine composes a link line without having to tell a
+library from a flag.
 
 The scope is not decoration. RFC-0007 fixes the order in which the three scopes
 reach a compile line, states that the order is contract rather than detail, and
@@ -235,7 +240,15 @@ NOT** be applied to a document a machine produced.
 
 ## Schema, and the node it does not know
 
-Every document opens with an integer `schema`. This revision is `2`.
+Every document opens with an integer `schema`. This revision is `3`.
+
+Revision `3` changes what a `LinkOption` says: its `value` is what reaches the
+link line — `-lm`, not `m`. That is the rule `CompileOption` already followed, a
+define being `-DFOO=1` in a document because that is how it reaches a command
+line, and it is what lets an engine compose a link line without telling a library
+apart from a `-flto` — which it could not do anyway, since both have to reach the
+linker. A revision rather than a convention because a schema `2` document's
+`links` hold bare names, and a newer reader would hand one to a linker raw.
 
 Revision `2` adds `scope` to `Dependency`. It is a revision rather than a plain
 addition because the directional rule below cuts the wrong way for this one
@@ -474,6 +487,9 @@ The document exists and the engine reads half of it. As of molto 0.21.0:
   command. It is what turns a dependency's recipe — which a remote party wrote —
   from something that could name any directory on the consumer's compile line
   into something held to the same rule as everything else.
+- **The link line is read off the document**, as of revision `3`. Every binary
+  molto produces has its link command composed from its `Target`'s `links` and
+  from nothing else, by the same scope order the compile line uses.
 - **A dependency's own sources are targets.** One `Target` of kind `object` per
   package that ships sources, named `<package>:objects`, carrying that package's
   own recipe and nothing the consumer resolved. Everything a build compiles now

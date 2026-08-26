@@ -69,7 +69,7 @@ kind = "plugin"
 capabilities = ["frontend"]
 extensions = ["meson.build"]
 permissions = ["ir.write", "filesystem.project"]
-ir_schema = 2
+ir_schema = 3
 molto_min = "0.17.0"
 ```
 

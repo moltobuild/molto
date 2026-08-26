@@ -159,20 +159,49 @@ static bool collect_project_sources(const char *root, str_list *out) {
 
 /* --- what every target carries --- */
 
+/* Everything that reaches the link line, in the order it reaches it.
+ *
+ * Three things do, and the manifest keeps them in three places: the raw `flags`
+ * of `[target]` and of the profile, which are passed to the linker as well as to
+ * the compiler so that `-flto` and `-fsanitize` work at all, and `[target].link`,
+ * which names libraries. A `LinkOption` is what reaches the line, so the
+ * libraries get their `-l` here rather than at composition — and the engine is
+ * then spared telling a library from a flag, which it could not do anyway.
+ *
+ * `defines` are deliberately absent. They are a `CompileOption` and nothing
+ * else: a define reaching a linker is noise in a fingerprint that decides
+ * whether a binary is relinked. */
+static bool push_link_scope(ir_target *target, const project_ctx *ctx, build_profile profile) {
+    const project_options *profile_opts = options_for(ctx, profile);
+    for(size_t i = 0; i < ctx->target.options.flag_count; i++) {
+        if(!ir_add_option(&target->links, &target->link_count, ctx->target.options.flags[i],
+                          ir_scope_target))
+            return false;
+    }
+    for(size_t i = 0; i < profile_opts->flag_count; i++) {
+        if(!ir_add_option(&target->links, &target->link_count, profile_opts->flags[i],
+                          ir_scope_profile))
+            return false;
+    }
+    for(size_t i = 0; i < ctx->target.link_count; i++) {
+        char flag[PROJECT_LINK_NAME_MAX + 4];
+        const int written = snprintf(flag, sizeof flag, "-l%s", ctx->target.link[i]);
+        if(written < 0 || (size_t)written >= sizeof flag)
+            return false;
+        if(!ir_add_option(&target->links, &target->link_count, flag, ir_scope_target))
+            return false;
+    }
+    return true;
+}
+
 /* `[target]`'s own scope, the profile's scope and the link line. Every target
    the native frontend emits carries all three, so they are composed once: an executable and a test
    that filled their scopes in two places would drift, and the drift would show up as a test
    compiled against options the code under it was not. */
 static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile profile) {
-    if(!push_scope(target, &ctx->target.options, ir_scope_target) ||
-       !push_scope(target, options_for(ctx, profile), ir_scope_profile))
-        return false;
-    for(size_t i = 0; i < ctx->target.link_count; i++) {
-        if(!ir_add_option(&target->links, &target->link_count, ctx->target.link[i],
-                          ir_scope_target))
-            return false;
-    }
-    return true;
+    return push_scope(target, &ctx->target.options, ir_scope_target) &&
+           push_scope(target, options_for(ctx, profile), ir_scope_profile) &&
+           push_link_scope(target, ctx, profile);
 }
 
 /* `src/` on the include path.

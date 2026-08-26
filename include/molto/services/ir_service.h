@@ -38,13 +38,20 @@
    speaks in its recipe, so a mismatch is a refusal before the process starts
    rather than a half-read document (RFC-0014).
  *
+ * 3 changes what a `LinkOption` says. Its `value` is now what reaches the link
+ * line — `-lm`, not `m` — which is the rule `CompileOption` already followed: a
+ * define is `-DFOO=1` in a document because that is how it reaches a command
+ * line, and a consumer reads one without knowing which manifest table it came
+ * from. The revision is what keeps a schema 2 document, whose `links` hold bare
+ * library names, from being handed to a linker as raw flags.
+ *
  * 2 adds `scope` to a dependency. The bump is what makes the attribute safe to
  * add rather than a formality: this reader matches the revision exactly, so a
  * molto that predates the attribute refuses the document and says why. Had it
  * merely ignored what it did not know, it would have read a development
  * dependency as a runtime one and folded it into `src/` — the one thing
  * RFC-0008's separation exists to prevent, arrived at silently. */
-#define IR_SCHEMA 2
+#define IR_SCHEMA 3
 
 /* Where an option sits in the compile line RFC-0007 composes. The order the
    three reach a command line is contract, not detail: it is the fingerprint,
@@ -97,7 +104,13 @@ typedef enum {
 
 /* `CompileOption` and `LinkOption`: a value and the scope it applies at. One
    struct for both, because the two differ in which array they live in and in
-   nothing else. */
+   nothing else.
+ *
+ * Either way the value is what reaches the command line, whole: `-DFOO=1` and
+ * `-lm`, never `FOO=1` and never `m`. It is what lets a consumer read an option
+ * without knowing which manifest table it came from, and what lets the engine
+ * push a link line without telling a library apart from a flag — which it could
+ * not do anyway, since `-flto` has to reach the linker too. */
 typedef struct {
     char *value;
     ir_scope scope;

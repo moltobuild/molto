@@ -126,6 +126,54 @@ MOLTEST(a_test_may_include_a_development_dependency) {
 /* And src/ may not. This is the whole feature: the include path it would need
    is not on the command line that compiles the project, so the compiler says
    so on the first build. Nothing has to remember the rule. */
+/* A development dependency's *library* reaches the test link line and no other.
+   Its includes and defines are checked above by a compile that fails without
+   them; a library is checked by a link that fails without it, which is what
+   calling `sqrt` here is for. */
+MOLTEST(a_development_dependencys_library_reaches_only_the_test_link) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char dir[PATH_MAX_LEN];
+    char file[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(dir, sizeof dir, "%s/mathy", at.root));
+    ASSERT_TRUE(fs_make_dirs(dir));
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/recipe.toml", dir));
+    ASSERT_TRUE(fs_write_file(file, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"mathy\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\nsources = [\"mathy.c\"]\n"
+                                    "include = [\".\"]\nlink = [\"m\"]\n"));
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/mathy.h", dir));
+    ASSERT_TRUE(fs_write_file(file, "double mathy_root(double);\n"));
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/mathy.c", dir));
+    ASSERT_TRUE(fs_write_file(file, "#include <math.h>\n"
+                                    "double mathy_root(double x) { return sqrt(x); }\n"));
+
+    char manifest[PATH_MAX_LEN * 2];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+             "[target]\nstd = \"c17\"\n"
+             "[dev-deps]\nmathy = { path = \"%s/mathy\" }\n",
+             at.root);
+    /* The test calls it, so the link fails outright without `-lm`. */
+    ASSERT_TRUE(make_project(&at, manifest, "int lib_answer(void) { return 2; }\n",
+                             "#include <mathy.h>\n"
+                             "int main(void) { return mathy_root(4.0) == 2.0 ? 0 : 1; }\n"));
+
+    char app[PATH_MAX_LEN];
+    app_path(&at, app, sizeof app);
+    str_list binaries;
+    str_list_init(&binaries);
+    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, false, 0, &binaries, NULL));
+
+    /* And `molto build` links an executable that never saw it: the fold puts a
+       development dependency on targets of kind `test` and on nothing else. */
+    EXPECT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
+
+    str_list_free(&binaries);
+    sandbox_close(&at);
+}
+
 MOLTEST(src_may_not_include_a_development_dependency) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));

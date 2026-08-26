@@ -38,7 +38,7 @@ that can grow without freezing struct layouts at 1.0.
 ### What you receive
 
 ```json
-{"schema": 2, "request": "frontend", "root": "/w/app", "entry": "meson.build"}
+{"schema": 3, "request": "frontend", "root": "/w/app", "entry": "meson.build"}
 ```
 
 `root` is absolute, and every relative path in your answer is anchored at it.
@@ -54,7 +54,7 @@ An IR document, and nothing else, on standard output.
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "files_read": ["meson.build", "src/meson.build"],
   "projects": [{
     "name": "app",
@@ -67,7 +67,7 @@ An IR document, and nothing else, on standard output.
       "sources": [{"path": "src/main.c", "language": "c", "options": []}],
       "options": [{"value": "-DFEATURE=1", "scope": "target"}],
       "includes": [{"value": "include", "scope": "target", "system": false}],
-      "links": [{"value": "m", "scope": "target"}],
+      "links": [{"value": "-lm", "scope": "target"}],
       "depends_on": [],
       "artifact": {"kind": "executable", "path": "app"}
     }],
@@ -140,7 +140,7 @@ kind = "plugin"
 capabilities = ["frontend"]
 extensions = ["meson.build"]
 permissions = ["ir.write", "project.read"]
-ir_schema = 2
+ir_schema = 3
 molto_min = "0.21.0"
 ```
 
@@ -152,23 +152,26 @@ mismatch found there is a refusal; found halfway through a document it would be
 a half-read document:
 
 ```
-molto: 'meson' speaks IR schema 1 and this molto speaks schema 2
+molto: 'meson' speaks IR schema 2 and this molto speaks schema 3
 ```
 
-### Moving a plugin from schema 1 to schema 2
+### Moving a plugin to schema 3
 
-Two numbers, and for most plugins nothing else. Put `ir_schema = 2` in the
-recipe and `"schema": 2` in the document you return; what you emit does not
-otherwise change, because the one node schema 2 altered is `Dependency`, and a
-frontend does not resolve.
+Two numbers and one habit. Put `ir_schema = 3` in the recipe and `"schema": 3`
+in the document you return, and write a **`LinkOption` as it reaches the link
+line**: `"-lm"`, not `"m"`. That is the rule a `CompileOption` already followed —
+you write `-DFOO=1`, not `FOO=1` — and it is what lets the engine compose a link
+line without telling a library apart from a `-flto`, which it could not do
+anyway since both have to reach the linker.
 
-The one node schema 2 changed is one you do not write: **a frontend may not
-name dependencies at all**, and a document that does is refused. `Dependency`
-carries the version that was resolved, the origin it came from and the directory
-the bytes landed in — three answers `resolve` gives, and resolving is not a
-plugin's to do. Leave `dependencies` empty and the engine fills it.
+Nothing else changes for a frontend. Schema 2 altered `Dependency`, and that is
+a node you do not write: **a frontend may not name dependencies at all**, and a
+document that does is refused. `Dependency` carries the version that was
+resolved, the origin it came from and the directory the bytes landed in — three
+answers `resolve` gives, and resolving is not a plugin's to do. Leave
+`dependencies` empty and the engine fills it.
 
-Set `molto_min` to the first Molto that speaks schema 2, so a user on an older
+Set `molto_min` to the first Molto that speaks schema 3, so a user on an older
 one gets your refusal rather than Molto's.
 
 ## What a frontend can do
@@ -337,12 +340,13 @@ This is the first revision of the frontend capability, and it stops in a
 deliberate place.
 
 - **`molto build` does not yet build from a plugin's document.** It builds from
-  a *document* now — the native frontend's — and the whole compile line is read
-  off it: the project's sources, its tests, and each dependency's own. What it
-  still takes from `Project.toml` is the **link line** (`Target.links` is
-  written and nothing reads it), the profiles, `[target].requires`, `[test]` and
-  `[env]`. And it asks the native frontend **by name** rather than asking
-  whichever frontend understands the directory — a directory with only a
+  a *document* now — the native frontend's — and both command lines are read off
+  it: the compile line for the project's sources, its tests and each
+  dependency's own, and the link line for every binary it produces. What it
+  still takes from `Project.toml` is the toolchain question
+  (`[target].requires`, `compiler`), the profiles' `opt_level` and `debug_info`,
+  `[test]` and `[env]`. And it asks the native frontend **by name** rather than
+  asking whichever frontend understands the directory — a directory with only a
   `meson.build` is not recognised as a workspace at all. So a plugin's document
   is still produced, inspected and validated rather than built, which is what a
   frontend author needs in order to write one at all, and the contract has to be

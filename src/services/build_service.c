@@ -183,21 +183,6 @@ static manifest_profile profile_settings(const project_ctx *ctx, build_profile p
     }
 }
 
-/* Select the per-profile extra options for `profile`. */
-static const project_options *profile_options_for(const project_ctx *ctx, build_profile profile) {
-    switch(profile) {
-    case profile_release:
-        return &ctx->profile_options.release;
-    case profile_bench:
-        return &ctx->profile_options.bench;
-    case profile_custom:
-        return &ctx->profile_options.custom;
-    case profile_debug:
-    default:
-        return &ctx->profile_options.debug;
-    }
-}
-
 /* Map a source path to its object path, mirroring the source tree under
    `root/build/<profile_dir>/obj`. */
 [[nodiscard]] static bool object_path_for(const char *root, const char *profile_dir,
@@ -1020,12 +1005,35 @@ static bool link_needed(const str_list *objects, const char *binary) {
     return false;
 }
 
-/* Build the link command into `argv`: linker, objects, raw flags (base +
-   profile, so -flto/-fsanitize reach the linker too), -o binary, and the
-   system libraries (-l<lib>). */
+/* One scope's link options, in the order the producer wrote them. */
+static bool push_links(str_list *argv, const ir_target *node, ir_scope scope) {
+    bool ok = true;
+    for(size_t i = 0; ok && i < node->link_count; i++) {
+        if(node->links[i].scope == scope)
+            ok = str_list_push(argv, node->links[i].value);
+    }
+    return ok;
+}
+
+/* Build the link command into `argv`: linker, objects, -o binary, and then
+   everything the document says reaches this target's link line.
+ *
+ * All of it comes off the node. A `LinkOption` is what reaches the line — the
+ * `-l` is already on a library and `-flto` is just another value — so nothing
+ * here tells one from the other, which is what lets the same loop carry both.
+ *
+ * Scope order is the compile line's, for the same reason: it is the only
+ * ordering the document expresses, and a linker takes the last of two
+ * contradictory flags exactly as a compiler does. `-o` moves ahead of them all,
+ * where the manifest path put it in the middle — a linker does not care where
+ * its output is named, and putting it before means the scopes stay contiguous.
+ *
+ * What still does not come off the node: the objects, which the engine composes,
+ * and which driver runs, which is the toolchain's answer and not a document's
+ * opinion. */
 static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *objects,
-                            const char *binary, const project_target *target,
-                            const project_options *profile_opts, const resolved_toolchain *chain) {
+                            const char *binary, const ir_target *node,
+                            const resolved_toolchain *chain) {
     const char *driver = compile_flags_driver(chain, any_cpp);
     if(driver == NULL) {
         fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", binary);
@@ -1034,15 +1042,10 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
     bool ok = str_list_push(argv, driver);
     for(size_t i = 0; ok && i < str_list_count(objects); i++)
         ok = str_list_push(argv, str_list_get(objects, i));
-    for(size_t i = 0; ok && i < target->options.flag_count; i++)
-        ok = str_list_push(argv, target->options.flags[i]);
-    for(size_t i = 0; ok && i < profile_opts->flag_count; i++)
-        ok = str_list_push(argv, profile_opts->flags[i]);
     if(ok)
         ok = str_list_push(argv, ARG_OUTPUT) && str_list_push(argv, binary);
-    for(size_t i = 0; ok && i < target->link_count; i++)
-        ok = compile_flags_push_prefixed(argv, LINK_FLAG_PREFIX, target->link[i]);
-    return ok;
+    return ok && push_links(argv, node, ir_scope_target) &&
+           push_links(argv, node, ir_scope_profile) && push_links(argv, node, ir_scope_unit);
 }
 
 /* Everything a link's own report needs that the link itself does not. */
@@ -1102,12 +1105,12 @@ static void report_link_diagnostics(const link_env *where, const char *output, b
    a stale/missing binary, or a changed link command (per the WSDB). Records the
    link command in the WSDB. Returns false only if a needed link failed. */
 static bool link_project(bool any_cpp, const str_list *objects, const char *binary,
-                         const project_target *target, const project_options *profile_opts,
-                         const project_env *env, const resolved_toolchain *chain, bool force,
-                         wsdb *db, const char *root, build_report *report) {
+                         const ir_target *node, const project_env *env,
+                         const resolved_toolchain *chain, bool force, wsdb *db, const char *root,
+                         build_report *report) {
     str_list argv;
     str_list_init(&argv);
-    if(!build_link_argv(&argv, any_cpp, objects, binary, target, profile_opts, chain)) {
+    if(!build_link_argv(&argv, any_cpp, objects, binary, node, chain)) {
         str_list_free(&argv);
         return false;
     }
@@ -1647,19 +1650,22 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
     const bool any_cpp = plan.any_cpp;
     publish_compile_db(options.cdb, root);
     compile_db_destroy(options.cdb);
-    build_plan_free(&plan);
 
+    /* The plan outlives the compiles now, because the link line is read off the
+       document it holds. Releasing it where the last object was written would
+       take the target node with it. */
     if(result == exit_ok) {
         char binary[PATH_BUFFER_SIZE];
         if(!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
+            build_plan_free(&plan);
             str_list_free(&objects);
             (void)wsdb_close(db);
             return exit_build_failure;
         }
         /* Whatever the linker had to say has already been framed and printed
            by then; a line here would only repeat it less clearly. */
-        if(!link_project(any_cpp, &objects, binary, &ctx.target, profile_options_for(&ctx, profile),
-                         &ctx.env, &chain, any_compiled, db, root, report))
+        if(!link_project(any_cpp, &objects, binary, plan.project_units[0].node, &ctx.env, &chain,
+                         any_compiled, db, root, report))
             result = exit_build_failure;
         if(result == exit_ok) {
             /* Prune objects orphaned by removed sources (scoped to src/). */
@@ -1674,6 +1680,7 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
         }
     }
 
+    build_plan_free(&plan);
     str_list_free(&objects);
     warn_if_not_saved(db);
     return result;
@@ -1699,8 +1706,12 @@ typedef struct {
     const char *root;
     const char *profile_dir;
     const project_ctx *ctx;
-    const project_options *profile_opts;
     const resolved_toolchain *chain;
+    /* The units the test targets describe, in the order `document_sources`
+       produced their sources — so unit i belongs to binary i in per-file mode,
+       and every unit shares the one target in single mode. It is where a link
+       line comes from now. */
+    const compile_unit *test_units;
     const str_list *lib_objects; /* src objects, minus the app's main */
     bool any_cpp;
     bool force; /* something was recompiled */
@@ -1710,12 +1721,12 @@ typedef struct {
 
 /* Link `objects` into `binary`, and record it as one of the built tests. */
 static bool link_one_test(const test_link_context *context, const str_list *objects,
-                          const char *binary, bool cpp, str_list *binaries_out) {
+                          const char *binary, bool cpp, const ir_target *node,
+                          str_list *binaries_out) {
     if(!make_parent_dirs(binary))
         return false;
-    if(!link_project(cpp, objects, binary, &context->ctx->target, context->profile_opts,
-                     &context->ctx->env, context->chain, context->force, context->db, context->root,
-                     context->report))
+    if(!link_project(cpp, objects, binary, node, &context->ctx->env, context->chain, context->force,
+                     context->db, context->root, context->report))
         return false;
     return str_list_push(binaries_out, binary);
 }
@@ -1738,7 +1749,8 @@ static int link_tests_per_file(const test_link_context *context, const str_list 
         for(size_t j = 0; ok && j < str_list_count(context->lib_objects); j++)
             ok = str_list_push(&link_objects, str_list_get(context->lib_objects, j));
         ok = ok && link_one_test(context, &link_objects, binary,
-                                 context->any_cpp || source_is_cpp(source), binaries_out);
+                                 context->any_cpp || source_is_cpp(source),
+                                 context->test_units[i].node, binaries_out);
         str_list_free(&link_objects);
         if(!ok)
             return exit_build_failure;
@@ -1773,7 +1785,9 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     for(size_t i = 0; ok && i < str_list_count(context->lib_objects); i++)
         ok = str_list_push(&link_objects, str_list_get(context->lib_objects, i));
 
-    ok = ok && link_one_test(context, &link_objects, binary, cpp, binaries_out);
+    /* One target for the whole suite in this mode, so every unit names it. */
+    ok = ok && link_one_test(context, &link_objects, binary, cpp, context->test_units[0].node,
+                             binaries_out);
     str_list_free(&link_objects);
     return ok ? exit_ok : exit_build_failure;
 }
@@ -1831,7 +1845,6 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
         .db = db,
         .options = &options,
     };
-    const project_options *profile_opts = profile_options_for(&ctx, profile);
     const char *profile_dir = profile_name(profile);
 
     /* Object of src/main.c (the app entry point), if any, to exclude from test
@@ -1853,46 +1866,16 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     bool has_main = fs_path_exists(main_source);
 
     /*
-     * What `[dev-deps]` adds, and only here.
+     * What `[dev-deps]` adds is not added here any more, and there is nothing
+     * left to do about it in this function.
      *
-     * Their include directories go onto the line that compiles `tests/` and
-     * onto no other, which is what makes the separation real: a source under
-     * `src/` that includes one fails to compile with "no such file", on the
-     * first build, rather than at link time or in production (RFC-0008).
-     *
-     * Their defines and flags land in `[test].options` and their libraries in
-     * this `ctx`'s link list — both local to this function, so the binary
-     * `molto build` produces never sees them.
-     *
-     * Their include directories are not composed here at all any more. They
-     * reach the line that compiles `tests/` as `IncludePath` nodes on the test
-     * targets, put there by the fold, which only folds a development dependency
-     * into a target of kind `test`. The separation is one rule in one place
-     * rather than a list this function has to remember not to widen.
+     * Their includes, defines, flags and libraries all reach the test targets
+     * as nodes on those targets, put there by the fold — which folds a
+     * development dependency into a target of kind `test` and into no other.
+     * The separation RFC-0008 calls enforcement is one rule in one place rather
+     * than three lists this function had to remember not to widen, and the
+     * lists it used to widen are read by the frontend, which has already run.
      */
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.defines); i++) {
-        if(!deps_append_option(ctx.test.options.defines, &ctx.test.options.define_count,
-                               PROJECT_MAX_OPTS, str_list_get(&plan.dev.defines, i),
-                               "[test].defines"))
-            result = exit_build_failure;
-    }
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.flags); i++) {
-        if(!deps_append_option(ctx.test.options.flags, &ctx.test.options.flag_count,
-                               PROJECT_MAX_OPTS, str_list_get(&plan.dev.flags, i), "[test].flags"))
-            result = exit_build_failure;
-    }
-    for(size_t i = 0; result == exit_ok && i < str_list_count(&plan.dev.links); i++) {
-        const char *library = str_list_get(&plan.dev.links, i);
-        if(ctx.target.link_count >= PROJECT_MAX_LINK ||
-           !fs_format_path(ctx.target.link[ctx.target.link_count], PROJECT_LINK_NAME_MAX, "%s",
-                           library)) {
-            fprintf(stderr, "molto: a development dependency's '%s' does not fit the link line\n",
-                    library);
-            result = exit_build_failure;
-        } else {
-            ctx.target.link_count++;
-        }
-    }
 
     /* Library objects = every src object except the app's main object. */
     str_list lib_objects;
@@ -1952,8 +1935,8 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
             .root = root,
             .profile_dir = profile_dir,
             .ctx = &ctx,
-            .profile_opts = profile_opts,
             .chain = &chain,
+            .test_units = plan.test_units,
             .lib_objects = &lib_objects,
             .any_cpp = plan.any_cpp,
             .force = any_compiled,
