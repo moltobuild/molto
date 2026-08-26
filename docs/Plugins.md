@@ -149,7 +149,26 @@ exists at the root, and that is what makes you a candidate.
 
 `ir_schema` and `molto_min` are checked **before your process starts**. A
 mismatch found there is a refusal; found halfway through a document it would be
-a half-read document.
+a half-read document:
+
+```
+molto: 'meson' speaks IR schema 1 and this molto speaks schema 2
+```
+
+### Moving a plugin from schema 1 to schema 2
+
+Two numbers, and for most plugins nothing else. Put `ir_schema = 2` in the
+recipe and `"schema": 2` in the document you return; what you emit does not
+otherwise change, because the one node schema 2 altered is `Dependency`, and a
+frontend does not resolve.
+
+If you do return `Dependency` nodes, each one now needs a `scope` of `runtime`
+or `dev` — omitting it is refused rather than read as `runtime`, because a
+missing scope and a runtime scope would be the same document and only one of
+them is safe (RFC-0008).
+
+Set `molto_min` to the first Molto that speaks schema 2, so a user on an older
+one gets your refusal rather than Molto's.
 
 ## What a frontend can do
 
