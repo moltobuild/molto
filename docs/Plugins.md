@@ -71,23 +71,17 @@ An IR document, and nothing else, on standard output.
       "depends_on": [],
       "artifact": {"kind": "executable", "path": "app"}
     }],
-    "dependencies": [{
-      "name": "greet",
-      "version": "1.2.0",
-      "origin": "registry",
-      "scope": "runtime",
-      "root": "/home/you/.molto/cache/greet-1.2.0",
-      "interface": {
-        "includes": [{"value": "include", "scope": "target", "system": false}],
-        "options": [],
-        "links": []
-      }
-    }]
+    "dependencies": []
   }]
 }
 ```
 
-Four fields carry more weight than they look like they do:
+`dependencies` is empty, and it is not an omission for brevity: **a frontend may
+not name one at all.** A document that does is refused, by name and by count,
+whatever else is right about it. The engine fills the list after `resolve`, and
+the section on schema 3 below says why that is not yours to do.
+
+Three fields carry more weight than they look like they do:
 
 - **`origin` must be your plugin's own name.** Not `native`, which is reserved
   for `Project.toml`. Molto checks it and refuses the document otherwise, and
@@ -100,12 +94,15 @@ Four fields carry more weight than they look like they do:
 - **`projects` is an array with exactly one element.** One project per document
   in this revision. The array is an array so that the day workspaces are
   specified the schema widens without a new revision.
-- **A dependency's `scope` says which targets may compile against it.**
-  `runtime` reaches every target; `dev` reaches the test targets and no others,
-  and that is what makes RFC-0008's separation real rather than documented — a
-  source under `src/` that includes a development dependency fails to compile.
-  It is required rather than defaulted to `runtime`, because a missing scope and
-  a runtime scope would be the same document and only one of them is safe.
+
+One field is worth knowing about even though you never write it and will not see
+it in `molto ir`, which does not resolve: **a dependency's `scope` says which
+targets may compile against it.** `runtime` reaches every target; `dev` reaches
+the test targets and no others, and that is what makes RFC-0008's separation
+real rather than documented — a source under `src/` that includes a development
+dependency fails to compile. It is required rather than defaulted to `runtime`,
+because a missing scope and a runtime scope would be the same document and only
+one of them is safe.
 
 ### Exit codes
 
@@ -141,7 +138,7 @@ capabilities = ["frontend"]
 extensions = ["meson.build"]
 permissions = ["ir.write", "project.read"]
 ir_schema = 3
-molto_min = "0.21.0"
+molto_min = "0.24.0"
 ```
 
 `extensions` are **filenames, not suffixes**: Molto checks whether that file
@@ -189,9 +186,18 @@ one gets your refusal rather than Molto's.
 - Be written in anything. It is a process.
 
 Note that `static` and `shared` are **expressible but not yet buildable**. The
-IR carries the node and the engine reports it cannot build it. That is on
-purpose: a frontend for Meson, whose whole vocabulary is libraries, has to be
-writable before Molto grows shared library support.
+IR carries the node, and that much is on purpose: a frontend for Meson, whose
+whole vocabulary is libraries, has to be writable before Molto grows shared
+library support.
+
+What the engine does with one is nothing yet, and it is worth saying rather
+than implying. Today it only ever asks whether a target's kind is `test`, so a
+`static` or a `shared` would be swept in with the executable's own targets and
+its sources compiled into the binary — no archive, no `-fPIC`, no message.
+Nothing reaches that path while `molto build` builds only the native frontend's
+document, since a manifest cannot describe such a target at all. It becomes
+reachable the day a build lowers a plugin's document, and refusing it by name
+is part of that change rather than a separate one.
 
 ## What a frontend cannot do
 
@@ -345,8 +351,11 @@ deliberate place.
   dependency's own, and the link line for every binary it produces. What it
   still takes from `Project.toml` is the toolchain question
   (`[target].requires`, `compiler`), the profiles' `opt_level` and `debug_info`,
-  `[test]` and `[env]`. And it asks the native frontend **by name** rather than
-  asking whichever frontend understands the directory — a directory with only a
+  `[test]` and `[env]`. It asks the frontend *service* rather than the native
+  frontend by name, so which frontend describes a directory is decided in one
+  place and `molto build` and `molto ir` cannot come to disagree about it — but
+  the plugin half of that choice is still out of reach, because finding a
+  project means finding a `Project.toml` and a directory with only a
   `meson.build` is not recognised as a workspace at all. So a plugin's document
   is still produced, inspected and validated rather than built, which is what a
   frontend author needs in order to write one at all, and the contract has to be
