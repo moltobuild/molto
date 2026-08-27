@@ -55,7 +55,7 @@ looks like the safe default.
 A plugin is an executable and a recipe. The recipe declares four things:
 
 ```toml
-schema = 1
+schema = 2
 form = "binary"
 kind = "tool"
 name = "meson"

@@ -327,11 +327,47 @@ MOLTEST(plugin_read_recipe_refuses_one_without_a_plugin_table) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_refuses_one_that_provides_no_capability) {
+MOLTEST(plugin_read_recipe_refuses_a_plugin_table_under_the_schema_that_added_it) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
                              "schema = 1\nform = \"binary\"\nkind = \"tool\"\n"
+                             "name = \"deb\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                             "\n[plugin]\ncapabilities = [\"command\"]\n"));
+
+    /* `[plugin]` is schema 2. Carrying it while declaring 1 makes a recipe that
+       a molto predating plugins accepts, skips the table of, and installs — so
+       the permissions are shown to nobody. Refused here so it is not written. */
+    char err[256] = "";
+    EXPECT_FALSE(plugin_read_recipe("deb", NULL, NULL, err, sizeof err));
+    EXPECT_TRUE(strstr(err, "schema") != NULL);
+
+    sandbox_teardown(&box);
+}
+
+MOLTEST(plugin_read_recipe_refuses_a_plugin_table_with_no_schema_at_all) {
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+    ASSERT_TRUE(write_recipe(&box, "deb",
+                             "form = \"binary\"\nkind = \"tool\"\n"
+                             "name = \"deb\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                             "\n[plugin]\ncapabilities = [\"command\"]\n"));
+
+    /* The sneakier half of the same hazard: an absent schema means 1, so a
+       recipe that simply never mentions one is the case above written by
+       omission rather than by claim. */
+    char err[256] = "";
+    EXPECT_FALSE(plugin_read_recipe("deb", NULL, NULL, err, sizeof err));
+    EXPECT_TRUE(strstr(err, "schema") != NULL);
+
+    sandbox_teardown(&box);
+}
+
+MOLTEST(plugin_read_recipe_refuses_one_that_provides_no_capability) {
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+    ASSERT_TRUE(write_recipe(&box, "deb",
+                             "schema = 2\nform = \"binary\"\nkind = \"tool\"\n"
                              "name = \"deb\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
                              "\n[plugin]\ncapabilities = []\n"));
 
@@ -346,7 +382,7 @@ MOLTEST(plugin_read_recipe_keeps_a_permission_it_does_not_recognise) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
-                             "schema = 1\nform = \"binary\"\nkind = \"tool\"\n"
+                             "schema = 2\nform = \"binary\"\nkind = \"tool\"\n"
                              "name = \"deb\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
                              "\n[plugin]\ncapabilities = [\"command\"]\n"
                              "permissions = [\"invented.by.nobody\"]\n"));

@@ -29,6 +29,16 @@
    here, and it is only honest because this reader does understand the table. */
 #define RECIPE_SCHEMA_MAX 2
 
+/* The schema that introduced `[plugin]`, and the least a recipe carrying that
+   table may declare.
+ *
+ * Separate from the maximum above rather than spelled as it, because the two
+ * answer different questions and will stop agreeing: the maximum rises with
+ * every revision, and this stays at the one that added the table. `[plugin]`
+ * at schema 3 is a plugin recipe; `[plugin]` at schema 1 is the hazard the
+ * comment above describes, which is only a hazard because nothing refused it. */
+#define RECIPE_SCHEMA_PLUGIN 2
+
 #define RECIPE_COORDINATE_MAX 128
 #define RECIPE_MAX_SOURCES 32
 #define RECIPE_SOURCE_MAX 128
