@@ -103,12 +103,23 @@ A URL to a source archive. Because a URL can serve different bytes tomorrow, an
 archive dependency **MUST** carry a checksum; without one there is no difference
 between "the upstream re-rolled the tarball" and "someone replaced it".
 
-### `recipe`
+### `recipe`, withdrawn
 
-A recipe name resolved through a registry. The recipe describes how the
-dependency is obtained and built (RFC-0009); this source exists for the
-libraries that were never designed to be consumed as packages — the ones with
-a `configure` script and thirty years of history. The recipe is the adapter.
+There was a fifth source: a recipe name resolved through a registry, written for
+the libraries that were never designed to be consumed as packages — the ones
+with a `configure` script and thirty years of history.
+
+It is withdrawn, because `version` turned out to be it. A source recipe
+(RFC-0009) is published under a coordinate and served by a registry, so the
+libraries this was written for are named the same way every other package is:
+`zlib = "1.3.1"` resolves a recipe that fetches upstream at a pinned commit and
+compiles it. The adapter is the recipe, and reaching it needed no source of its
+own.
+
+Two things settled it. It would have been a second spelling of one thing, which
+is how two spellings come to disagree. And the lock form this document gave it —
+`recipe+<url>#<name>` — named no version, which is a floating dependency in a
+format whose next section is about why there are none.
 
 ## Versions are exact, always
 
@@ -370,7 +381,6 @@ did this come from" and "which fetcher gets it":
 | `registry+<url>` | `registry+https://molto-registry.example.dev` |
 | `git+<url>#<rev>` | `git+https://github.com/sqlite/sqlite#5a1e8ff…` |
 | `archive+<url>` | `archive+https://example.dev/png-1.6.40.tar.gz` |
-| `recipe+<url>#<name>` | `recipe+https://molto-registry.example.dev#libpng` |
 | `path+<relative>` | `path+modules/http` |
 
 A `git` source records the **resolved commit**, never the branch or tag it was
@@ -492,7 +502,7 @@ What is implemented:
   spellings, in declaration order, on `project_ctx`. Every key is classified
   before any is read, so a typo is an error rather than a dependency resolved
   to something else; a key this RFC defines but nothing implements yet
-  (`optional`, `features`, `default_features`, `artifact`, `recipe`) is refused
+  (`optional`, `features`, `default_features`, `artifact`) is refused
   rather than ignored.
 - **Exact versions** (`manifest_is_exact_version`), refusing every range
   operator this document forbids and naming the one it found.

@@ -58,10 +58,14 @@ static const char *const DEP_SUPPORTED_KEYS[] = {"registry", "sha256", "strip_pr
 /* Keys RFC-0003 defines and this reader does not implement. Refused rather
    than ignored, following [package].artifact: accepting a key and quietly
    doing nothing with it tells the user their manifest said something it did
-   not. `recipe` is here for a different reason — RFC-0003 forbids pairing it
-   with `version`, so a recipe dependency has no version to resolve, which is a
-   gap in the specification rather than in this code. */
-static const char *const DEP_PENDING_KEYS[] = {"recipe", "artifact", "optional", "features",
+   not.
+
+   `recipe` was here once and is not pending: RFC-0003 withdrew it. A source
+   recipe is resolved by version like any other package, so naming one directly
+   would have been a second spelling of `version` — and the lock form it was
+   given carried no version at all. It is an unknown key now, which is what the
+   format says it is. */
+static const char *const DEP_PENDING_KEYS[] = {"artifact", "optional", "features",
                                                "default_features"};
 
 static bool is_in(const char *const *list, size_t count, const char *key) {

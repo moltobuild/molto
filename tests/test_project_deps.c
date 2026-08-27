@@ -214,12 +214,23 @@ MOLTEST(deps_reject_an_unknown_key) {
     EXPECT_NOT_NULL(strstr(err, "unknown key 'tags'"));
 }
 
+/* `recipe` was a source RFC-0003 defined and RFC-0008 withdrew: a source recipe
+   is resolved by version like any other package, so naming one directly was a
+   second spelling of `version` whose lock form carried no version at all. Gone
+   from the format, so it lands here rather than among the pending keys — the
+   error a reader gets should say the key does not exist, not that it is coming. */
+MOLTEST(deps_reject_the_recipe_source_the_format_withdrew) {
+    project_deps deps;
+    char err[512] = "";
+    EXPECT_FALSE(read_deps("[deps]\nx = { recipe = \"png\" }\n", &deps, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "unknown key 'recipe'"));
+}
+
 MOLTEST(deps_reject_a_key_that_is_not_supported_yet) {
     /* Following [package].artifact: accepting a key and doing nothing with it
        tells the user their manifest said something it did not. */
-    static const char *const pending[] = { "recipe = \"png\"", "artifact = \"static\"",
-                                           "optional = true", "features = [\"a\"]",
-                                           "default_features = false" };
+    static const char *const pending[] = { "artifact = \"static\"", "optional = true",
+                                           "features = [\"a\"]", "default_features = false" };
 
     for (size_t i = 0; i < sizeof pending / sizeof pending[0]; i++) {
         char text[256];
