@@ -120,6 +120,18 @@ static bool read_artifacts_of(const char *text, recipe_artifacts *out, char *err
     return ok;
 }
 
+static bool read_provide_of(const char *text, recipe_provide *out, char *err, size_t err_size) {
+    char parse_err[256] = "";
+    toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
+    if (doc == NULL) {
+        snprintf(err, err_size, "%s", parse_err);
+        return false;
+    }
+    const bool ok = recipe_read_provide(doc_from_toml(doc), out, err, err_size);
+    toml_free(doc);
+    return ok;
+}
+
 static bool read_build_of(const char *text, recipe_build *out, char *err, size_t err_size) {
     char parse_err[256] = "";
     toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
@@ -483,4 +495,56 @@ MOLTEST(a_recipe_rejects_a_build_system_that_is_not_a_string) {
     char err[256] = "";
     EXPECT_FALSE(read_build_of("[build]\nsystem = 3\n", &build, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "[build].system"));
+}
+
+/* --- the files a recipe copies into place --- */
+
+MOLTEST(a_recipe_with_no_provide_list_copies_nothing) {
+    recipe_provide provide;
+    char err[256] = "";
+    EXPECT_TRUE(read_provide_of("[build]\nsystem = \"none\"\n", &provide, err, sizeof err));
+    EXPECT_EQ(0u, provide.count);
+}
+
+MOLTEST(a_recipe_reads_what_it_provides_in_order) {
+    recipe_provide provide;
+    char err[256] = "";
+    ASSERT_TRUE(read_provide_of("[[provide]]\nfile = \"pnglibconf.h\"\n"
+                                "from = \"scripts/pnglibconf.h.prebuilt\"\n"
+                                "[[provide]]\nfile = \"config.h\"\nfrom = \"config.h.generic\"\n",
+                                &provide, err, sizeof err));
+    ASSERT_EQ(2u, provide.count);
+    EXPECT_STREQ("pnglibconf.h", provide.items[0].file);
+    EXPECT_STREQ("scripts/pnglibconf.h.prebuilt", provide.items[0].from);
+    EXPECT_STREQ("config.h", provide.items[1].file);
+}
+
+/* Half an entry says half a thing, and guessing the other half is how a recipe
+   comes to mean something nobody wrote. */
+MOLTEST(a_recipe_rejects_a_provision_missing_either_half) {
+    recipe_provide provide;
+    char err[256] = "";
+    EXPECT_FALSE(read_provide_of("[[provide]]\nfile = \"config.h\"\n", &provide, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "from"));
+
+    char other[256] = "";
+    EXPECT_FALSE(read_provide_of("[[provide]]\nfrom = \"config.h.in\"\n", &provide, other,
+                                 sizeof other));
+    EXPECT_NOT_NULL(strstr(other, "file"));
+}
+
+/* Reported rather than truncated: an entry silently dropped is a header that is
+   never written and a compiler error naming neither the recipe nor the key. */
+MOLTEST(a_recipe_rejects_more_provisions_than_the_format_allows) {
+    char text[1024] = "";
+    size_t used = 0;
+    for (int i = 0; i < RECIPE_MAX_PROVIDE + 1; i++) {
+        used += (size_t)snprintf(text + used, sizeof text - used,
+                                 "[[provide]]\nfile = \"h%d.h\"\nfrom = \"in%d.h\"\n", i, i);
+    }
+
+    recipe_provide provide;
+    char err[256] = "";
+    EXPECT_FALSE(read_provide_of(text, &provide, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "at most"));
 }

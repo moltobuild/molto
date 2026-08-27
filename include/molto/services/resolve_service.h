@@ -37,6 +37,8 @@ typedef struct {
        reason as everything below: the recipe is alive now, and molto refuses a
        build system it cannot run before fetching a byte of the source. */
     recipe_build build;
+    /* And what its own sources need copied into place before they compile. */
+    recipe_provide provide;
     /* What this package depends on in turn, read from the same recipe. It is
        here because it is only readable while the registry's answer is alive,
        and because a second request to learn it would ask the registry the

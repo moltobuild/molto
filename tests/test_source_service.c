@@ -2,6 +2,7 @@
 
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/recipe_service.h>
 #include <molto/services/source_service.h>
 #include <molto/util/json.h>
 #include <molto/util/toml.h>
@@ -654,4 +655,127 @@ MOLTEST(source_reports_a_local_path_that_is_not_a_directory) {
     EXPECT_FALSE(source_fetch(&spec, "pkg", "1.0", "any", out, sizeof out, err, sizeof err));
 
     sandbox_close(&at);
+}
+
+/* --- the files a recipe copies into place --- */
+
+/* A drop with one file under `scripts/`, which is the shape every library that
+   ships a prebuilt configuration has. */
+static bool make_drop(const sandbox *at, char *out, size_t size) {
+    char scripts[PATH_MAX_LEN];
+    snprintf(out, size, "%s/drop", at->root);
+    snprintf(scripts, sizeof scripts, "%s/scripts", out);
+    if (!fs_make_dirs(scripts))
+        return false;
+
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/prebuilt.h", scripts);
+    if (!fs_write_file(file, "#define CONFIGURED 1\n"))
+        return false;
+
+    snprintf(file, sizeof file, "%s/upstream.c", out);
+    return fs_write_file(file, "int upstream(void) { return 1; }\n");
+}
+
+static recipe_provide one_provision(const char *file, const char *from) {
+    recipe_provide provide = {0};
+    snprintf(provide.items[0].file, sizeof provide.items[0].file, "%s", file);
+    snprintf(provide.items[0].from, sizeof provide.items[0].from, "%s", from);
+    provide.count = 1;
+    return provide;
+}
+
+MOLTEST(a_provision_writes_the_file_a_configure_step_would_have) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+
+    const recipe_provide provide = one_provision("config.h", "scripts/prebuilt.h");
+    char err[256] = "";
+    EXPECT_TRUE(source_provide(drop, &provide, err, sizeof err));
+
+    char written[PATH_MAX_LEN];
+    snprintf(written, sizeof written, "%s/config.h", drop);
+    char *text = fs_read_file(written);
+    ASSERT_NOT_NULL(text);
+    EXPECT_STREQ("#define CONFIGURED 1\n", text);
+    free(text);
+
+    sandbox_close(&at);
+}
+
+/* A path origin is used where it lies and carries no stamp, so this runs again
+   on every build. Identical bytes mean the copy already happened. */
+MOLTEST(a_provision_already_applied_is_not_an_error) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+
+    const recipe_provide provide = one_provision("config.h", "scripts/prebuilt.h");
+    char err[256] = "";
+    ASSERT_TRUE(source_provide(drop, &provide, err, sizeof err));
+    EXPECT_TRUE(source_provide(drop, &provide, err, sizeof err));
+
+    sandbox_close(&at);
+}
+
+/* The line between completing a configuration and patching one. */
+MOLTEST(a_provision_refuses_to_overwrite_what_upstream_shipped) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+
+    const recipe_provide provide = one_provision("upstream.c", "scripts/prebuilt.h");
+    char err[256] = "";
+    EXPECT_FALSE(source_provide(drop, &provide, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "different bytes"));
+
+    sandbox_close(&at);
+}
+
+MOLTEST(a_provision_stays_inside_the_source_it_completes) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+    char err[256] = "";
+
+    const recipe_provide absolute = one_provision("config.h", "/etc/hostname");
+    EXPECT_FALSE(source_provide(drop, &absolute, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "absolute"));
+
+    const recipe_provide climbing = one_provision("config.h", "../../etc/hostname");
+    EXPECT_FALSE(source_provide(drop, &climbing, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "climbs out"));
+
+    /* And the destination is fenced as well as the origin: writing above the
+       drop is how a dependency edits the project that consumes it. */
+    const recipe_provide escaping = one_provision("../escaped.h", "scripts/prebuilt.h");
+    EXPECT_FALSE(source_provide(drop, &escaping, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "climbs out"));
+
+    sandbox_close(&at);
+}
+
+MOLTEST(a_provision_naming_a_file_the_source_lacks_is_refused) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+
+    const recipe_provide provide = one_provision("config.h", "scripts/absent.h");
+    char err[256] = "";
+    EXPECT_FALSE(source_provide(drop, &provide, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "scripts/absent.h"));
+
+    sandbox_close(&at);
+}
+
+MOLTEST(providing_nothing_touches_nothing) {
+    const recipe_provide empty = {0};
+    char err[256] = "";
+    EXPECT_TRUE(source_provide("/nonexistent/path", &empty, err, sizeof err));
 }

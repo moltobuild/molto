@@ -657,3 +657,58 @@ MOLTEST(a_transitive_dependency_naming_a_build_system_is_refused_too) {
 
     sandbox_close(&at);
 }
+
+/* --- the files a recipe copies into place --- */
+
+/* The walk is where a provision is applied, because it is the first moment both
+   halves exist: a registry dependency knows its recipe before its bytes, and a
+   carried one has bytes before its recipe can be read. */
+MOLTEST(the_walk_provides_the_file_a_recipe_says_its_build_needs) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "png",
+                             "[[provide]]\nfile = \"config.h\"\nfrom = \"config.h.in\"\n"));
+
+    char from[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(from, sizeof from, "%s/png/config.h.in", at.root));
+    ASSERT_TRUE(fs_write_file(from, "#define CONFIGURED 1\n"));
+
+    char written[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(written, sizeof written, "%s/png/config.h", at.root));
+    ASSERT_FALSE(fs_path_exists(written));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"png"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_TRUE(fs_path_exists(written));
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* And a provision that cannot be applied stops the resolution rather than
+   leaving a drop the compiler will fail on for a reason it cannot explain. */
+MOLTEST(a_provision_the_walk_cannot_apply_fails_the_resolution) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "png",
+                             "[[provide]]\nfile = \"config.h\"\nfrom = \"scripts/absent.h\"\n"));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"png"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    EXPECT_FALSE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "png"));
+    EXPECT_NOT_NULL(strstr(err, "scripts/absent.h"));
+
+    sandbox_close(&at);
+}

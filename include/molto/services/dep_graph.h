@@ -84,6 +84,10 @@ typedef struct {
     /* The names it depends on, sorted, for the lock's `dependencies`. */
     str_list dependencies;
     recipe_artifacts artifacts;
+    /* Files its recipe copies into place before its sources compile
+       (RFC-0009). Applied after the fetch, because a recipe a fetched source
+       carries is unreadable until those bytes are there. */
+    recipe_provide provide;
     /* What its recipe says about itself: the licence above all (RFC-0009
        `[about]`). Carried here because the walk already parses that recipe to
        learn what to compile, so a report that has to name the licence of every
