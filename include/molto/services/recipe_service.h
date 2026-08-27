@@ -133,6 +133,48 @@ typedef struct {
                                          size_t err_size);
 
 /*
+ * `[build]`: the build system a source recipe's own sources need (RFC-0009).
+ *
+ * `none` is the one Molto can honour, and it is what a source drop that needs
+ * no build says — headers, an amalgamation, or sources a consumer compiles as
+ * if they were its own. The other four name a build system Molto does not run:
+ * until RFC-0014's `via = "frontend"` can translate one, a recipe declaring
+ * them is refused by whoever is about to build it rather than here, because the
+ * message worth reading names the dependency and this reader does not know it.
+ *
+ * Read faithfully rather than collapsed to a boolean, so the day a frontend can
+ * answer for `meson` this reader needs no change to say which one was asked
+ * for.
+ *
+ * An absent table is `none`, which is the same shape `schema` and `form` above
+ * already take and the same reason: the key is newer than the recipes, and one
+ * that says nothing about a build system is one whose sources need none. It is
+ * also what every source recipe published so far means, so reading them stays
+ * correct.
+ *
+ * `via`, `args`, `env` and `jobs` are deliberately not here. Each of them only
+ * means something for a system that is refused, so reading one today would be
+ * code no build can reach — and a field nothing consumes is a field that drifts
+ * from what it claims.
+ */
+typedef enum {
+    recipe_build_none,
+    recipe_build_make,
+    recipe_build_cmake,
+    recipe_build_autotools,
+    recipe_build_meson,
+} recipe_build_system;
+
+typedef struct {
+    recipe_build_system system;
+} recipe_build;
+
+[[nodiscard]] bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size);
+
+/* What a recipe called it, for a message that has to name it back. */
+[[nodiscard]] const char *recipe_build_system_name(recipe_build_system system);
+
+/*
  * `[plugin]`, on a recipe whose `[tool].kind` is `plugin` (RFC-0014).
  *
  * What a plugin declares before anything of it is downloaded: the capabilities
