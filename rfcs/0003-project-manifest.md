@@ -299,7 +299,6 @@ source key must be present:
 | `rev`              | string        | Git commit revision (with `git`)                                               |
 | `path`             | string        | Local directory (source)                                                       |
 | `archive`          | string        | Archive URL (source)                                                           |
-| `recipe`           | string        | Recipe name, resolved through a registry (source; `spec.md` section 8)         |
 | `registry`         | string        | Named registry to use (default: the official one)                              |
 | `artifact`         | string        | How the dependency is built: `source`/`static`/`shared`                        |
 | `optional`         | bool          | If true, only resolved when a feature enables it (default false)               |
@@ -308,8 +307,16 @@ source key must be present:
 
 Rules:
 
-- Exactly one source among `version`, `git`, `path`, `archive`, `recipe`. The
+- Exactly one source among `version`, `git`, `path`, `archive`. The
   plain-string form `dep = "1.2.3"` is equivalent to `{ version = "1.2.3" }`.
+- There was a fifth, `recipe`, naming a recipe for a registry to resolve. It is
+  **withdrawn**, and the reason is that `version` turned out to be it. A source
+  recipe (RFC-0009) is published under a coordinate and resolved by version like
+  anything else, which is how `zlib` and `yyjson` are consumed — neither was
+  designed to be a Molto package, which is the case `recipe` was written for.
+  Keeping it would have meant a second spelling of one thing, and the form
+  RFC-0008 gave it (`recipe+<url>#<name>`) named no version at all, which is a
+  floating dependency in a format whose central rule is that versions are exact.
 - **A version is exact.** `^`, `~`, `>=`, `>`, `<`, `<=`, `*` and
   comma-separated conjunctions are not part of this format, and a value carrying
   one is a manifest error. RFC-0008 gives the reason: a range authorises code

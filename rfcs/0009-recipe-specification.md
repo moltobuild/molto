@@ -14,9 +14,9 @@ is obtained, built and consumed, the tables specific to each kind, and the
 compatibility rules that let a recipe written today be read by a Molto released
 later.
 
-It formalises `spec.md` section 8, gives RFC-0008 the meaning of its `recipe`
-dependency source, and writes down the contract a registry already validates
-(RFC-0010).
+It formalises `spec.md` section 8, gives RFC-0008 the shape of what a `version`
+dependency resolves to when the package is not one, and writes down the contract
+a registry already validates (RFC-0010).
 
 ## Motivation
 
@@ -52,7 +52,9 @@ explicit key rather than by which tables happen to be absent:
 - A **source recipe** (`form = "source"`) describes how to obtain and build
   something that is not a Molto package. It carries `[source]` and `[build]`,
   and the registry stores the recipe alone — there are no bytes to upload. This
-  is the form RFC-0008's `recipe` dependency source resolves to.
+  is what a `version` dependency resolves to when the thing on the other end
+  was never a Molto package. RFC-0008 once had a `recipe` source for naming one
+  of these directly; it is withdrawn, and that document says why.
 
 The discriminator is explicit because inference is what turns a typo into a
 different document. A source recipe with a misspelled `[souce]` table would, by
@@ -673,7 +675,7 @@ package should be one, and should publish as `kind = "package"` with a real
 - [RFC-0003: Project Manifest](0003-project-manifest.md) — the `[deps]` syntax a recipe reuses, and the reserved metadata keys `[about]` mirrors
 - [RFC-0005: Code Style](0005-code-style.md) — the formatters and linters a `tool` recipe distributes
 - [RFC-0007: Build System](0007-build-system.md) — where `[artifacts]` ends up on a command line
-- [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — the `recipe` dependency source this document defines
+- [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — how a source recipe is reached, and why by version
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — how a recipe is published and served
 - [RFC-0014: Plugin System](0014-plugin-system.md) — the `[plugin]` table, and the frontend `via = "frontend"` hands a build to
 
