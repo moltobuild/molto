@@ -59,7 +59,7 @@ static const char *const SOURCE_RECIPE = "schema = 1\n"
                                          "\n"
                                          "[source]\n"
                                          "archive = \"https://sqlite.org/a.zip\"\n"
-                                         "sha256 = \"abc\"\n"
+                                         "sha256 = \"1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d\"\n"
                                          "\n"
                                          "[build]\n"
                                          "system = \"none\"\n"
@@ -153,4 +153,55 @@ MOLTEST(publish_reads_a_recipe_that_never_declared_a_form) {
 
 MOLTEST(publish_reports_a_recipe_that_is_not_there) {
     EXPECT_EQ(exit_invalid_manifest, publish_command_run("/tmp/no_such_recipe.toml", NULL, true));
+}
+
+/* --- what the tables say, and not merely that they are there --- */
+
+/* SOURCE_RECIPE with `what` swapped for `into`. */
+static void replacing(const char *what, const char *into, char *out, size_t out_size) {
+    const char *at = strstr(SOURCE_RECIPE, what);
+    if (at == NULL) {
+        snprintf(out, out_size, "%s", SOURCE_RECIPE);
+        return;
+    }
+    const size_t head = (size_t)(at - SOURCE_RECIPE);
+    snprintf(out, out_size, "%.*s%s%s", (int)head, SOURCE_RECIPE, into, at + strlen(what));
+}
+
+/* Each of these publishes cleanly while only the tables' presence is checked,
+   and then fails in the build of everyone who depends on it. A coordinate is
+   immutable, so the recipe that spent it cannot be corrected — only superseded
+   by a version nobody is asking for. */
+MOLTEST(publish_refuses_a_build_system_no_consumer_can_run) {
+    char text[RECIPE_MAX];
+    replacing("system = \"none\"", "system = \"scons\"", text, sizeof text);
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+MOLTEST(publish_refuses_an_artifact_type_nothing_can_build) {
+    char text[RECIPE_MAX];
+    replacing("type = \"source\"", "type = \"header_only\"", text, sizeof text);
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+MOLTEST(publish_refuses_a_standard_no_compiler_knows) {
+    char text[RECIPE_MAX];
+    replacing("type = \"source\"", "type = \"source\"\nstd = \"c47\"", text, sizeof text);
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+/* A URL is a promise about a location and not about content. Without the digest
+   a consumer fetches whatever upstream serves today (RFC-0009). */
+MOLTEST(publish_refuses_an_archive_with_no_digest_beside_it) {
+    char text[RECIPE_MAX];
+    replacing("sha256 = \"1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d\"\n", "",
+              text, sizeof text);
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+/* The whole recipe, unmodified, gets past validation and on to the credential
+   it needs -- which is what says the four refusals above are refusing something
+   specific rather than everything. */
+MOLTEST(publish_lets_a_sound_source_recipe_through_to_its_registry) {
+    EXPECT_NE(exit_invalid_manifest, publish(SOURCE_RECIPE));
 }
