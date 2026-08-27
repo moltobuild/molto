@@ -11,6 +11,9 @@
    inside `artifacts` read back the same way. */
 #define ARTIFACTS_PRIVATE_SECTION "artifacts.private"
 
+/* The build system a source recipe's own sources need (RFC-0009). */
+#define BUILD_SECTION "build"
+
 /* Where a plugin declares what it does and what it needs (RFC-0014). */
 #define PLUGIN_SECTION "plugin"
 
@@ -207,6 +210,49 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
            read_options(doc, ARTIFACTS_SECTION, &out->options, err, err_size) &&
            read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size);
+}
+
+/* --- [build] --- */
+
+static const struct {
+    const char *name;
+    recipe_build_system system;
+} BUILD_SYSTEMS[] = {
+    {"none", recipe_build_none},   {"make", recipe_build_make},
+    {"cmake", recipe_build_cmake}, {"autotools", recipe_build_autotools},
+    {"meson", recipe_build_meson},
+};
+
+const char *recipe_build_system_name(recipe_build_system system) {
+    for(size_t i = 0; i < sizeof BUILD_SYSTEMS / sizeof BUILD_SYSTEMS[0]; i++) {
+        if(BUILD_SYSTEMS[i].system == system)
+            return BUILD_SYSTEMS[i].name;
+    }
+    return "none";
+}
+
+bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    /* `recipe_build_none` is zero, so this is also the absent answer. */
+    memset(out, 0, sizeof *out);
+
+    char name[32];
+    if(!doc_get_string(doc, BUILD_SECTION, "system", name, sizeof name)) {
+        if(doc_has_key(doc, BUILD_SECTION, "system"))
+            return set_error(err, err_size, "[build].system must be a string");
+        return true;
+    }
+
+    for(size_t i = 0; i < sizeof BUILD_SYSTEMS / sizeof BUILD_SYSTEMS[0]; i++) {
+        if(strcmp(BUILD_SYSTEMS[i].name, name) == 0) {
+            out->system = BUILD_SYSTEMS[i].system;
+            return true;
+        }
+    }
+    /* Never a fallback to running it anyway, and never a fallback to `none`:
+       one would be `sh -c` on a stranger's word and the other would compile
+       sources that were told they needed configuring first (RFC-0009). */
+    return set_error(err, err_size,
+                     "[build].system '%s' is not none, make, cmake, autotools or meson", name);
 }
 
 /* --- [plugin] --- */

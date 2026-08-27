@@ -33,6 +33,10 @@ typedef struct {
     /* Where to fetch from, when the recipe's form is source. */
     source_spec source;
     recipe_artifacts artifacts;
+    /* What its own sources need before they compile. Read here for the same
+       reason as everything below: the recipe is alive now, and molto refuses a
+       build system it cannot run before fetching a byte of the source. */
+    recipe_build build;
     /* What this package depends on in turn, read from the same recipe. It is
        here because it is only readable while the registry's answer is alive,
        and because a second request to learn it would ask the registry the

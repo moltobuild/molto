@@ -580,3 +580,80 @@ MOLTEST(an_unreadable_source_is_not_taken_for_a_registry_package) {
     EXPECT_EQ(dep_source_path, dep_graph_source_kind("registry"));
     EXPECT_EQ(dep_source_path, dep_graph_source_kind(NULL));
 }
+
+/* --- the build system a dependency's recipe names --- */
+
+/* Molto runs none of them. Compiling the sources anyway is not a lesser version
+   of honouring the recipe: it is a green build of something the recipe said
+   needs configuring first, which is what happened while nothing read the
+   table. */
+MOLTEST(a_dependency_built_by_a_build_system_molto_cannot_run_is_refused) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "png", "[build]\nsystem = \"cmake\"\n"));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"png"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    EXPECT_FALSE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_NULL(graph);
+
+    /* Both halves are the message's job: which dependency to look at, and what
+       it asked for that molto could not give it. */
+    EXPECT_NOT_NULL(strstr(err, "png"));
+    EXPECT_NOT_NULL(strstr(err, "cmake"));
+
+    sandbox_close(&at);
+}
+
+/* The one value molto can honour, and the reason the refusal above is a
+   refusal rather than the whole table being rejected. */
+MOLTEST(a_dependency_that_names_no_build_system_resolves) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "amalgam", "[build]\nsystem = \"none\"\n"));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"amalgam"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_EQ(1u, dep_graph_count(graph));
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
+/* Reached through another package rather than named by the manifest: the
+   refusal is on the walk, so depth does not get around it. */
+MOLTEST(a_transitive_dependency_naming_a_build_system_is_refused_too) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char deps[PATH_MAX_LEN * 2];
+    dep_on(&at, "png", deps, sizeof deps);
+    EXPECT_TRUE(make_package(&at, "wrapper", deps));
+    EXPECT_TRUE(make_package(&at, "png", "[build]\nsystem = \"autotools\"\n"));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"wrapper"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    EXPECT_FALSE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+
+    EXPECT_NOT_NULL(strstr(err, "png"));
+    EXPECT_NOT_NULL(strstr(err, "autotools"));
+    /* And says who pulled it in, which is where the fix has to go. */
+    EXPECT_NOT_NULL(strstr(err, "wrapper"));
+
+    sandbox_close(&at);
+}
