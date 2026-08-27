@@ -1467,6 +1467,27 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
     return ok;
 }
 
+/* What a frontend's refusal costs the process.
+ *
+ * The same mapping `molto ir` applies, and deliberately the same: the two
+ * commands ask one question of one service, and a script telling "my manifest
+ * is wrong" from "a third-party binary misbehaved" must not depend on which of
+ * them it ran. `frontend_none` is an invalid manifest rather than a build
+ * failure because what is missing is a description of a project, not code that
+ * compiles — RFC-0002 enumerates the codes so that difference survives. */
+static int frontend_exit_code(frontend_result answer) {
+    switch(answer) {
+    case frontend_ok:
+        return exit_ok;
+    case frontend_none:
+    case frontend_bad_manifest:
+        return exit_invalid_manifest;
+    case frontend_failed:
+        return exit_plugin_failure;
+    }
+    return exit_build_failure;
+}
+
 /* Load the manifest, resolve what it depends on, and work out every unit the
    project's own build would compile — without compiling any of them. `objects`
    is caller-initialised and caller-freed; everything the units borrow belongs
@@ -1504,12 +1525,23 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
        said. The manifest is read twice for now — once here and once by
        load_project above, which is still where the compile line's options come
        from — and the second read goes away with `project_ctx` when the options
-       are lowered from the document too. */
+       are lowered from the document too.
+     *
+       Asked of the whole selection rather than of the native frontend by name.
+       Today that resolves to the same thing — load_project above has already
+       refused a directory with no Project.toml, and frontend_run prefers the
+       native frontend wherever one is — so this changes no build that works
+       now. What it changes is where the choice lives: one service decides which
+       frontend describes a directory, and `molto build` and `molto ir` cannot
+       come to disagree about it. The plugin half of that choice becomes
+       reachable when a build can find a root without a manifest. */
     char frontend_err[512] = "";
-    if(!frontend_native(root, profile_name(profile), &plan->doc, frontend_err,
-                        sizeof frontend_err)) {
-        fprintf(stderr, "molto: %s\n", frontend_err);
-        return exit_build_failure;
+    const frontend_result described =
+        frontend_run(root, profile_name(profile), &plan->doc, frontend_err, sizeof frontend_err);
+    if(described != frontend_ok) {
+        fprintf(stderr, "molto: %s\n",
+                frontend_err[0] != '\0' ? frontend_err : "nothing here describes a project");
+        return frontend_exit_code(described);
     }
     if(!document_sources(&plan->doc, root, doc_targets_project, &plan->sources))
         return exit_build_failure;
