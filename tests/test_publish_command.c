@@ -227,3 +227,30 @@ MOLTEST(publish_lets_a_provision_through_beside_system_none) {
 
     EXPECT_NE(exit_invalid_manifest, publish(text));
 }
+
+/* A coordinate is immutable, so a version nothing can depend on is a coordinate
+   spent for good. `pcre2@10.47` passed every other rule and then could not be
+   named by a manifest, which refuses two components as "not a version". */
+MOLTEST(publish_refuses_a_package_version_no_manifest_could_name) {
+    char text[RECIPE_MAX];
+    snprintf(text, sizeof text, "%s", SOURCE_RECIPE);
+    char *version = strstr(text, "\"3.53.4\"");
+    ASSERT_NOT_NULL(version);
+    memcpy(version, "\"3.53\"\n ", 8);
+
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+/* And leaves the other two kinds alone: a toolchain called 13.2.0-x86_64 is a
+   real thing, and RFC-0009 asks semver of a package alone. */
+MOLTEST(publish_lets_a_toolchain_name_itself_what_it_likes) {
+    static const char *const toolchain = "kind = \"toolchain\"\n"
+                                         "name = \"gcc\"\n"
+                                         "version = \"13.2.0-x86_64\"\n"
+                                         "target = \"x86_64-unknown-linux-gnu\"\n"
+                                         "\n"
+                                         "[toolchain]\n"
+                                         "cc = \"bin/gcc\"\n";
+
+    EXPECT_NE(exit_invalid_manifest, publish(toolchain));
+}
