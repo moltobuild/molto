@@ -9,8 +9,9 @@
 
 This RFC defines the **Recipe**: the TOML document that describes an artifact
 the ecosystem can distribute. It specifies the coordinate every recipe carries,
-the `[source]`, `[build]` and `[artifacts]` tables that describe how something
-is obtained, built and consumed, the tables specific to each kind, and the
+the `[source]`, `[provide]`, `[build]` and `[artifacts]` tables that describe
+how something is obtained, completed, built and consumed, the tables specific to
+each kind, and the
 compatibility rules that let a recipe written today be read by a Molto released
 later.
 
@@ -51,10 +52,11 @@ explicit key rather than by which tables happen to be absent:
   form a `toolchain` or a `tool` may take.
 - A **source recipe** (`form = "source"`) describes how to obtain and build
   something that is not a Molto package. It carries `[source]` and `[build]`,
-  and the registry stores the recipe alone — there are no bytes to upload. This
-  is what a `version` dependency resolves to when the thing on the other end
-  was never a Molto package. RFC-0008 once had a `recipe` source for naming one
-  of these directly; it is withdrawn, and that document says why.
+  optionally `[provide]`, and the registry stores the recipe alone — there are
+  no bytes to upload. This is what a `version` dependency resolves to when the
+  thing on the other end was never a Molto package. RFC-0008 once had a `recipe`
+  source for naming one of these directly; it is withdrawn, and that document
+  says why.
 
 The discriminator is explicit because inference is what turns a typo into a
 different document. A source recipe with a misspelled `[souce]` table would, by
@@ -132,6 +134,75 @@ a shell command that unpacks it, and that is the same temptation `[build]`
 refuses for the same reason. A recipe that could run a command would make every
 dependency a remote code execution with extra steps, and the format that
 results from naming a bounded set of packings is both safer and easier to read.
+
+## `[provide]`
+
+Source recipes only. Files the build needs that upstream already ships under
+another name, copied into place after the source is unpacked and before
+anything compiles.
+
+Every entry is a destination and the file it comes from, both relative to the
+root of the source:
+
+```toml
+[provide]
+"pnglibconf.h" = "scripts/pnglibconf.h.prebuilt"
+```
+
+That one line is the whole distance between libpng and a build. `configure`
+writes `pnglibconf.h`, and what it writes for a default build is a file already
+in the tarball; without it the compiler reaches `pngpriv.h` and reports *"The
+include path of `<zlib.h>` is incorrect"*, which is what a missing configuration
+step looks like from the inside. The pattern is not libpng's alone — libjpeg
+ships `jconfig.txt`, pcre2 ships `config.h.generic`, expat ships
+`expat_config.h.cmake`. Upstream packaged the answer for people who would not
+run `configure`, and every one of those projects is otherwise a source drop
+Molto could already consume.
+
+### What it is not
+
+It is not a patch list, and the difference is the reason this table exists in a
+format that refused one. A patch changes bytes; this moves a file the source
+already contains, without reading it. There is no diff to apply, no context to
+match, no text to substitute, and nothing to go wrong halfway. Both sides of
+every entry are bytes the digest already covered (`[source]`), so a recipe can
+rearrange what upstream shipped and can introduce nothing.
+
+It is also not a build step. Nothing is executed, and the result is a pure
+function of the fetched source and the recipe — which is what lets a consumer
+holding only those two reproduce the drop exactly, and what lets the catalogue
+show the whole of it before a byte is downloaded (RFC-0010).
+
+### Rules
+
+- **Both paths are relative to the root of the source.** An absolute path, a
+  `..` component, or a symlink whose target leaves the root is a rejected
+  recipe. The drop is the boundary, the same one `[artifacts].sources` observes.
+- **The file it comes from must exist and be a regular file.** A recipe naming
+  one the source does not contain is refused rather than skipped: it believed
+  something about the source that is not true, and a build that continued would
+  fail later and blame the compiler.
+- **The destination must not already exist.** This supplies what is missing; it
+  does not replace what is there. Overwriting a file upstream shipped is how a
+  copy becomes a patch by another name, and the refusal is what keeps the two
+  apart.
+- **At most 8 entries.** A recipe reaching for a ninth is restructuring a source
+  tree rather than completing its configuration, and that is a fork.
+- **Only with `system = "none"`.** Every other build system does its own
+  configuration, and a recipe that both names one and supplies its output is
+  saying two contradictory things about who is in charge. Refused rather than
+  ignored.
+
+### Ordering
+
+Applied once, after unpacking and **before the fetch is stamped complete**, so a
+drop in the cache is either fully described by its recipe or absent. An
+interrupted fetch is removed and retried, as it already was; there is no state
+in which a consumer finds a half-provided tree.
+
+Entries do not see each other. A destination written by one is not a source for
+another, whatever order they appear in — chaining is a program, and this is a
+table.
 
 ## `[build]`
 
@@ -474,35 +545,35 @@ repository = "https://github.com/example/http"
 ### A source package
 
 The case `spec.md` §8 was written for: a library that predates every package
-manager that would want it, obtained and built on the consumer's machine.
-`[build]` names an existing build system and passes it arguments; it does not
-carry a script:
+manager that would want it, with a `configure` script and thirty years of
+history. This one is measured rather than sketched — it builds, and the build
+writes a PNG:
 
 ```toml
 schema = 1
 form = "source"
 kind = "package"
 name = "libpng"
-version = "1.6.40"
+version = "1.6.58"
 target = "any"
 
 [source]
-archive = "https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz"
-sha256 = "8f720b363aa08fed695ebe0e2b4e6ada6f0b5f4b1e3e05bdc0f5c9d9b4c72c99"
-strip_prefix = "libpng-1.6.40"
+git = "https://github.com/pnggroup/libpng"
+rev = "3061454d980de7d53608f594194cfac722721d2a"
+
+[provide]
+"pnglibconf.h" = "scripts/pnglibconf.h.prebuilt"
 
 [build]
-system = "autotools"
-args = ["--disable-shared", "--enable-static"]
-jobs = true
-
-[build.env]
-CFLAGS = "-fPIC"
+system = "none"
 
 [artifacts]
-type = "static"
-include = ["include"]
-link = ["png16"]
+type = "source"
+sources = ["png.c", "pngerror.c", "pngget.c", "pngmem.c", "pngpread.c",
+           "pngread.c", "pngrio.c", "pngrtran.c", "pngrutil.c", "pngset.c",
+           "pngtrans.c", "pngwio.c", "pngwrite.c", "pngwtran.c", "pngwutil.c"]
+include = ["."]
+link = ["m"]
 
 [deps]
 zlib = "1.3.1"
@@ -512,6 +583,24 @@ description = "The reference library for the PNG image format"
 license = "libpng-2.0"
 homepage = "http://www.libpng.org/pub/png/libpng.html"
 ```
+
+Four things this recipe settles that the tables alone leave open:
+
+- **`configure` was writing one file.** Earlier revisions of this document
+  showed libpng as `system = "autotools"`, which is honest about what upstream
+  ships and useless to a Molto that runs no build system. The whole of what
+  `configure` does for a default build is copy `scripts/pnglibconf.h.prebuilt`
+  into place, and `[provide]` does that. What was a build system is a line.
+- **`rev`, never `tag`.** A tag can be moved and a published coordinate may
+  never mean different bytes later (RFC-0010). `git` is exempt from `sha256`
+  because a commit id is a digest — which a tag is not.
+- **`sources` is fifteen of the seventy-seven `.c` in the tree.** The rest are
+  `contrib/` demos, `arm/` NEON that an x86 build must not compile, and
+  `pngtest.c` with its own `main()`. `example.c` is documentation that happens
+  to end in `.c`.
+- **`link = ["m"]` is not optional.** `png.c` and `pngrtran.c` call `pow` and
+  `floor`, and without it the failure is an undefined reference at link time
+  naming neither libpng nor the recipe.
 
 ## A real one: `sqlite`
 
@@ -627,17 +716,37 @@ without looking for an archive, and the registry stores it with no blob (its
 one). `source_service` fetches a `[source]` — archive with its digest verified,
 git at a rev, or a local path — into a cache addressed by coordinate.
 
+The gap this section described longest is closed. `[artifacts]` reaches a
+compile line: a package's `include`, `defines`, `flags` and `link` are folded
+into the targets that compile against it, and `sources` decides which of the
+drop's files are units at all. `[build].system` is read as of molto 0.28.0 and
+anything but `none` is refused, naming the dependency — before then nothing read
+the table, so a recipe declaring `cmake` had its sources compiled raw and the
+build reported success. `molto publish` runs those same readers, so a recipe
+that no consumer could use is refused before it is sent (0.28.0).
+
+Two published coordinates exercise the whole of it: `zlib 1.3.1` and
+`yyjson 0.12.0`, both `form = "source"`, both fetched from upstream at a pinned
+`rev` and compiled as the consumer's own units.
+
 What is specified here and consumed nowhere:
 
-- **`[build]` and `[artifacts]` at build time.** They are validated and stored,
-  and nothing acts on them: no build system is run, and nothing puts `include`,
-  `link`, `defines` or `sources` on a compile line. This is the largest gap in
-  this RFC and it is blocked on the rest of RFC-0008 — a resolver to decide
-  *that* a dependency is wanted, which the fetcher and the recipe then serve.
-- **`[deps]` inside a package recipe.** It is checked to be a table and nothing
-  more — its keys, sources and constraints are unvalidated. Since a registry
-  cannot resolve versions (RFC-0010) it cannot check satisfiability, but it can
-  and should check the shape, and today it does not.
+- **`[provide]`.** Specified by this revision and implemented by nothing. It is
+  the smallest remaining distance between the format and the libraries it was
+  written for: libpng is one entry away, and libjpeg, pcre2 and expat are the
+  same shape. The registry needs it too: `recipe.ts` validates the tables it
+  knows and does not enumerate the rest, so a recipe carrying this one is stored
+  and served verbatim today — which means it round-trips before it is checked,
+  and a malformed one would reach a consumer rather than its publisher.
+- **`via`, `args`, `env` and `jobs` in `[build]`.** Every `system` that could
+  use them is refused, so reading them today would be code no build can reach.
+  They arrive with the first mechanism that honours a build system —
+  `via = "frontend"`, which needs RFC-0014's frontend capability to reach a
+  build at all.
+- **`[deps]` inside a package recipe, registry-side.** Molto reads it fully — it
+  is what a transitive walk follows — but the registry checks only that it is a
+  table. Since a registry cannot resolve versions (RFC-0010) it cannot check
+  satisfiability, but it can and should check the shape, and today it does not.
 - **`[about]` and `package.std`.** Both appear in the registry's published
   examples and neither is validated or specified anywhere else. `package.std` is
   not adopted by this RFC: a standard belongs to a build, and a binary artifact
@@ -649,6 +758,12 @@ A recipe is not a build script. It names a build system and gives it arguments;
 it cannot run commands, patch sources, or branch on the host. A dependency that
 genuinely needs those is a dependency that needs a fork.
 
+`[provide]` is not an exception to that and is worth reading against it. It
+moves a file the source already contains, chosen by name and copied without
+being read: no command runs, no byte changes, and nothing is decided by looking
+at the host. A recipe that needs the file to *differ* from what upstream shipped
+is asking to patch sources, and this table cannot express it.
+
 A recipe does not describe how to *install* anything system-wide. Artifacts land
 in Molto's cache and on compile lines; nothing is written outside the user's
 Molto directories.
@@ -659,9 +774,13 @@ package should be one, and should publish as `kind = "package"` with a real
 
 ## Reserved / Future
 
-- **Patches.** A `[[patch]]` list applied between `[source]` and `[build]` is
-  the obvious next request and the obvious way to reintroduce arbitrary
-  behaviour. It waits until source recipes exist and the need is concrete.
+- **Patches.** A `[[patch]]` list applied between `[source]` and `[build]`
+  remains the obvious way to reintroduce arbitrary behaviour, and remains
+  reserved. What made it look necessary was configuration, not modification —
+  the library that needs `configure` to write one header and nothing else — and
+  `[provide]` answers that case without reading a byte of what it moves. A
+  request that `[provide]` cannot serve is a request to change what upstream
+  shipped, which is a fork rather than a recipe.
 - **Per-target overrides**, so one recipe can describe a build that differs on
   Windows without becoming three recipes.
 - **Feature selection**, once RFC-0003's `[features]` is un-reserved.
