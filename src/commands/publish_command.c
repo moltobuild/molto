@@ -8,6 +8,7 @@
 #include <molto/services/registry_service.h>
 #include <molto/services/source_service.h>
 #include <molto/util/doc.h>
+#include <molto/util/semver.h>
 #include <molto/util/toml.h>
 
 #include <dirent.h>
@@ -111,6 +112,30 @@ static bool check_tables(const toml_document *doc, const coordinate *at) {
     return has_table(doc, at->kind, table);
 }
 
+/* A package's version has to be one a manifest can name.
+ *
+ * RFC-0009 lets a toolchain or a tool call itself what it likes — `13.2.0-x86_64`
+ * is a real toolchain — but requires a `package` to be semver, because RFC-0008
+ * orders versions to propose the newest. Checked here because a coordinate is
+ * immutable: `pcre2@10.47` publishes cleanly against every other rule and then
+ * cannot be depended on, since `[deps]` refuses two components as "not a
+ * version". The registry does not catch it either, its pattern being about
+ * characters rather than shape. */
+static bool check_version(const coordinate *at) {
+    if(strcmp(at->kind, "package") != 0)
+        return true;
+
+    semver parsed;
+    if(semver_parse(at->version, &parsed))
+        return true;
+
+    fprintf(stderr,
+            "molto: a package's version must be major.minor.patch and '%s' is not; nothing could "
+            "depend on it, and a published coordinate cannot be taken back\n",
+            at->version);
+    return false;
+}
+
 /* What the tables say, read by exactly the code that will read them back.
  *
  * `check_tables` above asks whether a table is there; this asks whether it says
@@ -194,7 +219,7 @@ static bool read_coordinate(const char *path, coordinate *out) {
               read_key(doc, "name", out->name, sizeof out->name) &&
               read_key(doc, "version", out->version, sizeof out->version) &&
               read_key(doc, "target", out->target, sizeof out->target) &&
-              read_form(doc, &out->from_source) && check_tables(doc, out) &&
+              read_form(doc, &out->from_source) && check_version(out) && check_tables(doc, out) &&
               check_content(doc, out);
 
     toml_free(doc);
