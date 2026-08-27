@@ -249,8 +249,8 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    what it depends on in turn. Read through the same doc_view the registry's
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
-                                project_deps *deps, manifest_about *about, char *err,
-                                size_t err_size) {
+                                recipe_build *build, project_deps *deps, manifest_about *about,
+                                char *err, size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
@@ -272,6 +272,7 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
 
     const doc_view view = doc_from_toml(doc);
     const bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
+                    recipe_read_build(view, build, err, err_size) &&
                     project_deps_read_doc(view, deps, err, err_size) &&
                     manifest_read_about(view, "about", about, err, err_size);
     toml_free(doc);
@@ -288,6 +289,10 @@ typedef struct {
     char root[DEP_GRAPH_PATH_MAX];
     char checksum[SOURCE_DIGEST_MAX];
     recipe_artifacts artifacts;
+    /* What the recipe says its own sources need before they compile. Carried
+       here rather than checked inside each route, so the one refusal covers
+       both a recipe a registry served and one a fetched source brought. */
+    recipe_build build;
     project_deps deps;
     manifest_about about;
     /* Set for a registry dependency, whose bytes are not fetched during the
@@ -328,6 +333,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         snprintf(out->checksum, sizeof out->checksum, "%s", resolved->source.sha256);
         snprintf(out->target, sizeof out->target, "%s", resolved->coordinate.target);
         out->artifacts = resolved->artifacts;
+        out->build = resolved->build;
         out->deps = resolved->deps;
         out->about = resolved->about;
         out->spec = resolved->source;
@@ -393,8 +399,8 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
         snprintf(out->checksum, sizeof out->checksum, "%s", spec.sha256);
     }
 
-    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->deps, &out->about, err,
-                               err_size);
+    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->deps,
+                               &out->about, err, err_size);
 }
 
 /* --- the walk --- */
@@ -595,6 +601,25 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     bool ok = dep->resolution == dep_resolution_registry
                   ? visit_registry(ctx, dep, creds, found, reason, sizeof reason)
                   : visit_carried(ctx, dep, found, reason, sizeof reason);
+
+    /* One refusal for both routes, placed so the error below composes it with
+       the name of the dependency and of whoever asked for it.
+     *
+       Molto runs no build system. RFC-0009 gives a recipe two ways to have one
+       honoured — `via = "delegate"`, which runs it, and `via = "frontend"`,
+       which needs a plugin to translate it — and neither exists yet. Until one
+       does, a recipe naming `make` is a recipe whose sources were told they
+       need configuring first, and compiling them anyway is not a lesser
+       version of doing what it asked: it is a green build of something the
+       recipe said would not work. That is what happened while nothing read
+       this table. */
+    if(ok && found->build.system != recipe_build_none) {
+        ok = set_error(reason, sizeof reason,
+                       "its recipe builds with %s, and molto runs no build system yet — only "
+                       "[build] system = \"none\", a source drop the consumer compiles as its own",
+                       recipe_build_system_name(found->build.system));
+    }
+
     if(!ok) {
         free(found);
         return entry->required_by[0] == '\0'

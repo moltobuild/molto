@@ -120,6 +120,18 @@ static bool read_artifacts_of(const char *text, recipe_artifacts *out, char *err
     return ok;
 }
 
+static bool read_build_of(const char *text, recipe_build *out, char *err, size_t err_size) {
+    char parse_err[256] = "";
+    toml_document *doc = toml_parse(text, parse_err, sizeof parse_err);
+    if (doc == NULL) {
+        snprintf(err, err_size, "%s", parse_err);
+        return false;
+    }
+    const bool ok = recipe_read_build(doc_from_toml(doc), out, err, err_size);
+    toml_free(doc);
+    return ok;
+}
+
 #define MINIMUM                                                                                    \
     "kind = \"package\"\nname = \"x\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
 
@@ -419,4 +431,56 @@ MOLTEST(a_recipe_rejects_a_standard_of_the_other_language) {
     EXPECT_FALSE(read_artifacts_of("[artifacts]\ncpp_std = \"c11\"\n", &artifacts, other,
                                    sizeof other));
     EXPECT_NOT_NULL(strstr(other, "[artifacts].cpp_std"));
+}
+
+/* --- the build system a source recipe's sources need --- */
+
+/* Absent is `none`, which is the rule `schema` and `form` already follow and is
+   what every source recipe published before this key meant. */
+MOLTEST(a_recipe_with_no_build_table_needs_no_build_system) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_TRUE(read_build_of("[artifacts]\ntype = \"source\"\n", &build, err, sizeof err));
+    EXPECT_EQ(recipe_build_none, build.system);
+}
+
+MOLTEST(a_recipe_reads_every_build_system_the_format_names) {
+    static const struct {
+        const char *name;
+        recipe_build_system system;
+    } CASES[] = {
+        {"none", recipe_build_none},
+        {"make", recipe_build_make},
+        {"cmake", recipe_build_cmake},
+        {"autotools", recipe_build_autotools},
+        {"meson", recipe_build_meson},
+    };
+
+    for (size_t i = 0; i < sizeof CASES / sizeof CASES[0]; i++) {
+        char text[64];
+        snprintf(text, sizeof text, "[build]\nsystem = \"%s\"\n", CASES[i].name);
+
+        recipe_build build;
+        char err[256] = "";
+        EXPECT_TRUE(read_build_of(text, &build, err, sizeof err));
+        EXPECT_EQ(CASES[i].system, build.system);
+        EXPECT_STREQ(CASES[i].name, recipe_build_system_name(build.system));
+    }
+}
+
+/* Neither `sh -c` on a stranger's word nor a quiet fall back to `none`: one
+   would run what the recipe named and the other would compile sources that were
+   told they need configuring first (RFC-0009). */
+MOLTEST(a_recipe_rejects_a_build_system_molto_does_not_know) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"scons\"\n", &build, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "scons"));
+}
+
+MOLTEST(a_recipe_rejects_a_build_system_that_is_not_a_string) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = 3\n", &build, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[build].system"));
 }

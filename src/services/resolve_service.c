@@ -160,6 +160,8 @@ static bool read_artifact(json_value artifact, const char *name, const char *ver
         return false;
     if(!recipe_read_artifacts(recipe, &out->artifacts, err, err_size))
         return false;
+    if(!recipe_read_build(recipe, &out->build, err, err_size))
+        return false;
     /* Read here, while the answer is still parsed: this is what a transitive
        walk follows, and asking the registry again for a table it already sent
        would be a request per edge. */
