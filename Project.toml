@@ -8,7 +8,6 @@
 # This manifest builds molto: `molto build` and `molto test` both work on it.
 # The Makefile remains as the bootstrap — something has to compile the first
 # molto — not because molto is unable.
-
 [package]
 name = "molto"
 version = "0.26.0"
