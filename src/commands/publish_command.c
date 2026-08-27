@@ -4,7 +4,10 @@
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
+#include <molto/services/source_service.h>
+#include <molto/util/doc.h>
 #include <molto/util/toml.h>
 
 #include <dirent.h>
@@ -108,6 +111,53 @@ static bool check_tables(const toml_document *doc, const coordinate *at) {
     return has_table(doc, at->kind, table);
 }
 
+/* What the tables say, read by exactly the code that will read them back.
+ *
+ * `check_tables` above asks whether a table is there; this asks whether it says
+ * something a consumer can act on. They are different questions and only the
+ * second one catches `system = "scons"`, a `type` nothing can build, a `std` no
+ * compiler knows, or an `archive` with no digest beside it — each of which
+ * publishes cleanly and then fails in the build of everyone who depends on it.
+ *
+ * Run here rather than left to the registry, which does validate and does agree
+ * with these lists. The registry is the gate; this is the one that answers
+ * before a request is made, which is what `--dry-run` offers to do and what
+ * makes it worth running at all.
+ *
+ * The readers are the consumer's own, deliberately: a publisher and a consumer
+ * disagreeing about what a recipe means is the failure this exists to prevent,
+ * and two implementations of the same check is how that starts.
+ *
+ * `[artifacts]` and `[build]` are read for either form — an absent table is not
+ * an error in either, so a binary recipe is checked for a malformed one rather
+ * than excused. `[source]` is read only where there is one. */
+static bool check_content(const toml_document *doc, const coordinate *at) {
+    const doc_view view = doc_from_toml(doc);
+    char err[256] = "";
+
+    recipe_artifacts artifacts;
+    if(!recipe_read_artifacts(view, &artifacts, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    recipe_build build;
+    if(!recipe_read_build(view, &build, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    if(!at->from_source)
+        return true;
+
+    source_spec spec;
+    if(!source_read(view, &spec, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+    return true;
+}
+
 static bool read_coordinate(const char *path, coordinate *out) {
     char *text = fs_read_file(path);
     if(text == NULL) {
@@ -127,7 +177,8 @@ static bool read_coordinate(const char *path, coordinate *out) {
               read_key(doc, "name", out->name, sizeof out->name) &&
               read_key(doc, "version", out->version, sizeof out->version) &&
               read_key(doc, "target", out->target, sizeof out->target) &&
-              read_form(doc, &out->from_source) && check_tables(doc, out);
+              read_form(doc, &out->from_source) && check_tables(doc, out) &&
+              check_content(doc, out);
 
     toml_free(doc);
     return ok;
