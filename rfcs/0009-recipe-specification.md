@@ -9,7 +9,7 @@
 
 This RFC defines the **Recipe**: the TOML document that describes an artifact
 the ecosystem can distribute. It specifies the coordinate every recipe carries,
-the `[source]`, `[provide]`, `[build]` and `[artifacts]` tables that describe
+the `[source]`, `[[provide]]`, `[build]` and `[artifacts]` tables that describe
 how something is obtained, completed, built and consumed, the tables specific to
 each kind, and the
 compatibility rules that let a recipe written today be read by a Molto released
@@ -52,7 +52,7 @@ explicit key rather than by which tables happen to be absent:
   form a `toolchain` or a `tool` may take.
 - A **source recipe** (`form = "source"`) describes how to obtain and build
   something that is not a Molto package. It carries `[source]` and `[build]`,
-  optionally `[provide]`, and the registry stores the recipe alone — there are
+  optionally `[[provide]]`, and the registry stores the recipe alone — there are
   no bytes to upload. This is what a `version` dependency resolves to when the
   thing on the other end was never a Molto package. RFC-0008 once had a `recipe`
   source for naming one of these directly; it is withdrawn, and that document
@@ -135,19 +135,30 @@ refuses for the same reason. A recipe that could run a command would make every
 dependency a remote code execution with extra steps, and the format that
 results from naming a bounded set of packings is both safer and easier to read.
 
-## `[provide]`
+## `[[provide]]`
 
 Source recipes only. Files the build needs that upstream already ships under
-another name, copied into place after the source is unpacked and before
-anything compiles.
+another name, copied into place before anything compiles.
 
-Every entry is a destination and the file it comes from, both relative to the
-root of the source:
+Each entry names the file to write and the file to copy it from, both relative
+to the root of the source:
+
+| Key | Type | Description |
+|---|---|---|
+| `file` | string | The path to write, relative to the root of the source |
+| `from` | string | The file to copy it from, also relative to that root |
 
 ```toml
-[provide]
-"pnglibconf.h" = "scripts/pnglibconf.h.prebuilt"
+[[provide]]
+file = "pnglibconf.h"
+from = "scripts/pnglibconf.h.prebuilt"
 ```
+
+A list of tables rather than a map of destination to source, which is the
+shape this section carried in its first revision. The reason is the format's
+own reader: TOML bare keys hold no dots, and every destination worth writing is
+a header — `pnglibconf.h`, `config.h`, `jconfig.h`. A map would have needed
+quoted keys, which this format does not have and should not grow for one table.
 
 That one line is the whole distance between libpng and a build. `configure`
 writes `pnglibconf.h`, and what it writes for a default build is a file already
@@ -182,10 +193,13 @@ show the whole of it before a byte is downloaded (RFC-0010).
   one the source does not contain is refused rather than skipped: it believed
   something about the source that is not true, and a build that continued would
   fail later and blame the compiler.
-- **The destination must not already exist.** This supplies what is missing; it
-  does not replace what is there. Overwriting a file upstream shipped is how a
-  copy becomes a patch by another name, and the refusal is what keeps the two
-  apart.
+- **`file` must not already exist, unless what is there is byte-identical to
+  `from`.** This supplies what is missing; it does not replace what is there.
+  Overwriting a file upstream shipped is how a copy becomes a patch by another
+  name, and the refusal is what keeps the two apart. The exemption is not a
+  softening of it: identical bytes mean the copy already happened, and the
+  operation has to be repeatable because a `path` origin is used where it lies
+  and carries no stamp, so it is provided again on every build.
 - **At most 8 entries.** A recipe reaching for a ninth is restructuring a source
   tree rather than completing its configuration, and that is a fork.
 - **Only with `system = "none"`.** Every other build system does its own
@@ -195,14 +209,15 @@ show the whole of it before a byte is downloaded (RFC-0010).
 
 ### Ordering
 
-Applied once, after unpacking and **before the fetch is stamped complete**, so a
-drop in the cache is either fully described by its recipe or absent. An
-interrupted fetch is removed and retried, as it already was; there is no state
-in which a consumer finds a half-provided tree.
+Applied once the recipe and the source are both in hand, and before a single
+unit is compiled. Not during the fetch, which cannot be where it happens: a
+recipe a fetched source carries *is* those bytes, so it is unreadable until the
+fetch is done. Provisioning therefore runs after, on every build, which is what
+the idempotence rule above pays for.
 
-Entries do not see each other. A destination written by one is not a source for
+Entries do not see each other. A `file` written by one is not the `from` of
 another, whatever order they appear in — chaining is a program, and this is a
-table.
+list.
 
 ## `[build]`
 
@@ -561,8 +576,9 @@ target = "any"
 git = "https://github.com/pnggroup/libpng"
 rev = "3061454d980de7d53608f594194cfac722721d2a"
 
-[provide]
-"pnglibconf.h" = "scripts/pnglibconf.h.prebuilt"
+[[provide]]
+file = "pnglibconf.h"
+from = "scripts/pnglibconf.h.prebuilt"
 
 [build]
 system = "none"
@@ -590,7 +606,7 @@ Four things this recipe settles that the tables alone leave open:
   showed libpng as `system = "autotools"`, which is honest about what upstream
   ships and useless to a Molto that runs no build system. The whole of what
   `configure` does for a default build is copy `scripts/pnglibconf.h.prebuilt`
-  into place, and `[provide]` does that. What was a build system is a line.
+  into place, and `[[provide]]` does that. What was a build system is a line.
 - **`rev`, never `tag`.** A tag can be moved and a published coordinate may
   never mean different bytes later (RFC-0010). `git` is exempt from `sha256`
   because a commit id is a digest — which a tag is not.
@@ -731,8 +747,8 @@ Two published coordinates exercise the whole of it: `zlib 1.3.1` and
 
 What is specified here and consumed nowhere:
 
-- **`[provide]`.** Specified by this revision and implemented by nothing. It is
-  the smallest remaining distance between the format and the libraries it was
+- **`[[provide]]`.** Specified by this revision and implemented by nothing. It
+  is the smallest remaining distance between the format and the libraries it was
   written for: libpng is one entry away, and libjpeg, pcre2 and expat are the
   same shape. The registry needs it too: `recipe.ts` validates the tables it
   knows and does not enumerate the rest, so a recipe carrying this one is stored
@@ -758,7 +774,7 @@ A recipe is not a build script. It names a build system and gives it arguments;
 it cannot run commands, patch sources, or branch on the host. A dependency that
 genuinely needs those is a dependency that needs a fork.
 
-`[provide]` is not an exception to that and is worth reading against it. It
+`[[provide]]` is not an exception to that and is worth reading against it. It
 moves a file the source already contains, chosen by name and copied without
 being read: no command runs, no byte changes, and nothing is decided by looking
 at the host. A recipe that needs the file to *differ* from what upstream shipped
@@ -778,8 +794,8 @@ package should be one, and should publish as `kind = "package"` with a real
   remains the obvious way to reintroduce arbitrary behaviour, and remains
   reserved. What made it look necessary was configuration, not modification —
   the library that needs `configure` to write one header and nothing else — and
-  `[provide]` answers that case without reading a byte of what it moves. A
-  request that `[provide]` cannot serve is a request to change what upstream
+  `[[provide]]` answers that case without reading a byte of what it moves. A
+  request that `[[provide]]` cannot serve is a request to change what upstream
   shipped, which is a fork rather than a recipe.
 - **Per-target overrides**, so one recipe can describe a build that differs on
   Windows without becoming three recipes.

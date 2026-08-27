@@ -205,3 +205,25 @@ MOLTEST(publish_refuses_an_archive_with_no_digest_beside_it) {
 MOLTEST(publish_lets_a_sound_source_recipe_through_to_its_registry) {
     EXPECT_NE(exit_invalid_manifest, publish(SOURCE_RECIPE));
 }
+
+/* Every other build system does its own configuring, so a recipe that both
+   names one and supplies its output says two contradictory things about who is
+   in charge (RFC-0009). */
+MOLTEST(publish_refuses_a_provision_beside_a_build_system_that_configures) {
+    char text[RECIPE_MAX];
+    snprintf(text, sizeof text,
+             "%s\n[[provide]]\nfile = \"config.h\"\nfrom = \"config.h.generic\"\n", SOURCE_RECIPE);
+    char *system = strstr(text, "\"none\"");
+    ASSERT_NOT_NULL(system);
+    memcpy(system, "\"make\"", 6);
+
+    EXPECT_EQ(exit_invalid_manifest, publish(text));
+}
+
+MOLTEST(publish_lets_a_provision_through_beside_system_none) {
+    char text[RECIPE_MAX];
+    snprintf(text, sizeof text,
+             "%s\n[[provide]]\nfile = \"config.h\"\nfrom = \"config.h.generic\"\n", SOURCE_RECIPE);
+
+    EXPECT_NE(exit_invalid_manifest, publish(text));
+}

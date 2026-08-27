@@ -133,6 +133,43 @@ typedef struct {
                                          size_t err_size);
 
 /*
+ * `[[provide]]`: files the build needs that upstream ships under another name.
+ *
+ * The whole of what `configure` does for a default libpng build is copy
+ * `scripts/pnglibconf.h.prebuilt` into `pnglibconf.h`; libjpeg ships
+ * `jconfig.txt`, pcre2 `config.h.generic`, expat `expat_config.h.cmake`. Every
+ * one of those is a source drop molto could otherwise consume, held back by one
+ * file that upstream already wrote and only named differently.
+ *
+ * A list of tables and not a map, because a destination is a header and TOML
+ * bare keys hold no dots. Both paths are relative to the root of the source and
+ * are checked against it when they are applied — this reader only reads.
+ *
+ * It moves bytes the `[source]` digest already covered, reading none of them:
+ * no diff, no substitution, nothing executed. A recipe that needs the file to
+ * *differ* from what upstream shipped is asking to patch, which this cannot
+ * express and RFC-0009 refuses.
+ */
+#define RECIPE_MAX_PROVIDE 8
+#define RECIPE_PROVIDE_PATH_MAX 128
+
+typedef struct {
+    char file[RECIPE_PROVIDE_PATH_MAX];
+    char from[RECIPE_PROVIDE_PATH_MAX];
+} recipe_provision;
+
+/* Tagged so a header lower in the include order can name it without reaching
+   for this one: project_deps.h already includes source_service.h, and this file
+   includes project_ctx.h, so the two cannot include each other. */
+typedef struct recipe_provide {
+    recipe_provision items[RECIPE_MAX_PROVIDE];
+    size_t count;
+} recipe_provide;
+
+[[nodiscard]] bool recipe_read_provide(doc_view doc, recipe_provide *out, char *err,
+                                       size_t err_size);
+
+/*
  * `[build]`: the build system a source recipe's own sources need (RFC-0009).
  *
  * `none` is the one Molto can honour, and it is what a source drop that needs

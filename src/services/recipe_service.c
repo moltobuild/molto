@@ -212,6 +212,51 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
            read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size);
 }
 
+/* --- [[provide]] --- */
+
+#define PROVIDE_ARRAY "provide"
+
+/* One entry. Both keys are required: an entry naming only one of them says half
+   a thing, and guessing the other half is how a recipe comes to mean something
+   nobody wrote. */
+static bool read_provision(doc_view item, size_t index, recipe_provision *out, char *err,
+                           size_t err_size) {
+    if(!doc_get_string(item, "", "file", out->file, sizeof out->file))
+        return set_error(err, err_size, "[[provide]] #%zu has no 'file'", index + 1);
+    if(!doc_get_string(item, "", "from", out->from, sizeof out->from))
+        return set_error(err, err_size, "[[provide]] #%zu has no 'from'", index + 1);
+    if(out->file[0] == '\0' || out->from[0] == '\0')
+        return set_error(err, err_size, "[[provide]] #%zu names an empty path", index + 1);
+    return true;
+}
+
+bool recipe_read_provide(doc_view doc, recipe_provide *out, char *err, size_t err_size) {
+    memset(out, 0, sizeof *out);
+
+    const size_t count = doc_array_len(doc, PROVIDE_ARRAY);
+    if(count == 0)
+        return true;
+    /* Reported rather than truncated, like every other list in this file: an
+       entry silently dropped is a header that is not written and a compiler
+       error that names neither the recipe nor the key. */
+    if(count > RECIPE_MAX_PROVIDE)
+        return set_error(err, err_size,
+                         "[[provide]] has %zu entries and at most %d may be declared; a recipe "
+                         "needing more is restructuring a source tree rather than completing its "
+                         "configuration",
+                         count, RECIPE_MAX_PROVIDE);
+
+    for(size_t i = 0; i < count; i++) {
+        doc_view item;
+        if(!doc_array_at(doc, PROVIDE_ARRAY, i, &item))
+            return set_error(err, err_size, "[[provide]] #%zu is not a table", i + 1);
+        if(!read_provision(item, i, &out->items[i], err, err_size))
+            return false;
+    }
+    out->count = count;
+    return true;
+}
+
 /* --- [build] --- */
 
 static const struct {

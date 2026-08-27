@@ -249,8 +249,8 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    what it depends on in turn. Read through the same doc_view the registry's
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
-                                recipe_build *build, project_deps *deps, manifest_about *about,
-                                char *err, size_t err_size) {
+                                recipe_build *build, recipe_provide *provide, project_deps *deps,
+                                manifest_about *about, char *err, size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
@@ -273,6 +273,7 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
     const doc_view view = doc_from_toml(doc);
     const bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
                     recipe_read_build(view, build, err, err_size) &&
+                    recipe_read_provide(view, provide, err, err_size) &&
                     project_deps_read_doc(view, deps, err, err_size) &&
                     manifest_read_about(view, "about", about, err, err_size);
     toml_free(doc);
@@ -293,6 +294,7 @@ typedef struct {
        here rather than checked inside each route, so the one refusal covers
        both a recipe a registry served and one a fetched source brought. */
     recipe_build build;
+    recipe_provide provide;
     project_deps deps;
     manifest_about about;
     /* Set for a registry dependency, whose bytes are not fetched during the
@@ -334,6 +336,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         snprintf(out->target, sizeof out->target, "%s", resolved->coordinate.target);
         out->artifacts = resolved->artifacts;
         out->build = resolved->build;
+        out->provide = resolved->provide;
         out->deps = resolved->deps;
         out->about = resolved->about;
         out->spec = resolved->source;
@@ -399,8 +402,8 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
         snprintf(out->checksum, sizeof out->checksum, "%s", spec.sha256);
     }
 
-    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->deps,
-                               &out->about, err, err_size);
+    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->provide,
+                               &out->deps, &out->about, err, err_size);
 }
 
 /* --- the walk --- */
@@ -549,6 +552,24 @@ static bool materialize(dep_graph *graph, char *err, size_t err_size) {
     return true;
 }
 
+/* Complete every drop its recipe said was incomplete.
+ *
+ * One pass over the whole graph rather than a step of each route, because the
+ * two routes learn a recipe at different moments: a registry dependency has
+ * one before its bytes exist, and a carried one has bytes before its recipe is
+ * readable. What both have by here is a root and a recipe, which is all this
+ * needs. It runs on every build and is idempotent, since a `path` origin is
+ * used where it lies and carries no stamp to say it was done. */
+static bool provide_all(dep_graph *graph, char *err, size_t err_size) {
+    for(size_t i = 0; i < graph->count; i++) {
+        dep_node *node = graph->nodes[i];
+        char reason[512] = "";
+        if(!source_provide(node->root, &node->provide, reason, sizeof reason))
+            return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
+    }
+    return true;
+}
+
 /* A node's own edges, sorted, so the lock file it ends up in has a stable
    diff whatever order the recipe listed them in. */
 static bool record_edges(dep_node *node, const project_deps *deps, char *err, size_t err_size) {
@@ -642,6 +663,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     snprintf(node->source, sizeof node->source, "%s", source);
     node->scope = entry->scope;
     node->artifacts = found->artifacts;
+    node->provide = found->provide;
     node->about = found->about;
 
     ok = record_edges(node, &found->deps, err, err_size) &&
@@ -876,6 +898,13 @@ bool dep_graph_resolve_with(const project_ctx *ctx, const dep_resolve_options *o
        sources brought down. Before the sort, because the deferred fetches name
        nodes by their position in the array. */
     if(!materialize(graph, err, err_size)) {
+        dep_graph_free(graph);
+        return false;
+    }
+
+    /* After the fetch and before anything reads a source: every root is on
+       disk now, and a drop is not finished until its recipe says it is. */
+    if(!provide_all(graph, err, err_size)) {
         dep_graph_free(graph);
         return false;
     }

@@ -2,7 +2,9 @@
 
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/recipe_service.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +29,20 @@ static bool fail(char *err, size_t err_size, const char *message) {
 static bool fail_about(char *err, size_t err_size, const char *message, const char *subject) {
     if(err != NULL && err_size > 0)
         snprintf(err, err_size, "%s: %s", message, subject);
+    return false;
+}
+
+/* The same, for the messages that have to name which entry went wrong. */
+static bool fail_fmt(char *err, size_t err_size, const char *format, ...)
+    __attribute__((format(printf, 3, 4)));
+
+static bool fail_fmt(char *err, size_t err_size, const char *format, ...) {
+    if(err != NULL && err_size > 0) {
+        va_list args;
+        va_start(args, format);
+        (void)vsnprintf(err, err_size, format, args);
+        va_end(args);
+    }
     return false;
 }
 
@@ -515,4 +531,190 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
     if(ok)
         snprintf(out, out_size, "%s", destination);
     return ok;
+}
+
+/* --- [[provide]] --- */
+
+/* True when any segment of `path` is `..`. Lexical and cheap, so the common
+   refusal happens before a syscall; the symlink half is resolve_inside below. */
+static bool climbs_out(const char *path) {
+    for(const char *at = path; *at != '\0';) {
+        const char *slash = strchr(at, '/');
+        const size_t length = slash == NULL ? strlen(at) : (size_t)(slash - at);
+        if(length == 2 && at[0] == '.' && at[1] == '.')
+            return true;
+        if(slash == NULL)
+            break;
+        at = slash + 1;
+    }
+    return false;
+}
+
+/* `path` with its last segment removed, or "." when it has only one. */
+static void parent_of(const char *path, char *out, size_t size) {
+    const char *slash = strrchr(path, '/');
+    if(slash == NULL) {
+        snprintf(out, size, ".");
+        return;
+    }
+    const size_t length = (size_t)(slash - path);
+    snprintf(out, size, "%.*s", (int)(length == 0 ? 1 : length), length == 0 ? "/" : path);
+}
+
+/* Resolved, and under `root_real`. `path` must exist; a caller holding one that
+   may not asks about its directory instead. */
+static bool resolve_inside(const char *root_real, const char *path) {
+    char *real = realpath(path, NULL);
+    if(real == NULL)
+        return false;
+    const size_t length = strlen(root_real);
+    const bool inside =
+        strncmp(real, root_real, length) == 0 && (real[length] == '/' || real[length] == '\0');
+    free(real);
+    return inside;
+}
+
+/* One entry's path, joined onto the root and checked against it.
+ *
+ * `must_exist` says which of the two this is, and it decides what gets
+ * resolved: the file itself for a `from`, which has to be there, and the
+ * directory for a `file`, which is about to be created. Resolution is what
+ * catches a symlink — a path spelling no `..` still lands elsewhere if a
+ * directory along it points there. */
+static bool provided_path(const char *root, const char *root_real, const char *relative,
+                          const char *which, bool must_exist, size_t index, char *out,
+                          size_t out_size, char *err, size_t err_size) {
+    if(relative[0] == '\0')
+        return fail_fmt(err, err_size, "[[provide]] #%zu names an empty '%s'", index + 1, which);
+    if(relative[0] == '/')
+        return fail_fmt(err, err_size, "[[provide]] #%zu names an absolute '%s'", index + 1, which);
+    if(climbs_out(relative))
+        return fail_fmt(err, err_size,
+                        "[[provide]] #%zu names a '%s' that climbs out of the source", index + 1,
+                        which);
+    if(!fs_format_path(out, out_size, "%s/%s", root, relative))
+        return fail_fmt(err, err_size, "[[provide]] #%zu names a '%s' that is too long", index + 1,
+                        which);
+
+    char probe[SOURCE_PATH_MAX];
+    if(must_exist)
+        snprintf(probe, sizeof probe, "%s", out);
+    else
+        parent_of(out, probe, sizeof probe);
+
+    /* Absent and outside are different answers and get different messages:
+       reporting a missing file as an escape attempt sends the reader looking
+       for a security problem that is not there. */
+    if(!fs_path_exists(probe)) {
+        if(must_exist)
+            return fail_fmt(err, err_size,
+                            "[[provide]] #%zu takes '%s' from the source, which has no such file",
+                            index + 1, relative);
+        return fail_fmt(err, err_size,
+                        "[[provide]] #%zu writes '%s' into a directory the source does not have",
+                        index + 1, relative);
+    }
+    if(!resolve_inside(root_real, probe))
+        return fail_fmt(err, err_size, "[[provide]] #%zu resolves its '%s' outside the source",
+                        index + 1, which);
+    return true;
+}
+
+/* Byte for byte, without loading either into memory: a provision is repeated on
+   every build, and answering "already done" has to be cheap and exact. */
+static bool same_bytes(const char *left, const char *right) {
+    FILE *a = fopen(left, "rb");
+    FILE *b = fopen(right, "rb");
+    bool same = a != NULL && b != NULL;
+    while(same) {
+        char left_chunk[4096];
+        char right_chunk[4096];
+        const size_t read_a = fread(left_chunk, 1, sizeof left_chunk, a);
+        const size_t read_b = fread(right_chunk, 1, sizeof right_chunk, b);
+        if(read_a != read_b || memcmp(left_chunk, right_chunk, read_a) != 0)
+            same = false;
+        else if(read_a == 0)
+            break;
+    }
+    if(a != NULL)
+        (void)fclose(a);
+    if(b != NULL)
+        (void)fclose(b);
+    return same;
+}
+
+static bool copy_bytes(const char *from, const char *to) {
+    FILE *in = fopen(from, "rb");
+    if(in == NULL)
+        return false;
+    FILE *out = fopen(to, "wb");
+    if(out == NULL) {
+        (void)fclose(in);
+        return false;
+    }
+
+    char chunk[4096];
+    size_t read = 0;
+    bool ok = true;
+    while(ok && (read = fread(chunk, 1, sizeof chunk, in)) > 0)
+        ok = fwrite(chunk, 1, read, out) == read;
+    ok = ok && ferror(in) == 0;
+    (void)fclose(in);
+    return fclose(out) == 0 && ok;
+}
+
+static bool provide_one(const char *root, const char *root_real, const recipe_provision *entry,
+                        size_t index, char *err, size_t err_size) {
+    char from[SOURCE_PATH_MAX];
+    char file[SOURCE_PATH_MAX];
+    if(!provided_path(root, root_real, entry->from, "from", true, index, from, sizeof from, err,
+                      err_size) ||
+       !provided_path(root, root_real, entry->file, "file", false, index, file, sizeof file, err,
+                      err_size))
+        return false;
+
+    if(fs_is_dir(from))
+        return fail_fmt(err, err_size,
+                        "[[provide]] #%zu takes '%s' from the source, which is a directory rather "
+                        "than a file",
+                        index + 1, entry->from);
+
+    if(fs_path_exists(file)) {
+        /* Already provided is not an error — a path origin is used where it
+           lies and is provided again on every build. Anything else there is
+           upstream's own file, and replacing it would be a patch. */
+        if(same_bytes(file, from))
+            return true;
+        return fail_fmt(
+            err, err_size,
+            "[[provide]] #%zu would write '%s', which the source already contains with "
+            "different bytes; a recipe completes a configuration and does not patch one",
+            index + 1, entry->file);
+    }
+
+    if(!copy_bytes(from, file))
+        return fail_fmt(err, err_size, "[[provide]] #%zu could not write '%s'", index + 1,
+                        entry->file);
+    return true;
+}
+
+bool source_provide(const char *root, const struct recipe_provide *provide, char *err,
+                    size_t err_size) {
+    if(provide == NULL || provide->count == 0)
+        return true;
+
+    char root_real[SOURCE_PATH_MAX];
+    char *real = realpath(root, NULL);
+    if(real == NULL)
+        return fail_about(err, err_size, "the source cannot be resolved", root);
+    const int written = snprintf(root_real, sizeof root_real, "%s", real);
+    free(real);
+    if(written < 0 || (size_t)written >= sizeof root_real)
+        return fail(err, err_size, "the path to the source does not fit");
+
+    for(size_t i = 0; i < provide->count; i++) {
+        if(!provide_one(root, root_real, &provide->items[i], i, err, err_size))
+            return false;
+    }
+    return true;
 }

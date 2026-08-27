@@ -147,6 +147,23 @@ static bool check_content(const toml_document *doc, const coordinate *at) {
         return false;
     }
 
+    recipe_provide provide;
+    if(!recipe_read_provide(view, &provide, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+    /* Every other build system does its own configuration, so a recipe that
+       both names one and supplies its output is saying two contradictory things
+       about who is in charge (RFC-0009). */
+    if(provide.count > 0 && build.system != recipe_build_none) {
+        fprintf(stderr,
+                "molto: the recipe provides %zu file%s and builds with %s, which does its own "
+                "configuring; [[provide]] belongs to system = \"none\"\n",
+                provide.count, provide.count == 1 ? "" : "s",
+                recipe_build_system_name(build.system));
+        return false;
+    }
+
     if(!at->from_source)
         return true;
 

@@ -157,4 +157,26 @@ typedef struct {
                                 const char *target, char *out, size_t out_size, char *err,
                                 size_t err_size);
 
+/* Apply a recipe's `[[provide]]` to a fetched source (RFC-0009).
+ *
+ * Copies each entry's `from` to its `file`, both relative to `root`, so a
+ * library whose `configure` writes one header can be compiled without one.
+ * Nothing is read of what it moves and nothing is executed.
+ *
+ * Runs after the fetch rather than during it, because a recipe a fetched source
+ * carries *is* those bytes and cannot be read until they are there — so it runs
+ * on every build, and is idempotent by the rule below rather than by a stamp.
+ *
+ * Refuses, naming the entry: a path that is absolute, holds a `..` segment, or
+ * resolves outside `root` through a symlink; a `from` that does not exist or is
+ * not a regular file; and a `file` that exists already and holds something
+ * other than what `from` holds — which is the line between completing a
+ * configuration and patching a source.
+ *
+ * `provide->count == 0` succeeds without touching the filesystem. */
+struct recipe_provide;
+
+[[nodiscard]] bool source_provide(const char *root, const struct recipe_provide *provide, char *err,
+                                  size_t err_size);
+
 #endif /* MOLTO_SOURCE_SERVICE_H */
