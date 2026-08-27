@@ -73,7 +73,7 @@ static bool install(const sandbox *box, const char *name, const char *script,
 static void frontend_recipe(char *out, size_t size, const char *name, const char *extension,
                             long ir_schema, const char *molto_min) {
     snprintf(out, size,
-             "schema = 1\n"
+             "schema = 2\n"
              "form = \"binary\"\n"
              "kind = \"tool\"\n"
              "name = \"%s\"\n"

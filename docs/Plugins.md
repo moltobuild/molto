@@ -123,7 +123,7 @@ one.
 ### The recipe
 
 ```toml
-schema = 1
+schema = 2
 form = "binary"
 kind = "tool"
 name = "meson"
@@ -140,6 +140,18 @@ permissions = ["ir.write", "project.read"]
 ir_schema = 3
 molto_min = "0.24.0"
 ```
+
+**`schema` is 2 and not 1**, and it is the one number here you cannot leave
+out. `[plugin]` is what schema 2 added, so a recipe carrying the table while
+declaring 1 — or declaring nothing, which means 1 — is a recipe a Molto that
+predates plugins reads happily, skips the table it does not recognise, and
+installs: an executable whose permissions were shown to nobody. Molto refuses
+such a recipe rather than reading it, which is what keeps it from being
+published.
+
+Note that this is not the same number as `ir_schema`. This one is the recipe
+format (RFC-0009), that one is the document you return (RFC-0013), and they
+move independently.
 
 `extensions` are **filenames, not suffixes**: Molto checks whether that file
 exists at the root, and that is what makes you a candidate.

@@ -217,6 +217,23 @@ bool recipe_read_plugin(doc_view doc, recipe_plugin *out, char *err, size_t err_
     if(!doc_has_table(doc, PLUGIN_SECTION))
         return set_error(err, err_size, "the recipe has no [plugin] table");
 
+    /* Checked before a single key of the table is read, because what it
+       protects is a molto that never reads the table at all. `[plugin]` is what
+       schema 2 added; a recipe carrying it while declaring schema 1 is one an
+       older molto accepts, skips the table it does not recognise, and installs
+       — an executable whose permissions nobody was shown. Declaring the schema
+       is exactly what turns that into a refusal over there, and refusing it
+       here is what stops such a recipe being written in the first place. */
+    long schema = 0;
+    if(!read_schema(doc, &schema, err, err_size))
+        return false;
+    if(schema < RECIPE_SCHEMA_PLUGIN)
+        return set_error(err, err_size,
+                         "the recipe declares schema %ld and carries a [plugin] table, which is "
+                         "schema %d: a molto predating plugins would read this recipe, ignore the "
+                         "table and install the binary without showing what it asks for",
+                         schema, RECIPE_SCHEMA_PLUGIN);
+
     if(!doc_read_strings(doc, PLUGIN_SECTION, "capabilities", out->capabilities[0],
                          RECIPE_PLUGIN_MAX_CAPABILITIES, RECIPE_PLUGIN_ENTRY_MAX,
                          &out->capability_count, err, err_size))
