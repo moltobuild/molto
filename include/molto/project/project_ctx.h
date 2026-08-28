@@ -9,8 +9,15 @@
 #include <molto/services/manifest_service.h>
 #include <molto/util/str_list.h>
 
-/* Artifact kinds from RFC-0003 (spec section 9). */
+/* Artifact kinds from RFC-0003 (spec section 9).
+ *
+ * `executable` is first because it is what a manifest saying nothing means, and
+ * a manifest saying nothing is nearly all of them. RFC-0003 originally gave the
+ * key a default of `static`, written before anything built one; honouring that
+ * literally would turn every existing project into a library it never asked
+ * for. The default is what the projects already mean. */
 typedef enum {
+    artifact_executable,
     artifact_source,
     artifact_static,
     artifact_shared,

@@ -1,6 +1,7 @@
 #include <molto/services/frontend_service.h>
 #include <molto/services/host_service.h>
 
+#include <molto/build/library.h>
 #include <molto/build/profile.h>
 #include <molto/project/project_ctx.h>
 #include <molto/services/fs_service.h>
@@ -374,6 +375,42 @@ static bool add_test_targets(ir_document *out, const char *root, const project_c
 }
 
 /* --- the document --- */
+/* The document's word for what `[package].artifact` asked for. */
+static ir_target_kind target_kind_of(artifact_kind artifact) {
+    switch(artifact) {
+    case artifact_static:
+        return ir_target_static;
+    case artifact_shared:
+        return ir_target_shared;
+    case artifact_executable:
+    case artifact_source:
+        break;
+    }
+    return ir_target_executable;
+}
+
+/*
+ * What being a shared library adds to this target's own command lines.
+ *
+ * Both go on the target rather than being applied by the engine, because a
+ * document is meant to say everything that reaches a command line (RFC-0013).
+ * Added by the engine instead they would be invisible to `molto ir` and absent
+ * from `compile_commands.json`, where an editor reads what a file is compiled
+ * with — and a file analysed without `-fPIC` is analysed as a different
+ * translation unit than the one that was built.
+ */
+static bool push_library_scope(ir_target *target, artifact_kind artifact,
+                               const library_names *names) {
+    if(artifact != artifact_shared)
+        return true;
+    char soname[LIBRARY_NAME_MAX + 16];
+    const int written = snprintf(soname, sizeof soname, "-Wl,-soname,%s", names->soname);
+    if(written < 0 || (size_t)written >= sizeof soname)
+        return false;
+    return ir_add_option(&target->options, &target->option_count, "-fPIC", ir_scope_target) &&
+           ir_add_option(&target->links, &target->link_count, soname, ir_scope_target);
+}
+
 bool frontend_native(const char *root, const char *profile, ir_document *out, char *err,
                      size_t err_size) {
     if(root == NULL || out == NULL)
@@ -414,6 +451,14 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
         goto failed;
     }
 
+    /* Before anything is collected, because a version that cannot name a shared
+       library is a manifest problem and should be reported as one rather than
+       after a directory walk that was never going to matter. */
+    library_names names;
+    if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, err, err_size))
+        goto failed;
+    const ir_target_kind kind = target_kind_of(ctx.artifact);
+
     str_list sources;
     str_list_init(&sources);
     if(!collect_project_sources(absolute, &sources)) {
@@ -422,26 +467,27 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
         goto failed;
     }
 
-    /* One executable target, which is what a manifest can express today:
-       RFC-0007 refuses `package.artifact`, so `static` and `shared` are nodes
-       the IR carries and the native frontend never emits. `Target` as a real
-       node is what will retire one-executable-per-package, and it retires it
-       for a plugin's document before it retires it for this one.
+    /* One target for the project, of whatever kind `[package].artifact` asked
+       for. A manifest still describes exactly one thing built from `src/`; what
+       changed is that the thing may be a library. Several targets in one
+       document is a plugin frontend's business, and the engine already builds
+       as many as a document carries — that is how the test binaries are made.
 
        It is filled to completion before the first test target is added: a
        target pointer is only valid until the next ir_add_target on the same
        document. */
-    ir_target *target = ir_add_target(out, ctx.project_name, ir_target_executable);
+    ir_target *target = ir_add_target(out, ctx.project_name, kind);
     /* Cleared so the fallback below can tell "a helper explained itself" from
        "a helper failed and did not". */
     err[0] = '\0';
     const bool described = target != NULL && push_sources(target, absolute, &ctx, &sources) &&
                            fill_common(target, &ctx, which, err, err_size) &&
                            fill_src_include(target) &&
+                           push_library_scope(target, ctx.artifact, &names) &&
                            /* The artifact is relative to the profile's build directory, which is
                               where the engine puts it and is the only anchor an artifact path has
                               (RFC-0013). */
-                           ir_set_artifact(target, ir_target_executable, ctx.project_name, NULL);
+                           ir_set_artifact(target, kind, names.file, NULL);
     str_list_free(&sources);
     if(!described) {
         /* Only when nothing said anything. A host library that could not be

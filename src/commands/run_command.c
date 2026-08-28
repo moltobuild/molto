@@ -16,6 +16,21 @@
 /* process_run reports a signal death as 128 + signal (shell convention). */
 #define SIGNAL_EXIT_BASE 128
 
+/* What this project builds, when it is not something that runs. NULL for an
+   executable, which is the only kind this command has anything to do. */
+static const char *library_kind_name(artifact_kind artifact) {
+    switch(artifact) {
+    case artifact_static:
+        return "static library";
+    case artifact_shared:
+        return "shared library";
+    case artifact_source:
+    case artifact_executable:
+        break;
+    }
+    return NULL;
+}
+
 int run_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs,
                     char *const *forwarded, int forwarded_count) {
     build_profile profile = profile_debug;
@@ -29,17 +44,10 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
         fprintf(stderr, "molto: not inside a molto workspace (no Project.toml found)\n");
         return exit_invalid_manifest;
     }
-    char binary[4096];
-    build_report *report = build_report_create(stderr);
-    int code =
-        build_project_with(root, profile, refresh_toolchain, jobs, binary, sizeof binary, report);
-    build_report_finish(report, profile_name(profile), code);
-    build_report_destroy(report);
-    if(code != exit_ok)
-        return code;
-
-    /* The program runs with the same [env] the build used, so a variable the
-       project needs is there whether it is compiled or executed. */
+    /* Read before anything is built. The program runs with the same [env] the
+       build used, so a variable the project needs is there whether it is
+       compiled or executed — and a project with nothing to run is told so
+       before it spends a minute compiling something this command cannot use. */
     char manifest[4096];
     project_ctx ctx;
     char err[256] = "";
@@ -48,6 +56,23 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
         fprintf(stderr, "molto: %s\n", err[0] != '\0' ? err : "invalid manifest");
         return exit_invalid_manifest;
     }
+    const char *library = library_kind_name(ctx.artifact);
+    if(library != NULL) {
+        fprintf(stderr,
+                "molto: this project builds a %s and has nothing to run; "
+                "`molto test` runs what exercises it\n",
+                library);
+        return exit_usage_error;
+    }
+
+    char binary[4096];
+    build_report *report = build_report_create(stderr);
+    int code =
+        build_project_with(root, profile, refresh_toolchain, jobs, binary, sizeof binary, report);
+    build_report_finish(report, profile_name(profile), code);
+    build_report_destroy(report);
+    if(code != exit_ok)
+        return code;
     process_env_var vars[PROJECT_MAX_ENV];
     size_t var_count = project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV);
 

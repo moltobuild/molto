@@ -994,3 +994,177 @@ MOLTEST(build_writes_the_compilation_database) {
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
     (void)system(cmd);
 }
+
+/* --- libraries (RFC-0007) --- */
+
+/* A project of one source, built as whatever `[package].artifact` names. */
+static bool library_project(char *root, const char *artifact, const char *version) {
+    char path[512];
+    char manifest[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    if(!fs_make_dirs(path))
+        return false;
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"greet\"\nversion = \"%s\"\nartifact = \"%s\"\n", version,
+             artifact);
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    if(!fs_write_file(path, manifest))
+        return false;
+    snprintf(path, sizeof path, "%s/src/greet.c", root);
+    return fs_write_file(path, "const char *greet(void) { return \"hi\"; }\n");
+}
+
+static void remove_tree(const char *root) {
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
+    (void)system(cmd);
+}
+
+/* The eight bytes every `ar` archive starts with. Checked rather than trusting
+   the extension: a file named `.a` that is not an archive is exactly the
+   failure this would otherwise miss. */
+static bool is_ar_archive(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if(file == NULL)
+        return false;
+    char magic[8] = {0};
+    const size_t read = fread(magic, 1, sizeof magic, file);
+    (void)fclose(file);
+    return read == sizeof magic && memcmp(magic, "!<arch>\n", sizeof magic) == 0;
+}
+
+/* Whether an archive carries a member of this name.
+ *
+ * Read as bytes and scanned by hand, because an archive is full of NULs and
+ * anything that stops at the first one stops inside the first member's header —
+ * which reads as "the member is not there" for every member there is. */
+static bool archive_has_member(const char *path, const char *member) {
+    FILE *file = fopen(path, "rb");
+    if(file == NULL)
+        return false;
+    char buffer[65536];
+    const size_t read = fread(buffer, 1, sizeof buffer, file);
+    (void)fclose(file);
+
+    const size_t length = strlen(member);
+    for(size_t i = 0; length <= read && i + length <= read; i++) {
+        if(memcmp(buffer + i, member, length) == 0)
+            return true;
+    }
+    return false;
+}
+
+MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
+    char root[] = "/tmp/molto_static_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+    ASSERT_TRUE(library_project(root, "static", "0.1.0"));
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    char archive[512];
+    snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
+    EXPECT_TRUE(is_ar_archive(archive));
+
+    /* And no executable beside it: the manifest asked for one thing. */
+    char binary[512];
+    snprintf(binary, sizeof binary, "%s/build/debug/greet", root);
+    EXPECT_FALSE(fs_path_exists(binary));
+
+    remove_tree(root);
+}
+
+/*
+ * `ar r` replaces the members it is given and leaves every other one alone, so
+ * an archive updated in place keeps the object of a source that was deleted —
+ * present at link time, absent from the sources, and impossible to account for.
+ * The archive is removed before it is written for exactly this.
+ */
+MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
+    char root[] = "/tmp/molto_stale_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+    ASSERT_TRUE(library_project(root, "static", "0.1.0"));
+
+    char extra[512];
+    snprintf(extra, sizeof extra, "%s/src/bye.c", root);
+    ASSERT_TRUE(fs_write_file(extra, "int bye(void) { return 1; }\n"));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    char archive[512];
+    snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
+    EXPECT_TRUE(archive_has_member(archive, "bye.c.o"));
+
+    ASSERT_EQ(0, remove(extra));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    EXPECT_FALSE(archive_has_member(archive, "bye.c.o"));
+    EXPECT_TRUE(archive_has_member(archive, "greet.c.o"));
+
+    remove_tree(root);
+}
+
+/*
+ * The convention, on disk: the real file carries the whole version, and two
+ * links point at it. A consumer linking `-lgreet` resolves through
+ * `libgreet.so` and records the soname, which is what lets 1.2.3 be replaced by
+ * 1.9.0 under a program that never relinks.
+ */
+MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
+    char root[] = "/tmp/molto_shared_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+    ASSERT_TRUE(library_project(root, "shared", "1.2.3"));
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    char library[512];
+    snprintf(library, sizeof library, "%s/build/debug/libgreet.so.1.2.3", root);
+    EXPECT_TRUE(fs_path_exists(library));
+
+    const char *const links[] = {"libgreet.so.1", "libgreet.so"};
+    for(size_t i = 0; i < sizeof links / sizeof links[0]; i++) {
+        char path[512];
+        snprintf(path, sizeof path, "%s/build/debug/%s", root, links[i]);
+
+        /* A link and not a copy, and relative: both sit beside their target, and
+           an absolute link would write this machine's build directory inside an
+           artifact whose purpose is to be copied elsewhere. */
+        char target[256] = "";
+        const ssize_t length = readlink(path, target, sizeof target - 1);
+        EXPECT_TRUE(length > 0);
+        if(length > 0) {
+            target[length] = '\0';
+            EXPECT_STREQ("libgreet.so.1.2.3", target);
+        }
+    }
+
+    remove_tree(root);
+}
+
+/* A guess would put the wrong number in a soname, which is the one place a
+   wrong number is a promise about ABI — so the build stops instead. */
+MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
+    char root[] = "/tmp/molto_noversion_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+    ASSERT_TRUE(library_project(root, "shared", "nightly"));
+
+    EXPECT_NE(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+
+    remove_tree(root);
+}
+
+/* Nothing changed, so nothing is archived again: remaking it would hand every
+   consumer a new mtime to react to. */
+MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
+    char root[] = "/tmp/molto_fresh_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+    ASSERT_TRUE(library_project(root, "static", "0.1.0"));
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    char archive[512];
+    snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
+    const int64_t first = mtime_of(archive);
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(first, mtime_of(archive));
+
+    remove_tree(root);
+}

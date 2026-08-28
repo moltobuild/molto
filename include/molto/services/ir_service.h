@@ -72,12 +72,14 @@ typedef enum {
 
 /* `executable`, `static`, `shared`, `object` or `test`.
  *
- * `static` and `shared` are expressible and not yet buildable, on purpose:
- * RFC-0007 refuses a manifest asking for either because a `.a` needs `ar` and a
- * `.so` needs -fPIC, a soname and a versioning policy. That refusal moves here
- * rather than disappearing — the document may carry the node and the engine
- * reports it cannot build it — because a frontend for Meson, whose whole
- * vocabulary is libraries, has to be writable before Molto grows them. */
+ * The engine builds all of them: an executable and a shared library are the
+ * driver's work and differ by one flag, a static library is `ar`, and the names
+ * each one takes are RFC-0007's. Which is what a frontend for Meson needed —
+ * a build system whose whole vocabulary is libraries could describe them here
+ * long before anything could produce one, and now the two agree.
+ *
+ * `object` is what a dependency's sources become: compiled into the consumer's
+ * build rather than archived into anything of their own. */
 typedef enum {
     ir_target_executable,
     ir_target_static,
