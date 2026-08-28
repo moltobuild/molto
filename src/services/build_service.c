@@ -1222,9 +1222,43 @@ static void watch_registry(size_t frame, void *context) {
     return false;
 }
 
+/* What the host answered, in the shape the lock records (RFC-0016). */
+[[nodiscard]] static bool collect_host_locks(const project_ctx *ctx, lock_host **out, size_t *count,
+                                             char *err, size_t err_size) {
+    *out = NULL;
+    *count = 0;
+    if(ctx->target.host_count == 0)
+        return true;
+
+    host_answer *answers = (host_answer *)calloc(ctx->target.host_count, sizeof *answers);
+    lock_host *locks = (lock_host *)calloc(ctx->target.host_count, sizeof *locks);
+    if(answers == NULL || locks == NULL) {
+        free(answers);
+        free(locks);
+        snprintf(err, err_size, "out of memory recording what the host answered");
+        return false;
+    }
+
+    if(!host_resolve_all(&ctx->target, answers, err, err_size)) {
+        free(answers);
+        free(locks);
+        return false;
+    }
+
+    for(size_t i = 0; i < ctx->target.host_count; i++) {
+        snprintf(locks[i].capability, sizeof locks[i].capability, "%s", ctx->target.host[i]);
+        snprintf(locks[i].answered, sizeof locks[i].answered, "%s", HOST_RESOLVER_NAME);
+        snprintf(locks[i].version, sizeof locks[i].version, "%s", answers[i].version);
+    }
+    free(answers);
+    *out = locks;
+    *count = ctx->target.host_count;
+    return true;
+}
+
 [[nodiscard]] static bool prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
                                            prepared_deps *dev_out, char *err, size_t err_size) {
-    if(ctx->deps.count == 0 && ctx->dev_deps.count == 0)
+    if(ctx->deps.count == 0 && ctx->dev_deps.count == 0 && ctx->target.host_count == 0)
         return true;
 
     /* Read before resolving, so what comes back can be held against it. A
@@ -1235,18 +1269,50 @@ static void watch_registry(size_t frame, void *context) {
     const bool locked =
         lockfile_read(root, &lock, lock_err, sizeof lock_err) && lockfile_matches(&lock, ctx);
 
-    dep_graph *graph = NULL;
-    if(!resolve_or_ask(root, ctx, &graph, err, err_size)) {
-        if(lock.packages != NULL)
+    lock_host *hosts = NULL;
+    size_t host_count = 0;
+    if(!collect_host_locks(ctx, &hosts, &host_count, err, err_size)) {
+        if(lock.packages != NULL || lock.hosts != NULL)
             lockfile_free(&lock);
+        return false;
+    }
+    /* Reported before anything is built and only when the lock still describes
+       this manifest: on a stale one the answer is being re-recorded anyway, and
+       a note about a file about to be rewritten is noise. */
+    if(locked) {
+        (void)lockfile_report_host_drift(&lock, hosts, host_count);
+        /* And what it recorded is kept rather than replaced with this machine's
+           answer. A record that rewrites itself on every build is not a record:
+           two developers on different distributions would flip the file back
+           and forth in every commit, and the diff that was supposed to make a
+           difference visible would become the noise nobody reads. A capability
+           the lock has never seen is recorded now; one it has is left alone,
+           and the note above is what says this machine disagrees. */
+        for(size_t i = 0; i < host_count; i++) {
+            for(size_t j = 0; j < lock.host_count; j++) {
+                if(strcmp(lock.hosts[j].capability, hosts[i].capability) != 0)
+                    continue;
+                snprintf(hosts[i].version, sizeof hosts[i].version, "%s", lock.hosts[j].version);
+                break;
+            }
+        }
+    }
+
+    dep_graph *graph = NULL;
+    if(ctx->deps.count + ctx->dev_deps.count > 0 &&
+       !resolve_or_ask(root, ctx, &graph, err, err_size)) {
+        if(lock.packages != NULL || lock.hosts != NULL)
+            lockfile_free(&lock);
+        free(hosts);
         return false;
     }
 
     bool ok = !locked || lockfile_verify(&lock, graph, err, err_size);
-    if(lock.packages != NULL)
+    if(lock.packages != NULL || lock.hosts != NULL)
         lockfile_free(&lock);
     if(!ok) {
         dep_graph_free(graph);
+        free(hosts);
         return false;
     }
 
@@ -1256,11 +1322,12 @@ static void watch_registry(size_t frame, void *context) {
        the objects are correct either way, and the cost is that the next build
        resolves again. Silence would be worse — a lock file nobody can write is
        a reproducibility guarantee nobody has. */
-    if(ok && !lockfile_write(root, ctx->project_name, graph, err, err_size)) {
+    if(ok && !lockfile_write(root, ctx->project_name, graph, hosts, host_count, err, err_size)) {
         fprintf(stderr, "molto: warning: %s\n", err);
         err[0] = '\0';
     }
 
+    free(hosts);
     dep_graph_free(graph);
     return ok;
 }

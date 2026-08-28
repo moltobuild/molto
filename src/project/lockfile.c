@@ -90,7 +90,8 @@ static bool buffer_put_list(buffer *out, const char *key, const str_list *values
 
 /* --- writing --- */
 
-char *lockfile_render(const char *package, const dep_graph *graph) {
+char *lockfile_render(const char *package, const dep_graph *graph, const lock_host *hosts,
+                      size_t host_count) {
     buffer out = {0};
     char header[64];
     snprintf(header, sizeof header, "version = %d\n", LOCKFILE_VERSION);
@@ -127,6 +128,18 @@ char *lockfile_render(const char *package, const dep_graph *graph) {
         str_list_free(&scopes);
     }
 
+    /* After the packages, because that is the order a reader wants: what this
+       build contains, then what it borrowed from the machine it was built on. */
+    for(size_t i = 0; ok && i < host_count; i++) {
+        ok = buffer_puts(&out, "\n[[host]]\n") &&
+             buffer_put_pair(&out, "capability", hosts[i].capability) &&
+             buffer_put_pair(&out, "answered", hosts[i].answered);
+        /* Omitted rather than written empty, like a package's version and for
+           the same reason: "" reads as a version that happens to be blank. */
+        if(ok && hosts[i].version[0] != '\0')
+            ok = buffer_put_pair(&out, "version", hosts[i].version);
+    }
+
     if(!ok) {
         free(out.text);
         return NULL;
@@ -153,13 +166,13 @@ static bool lock_path(const char *root, char *out, size_t out_size, char *err, s
     return true;
 }
 
-bool lockfile_write(const char *root, const char *package, const dep_graph *graph, char *err,
-                    size_t err_size) {
+bool lockfile_write(const char *root, const char *package, const dep_graph *graph,
+                    const lock_host *hosts, size_t host_count, char *err, size_t err_size) {
     char path[1024];
     if(!lock_path(root, path, sizeof path, err, err_size))
         return false;
 
-    char *text = lockfile_render(package, graph);
+    char *text = lockfile_render(package, graph, hosts, host_count);
     if(text == NULL)
         return set_error(err, err_size, "out of memory writing " LOCKFILE_NAME);
 
@@ -241,10 +254,59 @@ bool lockfile_read(const char *root, lockfile *out, char *err, size_t err_size) 
             out->count++;
     }
 
+    const size_t hosts = ok ? toml_table_array_count(doc, "host") : 0;
+    if(ok && hosts > 0) {
+        out->hosts = calloc(hosts, sizeof *out->hosts);
+        if(out->hosts == NULL)
+            ok = set_error(err, err_size, "out of memory reading " LOCKFILE_NAME);
+    }
+
+    for(size_t i = 0; ok && i < hosts; i++) {
+        char section[TOML_SECTION_MAX];
+        lock_host *entry = &out->hosts[i];
+        ok = toml_table_array_section("host", i, section, sizeof section) &&
+             toml_get_string(doc, section, "capability", entry->capability,
+                             sizeof entry->capability) &&
+             toml_get_string(doc, section, "answered", entry->answered, sizeof entry->answered);
+        if(!ok) {
+            ok = set_error(err, err_size, LOCKFILE_NAME " has a [[host]] with no capability");
+            break;
+        }
+        /* Absent is allowed and means the resolver knew of no version. */
+        if(!toml_get_string(doc, section, "version", entry->version, sizeof entry->version))
+            entry->version[0] = '\0';
+        out->host_count++;
+    }
+
     toml_free(doc);
     if(!ok)
         lockfile_free(out);
     return ok;
+}
+
+size_t lockfile_report_host_drift(const lockfile *lock, const lock_host *hosts, size_t host_count) {
+    size_t drifted = 0;
+    for(size_t i = 0; i < host_count; i++) {
+        for(size_t j = 0; j < lock->host_count; j++) {
+            if(strcmp(lock->hosts[j].capability, hosts[i].capability) != 0)
+                continue;
+            /* Nothing to say when either side has no version: a `.pc` file may
+               omit one, and "it changed to unknown" is not a fact worth a line
+               of a build's output. */
+            if(lock->hosts[j].version[0] == '\0' || hosts[i].version[0] == '\0')
+                break;
+            if(strcmp(lock->hosts[j].version, hosts[i].version) == 0)
+                break;
+            fprintf(stderr,
+                    "molto: note: the host library '%s' is %s here and %s in " LOCKFILE_NAME
+                    "; molto neither installs nor pins one, so this build used what is "
+                    "installed\n",
+                    hosts[i].capability, hosts[i].version, lock->hosts[j].version);
+            drifted++;
+            break;
+        }
+    }
+    return drifted;
 }
 
 /* --- staleness --- */
@@ -352,4 +414,7 @@ void lockfile_free(lockfile *lock) {
     free(lock->packages);
     lock->packages = NULL;
     lock->count = 0;
+    free(lock->hosts);
+    lock->hosts = NULL;
+    lock->host_count = 0;
 }

@@ -86,7 +86,7 @@ MOLTEST(the_lock_records_the_whole_graph_sorted) {
     dep_graph *graph = NULL;
     ASSERT_TRUE(build_chain(&at, &ctx, &graph));
 
-    char *text = lockfile_render(ctx.project_name, graph);
+    char *text = lockfile_render(ctx.project_name, graph, NULL, 0);
     ASSERT_NOT_NULL(text);
 
     EXPECT_NOT_NULL(strstr(text, "version = 1\n"));
@@ -118,8 +118,8 @@ MOLTEST(rendering_twice_gives_the_same_bytes) {
     dep_graph *graph = NULL;
     ASSERT_TRUE(build_chain(&at, &ctx, &graph));
 
-    char *first = lockfile_render(ctx.project_name, graph);
-    char *second = lockfile_render(ctx.project_name, graph);
+    char *first = lockfile_render(ctx.project_name, graph, NULL, 0);
+    char *second = lockfile_render(ctx.project_name, graph, NULL, 0);
     ASSERT_NOT_NULL(first);
     ASSERT_NOT_NULL(second);
     EXPECT_STREQ(first, second);
@@ -137,7 +137,7 @@ MOLTEST(a_written_lock_reads_back) {
     ASSERT_TRUE(build_chain(&at, &ctx, &graph));
 
     char err[512] = "";
-    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, err, sizeof err));
+    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, NULL, 0, err, sizeof err));
 
     lockfile lock;
     ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
@@ -194,7 +194,7 @@ MOLTEST(a_lock_stops_matching_when_a_dependency_is_added) {
     ASSERT_TRUE(build_chain(&at, &ctx, &graph));
 
     char err[512] = "";
-    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, err, sizeof err));
+    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, NULL, 0, err, sizeof err));
     dep_graph_free(graph);
 
     /* The manifest now names a second dependency the lock never saw. */
@@ -227,7 +227,7 @@ MOLTEST(a_lock_stops_matching_when_a_dependency_is_removed) {
 
     dep_graph *graph = NULL;
     ASSERT_TRUE(dep_graph_resolve(&both, &graph, err, sizeof err));
-    ASSERT_TRUE(lockfile_write(at.root, both.project_name, graph, err, sizeof err));
+    ASSERT_TRUE(lockfile_write(at.root, both.project_name, graph, NULL, 0, err, sizeof err));
     dep_graph_free(graph);
 
     project_ctx fewer;
@@ -297,7 +297,7 @@ MOLTEST(the_writer_escapes_a_quote_in_a_path) {
 
     dep_graph *graph = NULL;
     ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
-    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, err, sizeof err));
+    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, NULL, 0, err, sizeof err));
 
     /* Written escaped, and therefore readable again. */
     lockfile lock;
@@ -384,7 +384,7 @@ MOLTEST(a_resolution_verifies_against_its_own_lock) {
     ASSERT_TRUE(build_chain(&at, &ctx, &graph));
 
     char err[512] = "";
-    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, err, sizeof err));
+    ASSERT_TRUE(lockfile_write(at.root, ctx.project_name, graph, NULL, 0, err, sizeof err));
 
     lockfile lock;
     ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
@@ -488,4 +488,98 @@ MOLTEST(a_build_stops_when_the_lock_disagrees) {
     EXPECT_EQ(exit_dependency_failure, build_project(app, profile_debug, false, 0, NULL, 0));
 
     sandbox_close(&at);
+}
+
+/* --- what the host answered --- */
+
+static lock_host one_host(const char *capability, const char *version) {
+    lock_host entry = {0};
+    snprintf(entry.capability, sizeof entry.capability, "%s", capability);
+    snprintf(entry.answered, sizeof entry.answered, "%s", "pkg-config");
+    snprintf(entry.version, sizeof entry.version, "%s", version);
+    return entry;
+}
+
+MOLTEST(the_lock_records_what_a_host_library_answered) {
+    const lock_host hosts[] = {one_host("gtk+-3.0", "3.24.33")};
+    char *text = lockfile_render("ui", NULL, hosts, 1);
+    ASSERT_NOT_NULL(text);
+
+    EXPECT_NOT_NULL(strstr(text, "[[host]]"));
+    EXPECT_NOT_NULL(strstr(text, "capability = \"gtk+-3.0\""));
+    EXPECT_NOT_NULL(strstr(text, "answered = \"pkg-config\""));
+    EXPECT_NOT_NULL(strstr(text, "version = \"3.24.33\""));
+    free(text);
+}
+
+/* Omitted rather than written empty, like a path dependency's version: "" reads
+   as a version that happens to be blank. */
+MOLTEST(a_host_library_with_no_version_records_none) {
+    const lock_host hosts[] = {one_host("toykit", "")};
+    char *text = lockfile_render("ui", NULL, hosts, 1);
+    ASSERT_NOT_NULL(text);
+
+    /* Asserted on the entry and not the file: `version = 1` at the top is the
+       lock's own format version and is always there. */
+    const char *entry = strstr(text, "[[host]]");
+    ASSERT_NOT_NULL(entry);
+    EXPECT_NOT_NULL(strstr(entry, "capability = \"toykit\""));
+    EXPECT_NULL(strstr(entry, "version ="));
+    free(text);
+}
+
+/* A project with host libraries and no dependencies still gets a lock: what it
+   borrowed from the machine is worth recording even when it borrowed no
+   packages. */
+MOLTEST(a_lock_with_only_host_entries_reads_back) {
+    const lock_host hosts[] = {one_host("gtk+-3.0", "3.24.33"), one_host("zlib", "1.2.11")};
+    char *text = lockfile_render("ui", NULL, hosts, 2);
+    ASSERT_NOT_NULL(text);
+
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char path[128];
+    snprintf(path, sizeof path, "%s/" LOCKFILE_NAME, at.root);
+    ASSERT_TRUE(fs_write_file(path, text));
+    free(text);
+
+    lockfile lock;
+    char err[512] = "";
+    ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
+    EXPECT_EQ(0u, lock.count);
+    ASSERT_EQ(2u, lock.host_count);
+    EXPECT_STREQ("gtk+-3.0", lock.hosts[0].capability);
+    EXPECT_STREQ("3.24.33", lock.hosts[0].version);
+    EXPECT_STREQ("zlib", lock.hosts[1].capability);
+
+    lockfile_free(&lock);
+    sandbox_close(&at);
+}
+
+/* Reported and never refused, which is the difference between this and
+   lockfile_verify: a package resolving to other bytes is a registry rewriting
+   history, and a host library on another version is Tuesday. */
+MOLTEST(a_host_library_on_another_version_is_reported_not_refused) {
+    lockfile lock = {0};
+    lock_host recorded = one_host("gtk+-3.0", "3.24.30");
+    lock.hosts = &recorded;
+    lock.host_count = 1;
+
+    const lock_host here[] = {one_host("gtk+-3.0", "3.24.33")};
+    EXPECT_EQ(1u, lockfile_report_host_drift(&lock, here, 1));
+
+    const lock_host same[] = {one_host("gtk+-3.0", "3.24.30")};
+    EXPECT_EQ(0u, lockfile_report_host_drift(&lock, same, 1));
+}
+
+/* Nothing to say when either side knows no version: "it changed to unknown" is
+   not a fact worth a line of a build's output. */
+MOLTEST(a_host_library_with_no_version_on_either_side_is_quiet) {
+    lockfile lock = {0};
+    lock_host recorded = one_host("toykit", "");
+    lock.hosts = &recorded;
+    lock.host_count = 1;
+
+    const lock_host here[] = {one_host("toykit", "2.0")};
+    EXPECT_EQ(0u, lockfile_report_host_drift(&lock, here, 1));
 }

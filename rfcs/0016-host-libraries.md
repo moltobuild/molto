@@ -204,8 +204,16 @@ can widen what it is held to.
 A GTK-3 application builds: `host = ["gtk+-3.0"]` alone, 25 include directories
 and 12 link flags, on Debian's own GTK.
 
-What does not exist: the `[[host]]` section of the lock, any resolver that is
-not pkg-config, and a capability in a recipe rather than a manifest.
+The `[[host]]` section arrived in 0.33.0, and with one rule this document did
+not anticipate: **what the lock recorded is kept rather than replaced with this
+machine's answer.** Rewriting it every build would make two developers on
+different distributions flip the file back and forth in every commit, and the
+diff that was supposed to make a difference visible would become the noise
+nobody reads. A capability the lock has never seen is recorded now; one it has
+is left alone, and the note is what says this machine disagrees.
+
+What does not exist: any resolver that is not pkg-config, and a capability in a
+recipe rather than a manifest.
 
 ## Non-Goals
 
