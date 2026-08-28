@@ -8,6 +8,7 @@
 #include <molto/services/build_service.h>
 #include <molto/services/deps_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/host_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/services/style_translate.h>
@@ -483,6 +484,33 @@ static int absorb(lint_task *task, diagnostic_list *out) {
  * It fetches on a cold cache, which `molto lint` did not do before. That is not
  * a cost being added for tidiness: the headers have to be on disk to be read,
  * and analysis that skipped them was reporting on code that does not exist. */
+/* The include directories of the libraries the host provides (RFC-0016).
+ *
+ * The build asks this question and lint has to ask it too, or a source that
+ * includes <gtk/gtk.h> is analysed as a file whose headers do not exist. That
+ * is not a finding about the code — it is lint being unable to read it, and it
+ * reports as an error on every file in the project.
+ *
+ * `-isystem` rather than `-I`, which is the same distinction the build draws
+ * when it marks these paths `system`: a toolkit's headers are not this
+ * project's code, and analysing them buries whatever lint had to say about the
+ * code that is. */
+static bool host_include_flags(const project_ctx *ctx, str_list *out) {
+    char err[CONFIG_ERROR_SIZE] = "";
+    for(size_t i = 0; i < ctx->target.host_count; i++) {
+        host_answer answer;
+        if(!host_resolve(ctx->target.host[i], &answer, err, sizeof err)) {
+            fprintf(stderr, "molto: %s\n", err);
+            return false;
+        }
+        for(size_t j = 0; j < answer.include_count; j++) {
+            if(!str_list_push(out, "-isystem") || !str_list_push(out, answer.includes[j]))
+                return false;
+        }
+    }
+    return true;
+}
+
 static bool prepare_deps(const char *root, lint_setup *setup) {
     char err[CONFIG_ERROR_SIZE] = "";
     if(!deps_prepare(&setup->ctx, &setup->deps, err, sizeof err)) {
@@ -492,7 +520,8 @@ static bool prepare_deps(const char *root, lint_setup *setup) {
     char src_dir[PATH_BUFFER_SIZE];
     return fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root) &&
            deps_merge_interface(&setup->ctx, &setup->deps) &&
-           deps_include_flags(src_dir, &setup->deps, &setup->include_flags);
+           deps_include_flags(src_dir, &setup->deps, &setup->include_flags) &&
+           host_include_flags(&setup->ctx, &setup->include_flags);
 }
 
 static int prepare(const char *root, const lint_request *request, lint_setup *setup,

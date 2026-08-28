@@ -265,6 +265,63 @@ MOLTEST(lint_analyses_against_what_the_dependencies_export) {
     fixture_teardown(&fixture);
 }
 
+/* A pkg-config that answers for one made-up toolkit, so these tests do not
+   depend on what this machine has installed. It volunteers options that are not
+   include or link flags, because dropping those is part of the contract. */
+static bool write_resolver(const char *path) {
+    static const char *const script =
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --exists) [ \"$2\" = \"toykit\" ] && exit 0 || exit 1 ;;\n"
+        "  --modversion) echo 1.2.3 ;;\n"
+        "  --cflags) echo '-I/opt/toykit/include -pthread -D_REENTRANT' ;;\n"
+        "esac\n"
+        "exit 0\n";
+    return fs_write_file(path, script) && chmod(path, 0755) == 0;
+}
+
+MOLTEST(lint_analyses_against_what_the_host_provides) {
+    /* The build resolves `[target].host` (RFC-0016) and lint has to resolve it
+       too. While it did not, a project naming a toolkit compiled cleanly and
+       then reported `file not found` for that toolkit's header on every one of
+       its sources — which is not a finding about the code, it is lint being
+       unable to read it, and it buried everything lint had to say. */
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
+
+    char resolver[256];
+    snprintf(resolver, sizeof resolver, "%s/pkg-config", fixture.tools);
+    ASSERT_TRUE(write_resolver(resolver));
+    ASSERT_EQ(0, setenv("MOLTO_PKG_CONFIG", resolver, 1));
+    ASSERT_TRUE(write_file(fixture.root, "Project.toml",
+                           "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                           "\n[target]\nstd = \"c17\"\nhost = [\"toykit\"]\n"));
+
+    diagnostic_list found;
+    const int status = run_lint(&fixture, &found);
+    (void)unsetenv("MOLTO_PKG_CONFIG");
+    ASSERT_EQ(exit_ok, status);
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+
+    /* As -isystem, which is the distinction the build already draws by marking
+       these paths `system`: a toolkit's headers are not this project's code,
+       and analysing them buries whatever lint had to say about the code that
+       is. */
+    EXPECT_NOT_NULL(strstr(log, "-isystem"));
+    EXPECT_NOT_NULL(strstr(log, "/opt/toykit/include"));
+
+    /* And only what the contract keeps. An option a `.pc` file volunteered is a
+       compile option entering the build from outside the manifest that was
+       reviewed, and lint must analyse what the build compiles. */
+    EXPECT_NULL(strstr(log, "-D_REENTRANT"));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
 MOLTEST(lint_resolves_the_standard_the_way_the_build_does) {
     /* A compile line is composed from the document now, where `-std` is a
        unit-scope option and unit scope reaches the line last (RFC-0013). So
