@@ -15,6 +15,9 @@
  * test_progress.c where it has no I/O to hide behind.
  */
 
+/* What viewport_clear writes per row when it takes the region off. */
+#define ERASE_ROW "\033[2K"
+
 static size_t captured(FILE *file, char *out, size_t out_size) {
     (void)fflush(file);
     rewind(file);
@@ -528,7 +531,18 @@ MOLTEST(a_finished_build_leaves_only_its_verdict) {
 
     char text[4096] = "";
     (void)captured(out, text, sizeof text);
+
+    /* Read from the last erase and not from the mark. The drawer is a thread on
+       a 50 ms tick, so between `unit_done` returning and `finish` taking the
+       lock it may paint one more frame — bar and all. That frame is erased by
+       the teardown, which is what this test is about; asserting on the bytes
+       before the erase is asserting on a race, and it is one CI wins often
+       enough to matter. */
     const char *tail = text + mark;
+    for(const char *erase = tail; (erase = strstr(erase, ERASE_ROW)) != NULL;
+        erase += sizeof ERASE_ROW - 1)
+        tail = erase + sizeof ERASE_ROW - 1;
+
     EXPECT_NULL(strstr(tail, "main.c"));
     /* And no bar over the tick, saying a second time what the tick says. */
     EXPECT_NULL(strchr(tail, '%'));
