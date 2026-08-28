@@ -250,6 +250,7 @@ static const char manifest_template[] =
     "[package]\n"
     "name = \"%s\"\n"
     "version = \"0.1.0\"\n"
+    "# artifact = \"static\"   # executable (default) | static | shared\n"
     "# description = \"\"      # one line, for a catalogue\n"
     "# license = \"MIT\"       # an SPDX expression: MIT OR Apache-2.0\n"
     "# homepage = \"\"\n"

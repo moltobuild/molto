@@ -154,14 +154,19 @@ reason about include paths.
 What a target leaves behind: a `kind` mirroring the target's, a `path` relative
 to the profile's build directory, and an optional `install` name.
 
-An `Artifact` of kind `static` or `shared` is **expressible and not yet
-executable**. RFC-0007 rejects a manifest that asks for either, because
-producing a `.a` needs `ar` and a `.so` needs `-fPIC`, a soname and a versioning
-policy, and none of those exist. That refusal stands, and it moves: the IR may
-carry the node, and the engine reports that it cannot build it. Separating what
-the representation can say from what the implementation can do is what keeps a
+An `Artifact` of kind `static` or `shared` is now **expressible and built**.
+It was expressible first and buildable second, deliberately: separating what the
+representation can say from what the implementation can do is what kept a
 frontend for Meson — a build system whose whole vocabulary is libraries —
-writable before Molto grows shared library support.
+writable before Molto could produce one. The names each kind takes, the soname
+policy and the archiver are [RFC-0007](0007-build-system.md#what-a-built-thing-is-called).
+
+Note where the two halves of a shared library live. `-fPIC` and
+`-Wl,-soname,…` are an `Option` and a `LinkOption` **written onto the target by
+whoever describes it**, not flags the engine adds on the way past — so they are
+in the document, in `molto ir`, and in `compile_commands.json`. `-shared`
+itself is not, because the node's `kind` already says it and a second way of
+saying the same thing is a second way of disagreeing.
 
 ### `BuildStep`
 

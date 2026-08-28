@@ -27,7 +27,7 @@ static bool set_error(char *err, size_t err_size, const char *format, ...) {
 static void seed_defaults(project_ctx *ctx) {
     memset(ctx, 0, sizeof *ctx);
     snprintf(ctx->version, sizeof ctx->version, "%s", "0.0.0");
-    ctx->artifact = artifact_static;
+    ctx->artifact = artifact_executable;
     ctx->profile.debug = (manifest_profile){.opt_level = 0, .debug_info = true};
     ctx->profile.release = (manifest_profile){.opt_level = 3, .debug_info = false};
     ctx->profile.bench = (manifest_profile){.opt_level = 3, .debug_info = false};
@@ -91,6 +91,10 @@ static bool map_test_mode(const char *name, test_mode *out) {
 }
 
 static bool map_artifact(const char *name, artifact_kind *out) {
+    if(strcmp(name, "executable") == 0) {
+        *out = artifact_executable;
+        return true;
+    }
     if(strcmp(name, "source") == 0) {
         *out = artifact_source;
         return true;
@@ -277,15 +281,16 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
             toml_free(doc);
             return set_error(err, err_size, "unknown artifact kind '%s'", artifact);
         }
-        /* No artifact kind changes what gets built yet: every project links an
-           executable, and libraries would need ar / -shared / -fPIC. Accepting
-           the key and quietly ignoring it would be a lie, so it is refused
-           until it means something. */
-        toml_free(doc);
-        return set_error(err, err_size,
-                         "artifact '%s' is not supported yet "
-                         "(this version always builds an executable)",
-                         artifact);
+        /* `source` says the package is a drop of sources for a registry to
+           serve, which is a recipe's business (RFC-0009) and not a thing this
+           builds. Refused rather than accepted and ignored: a manifest asking
+           for something that never happens is worse than one that fails. */
+        if(out->artifact == artifact_source) {
+            toml_free(doc);
+            return set_error(err, err_size,
+                             "artifact 'source' describes a package a registry serves as sources, "
+                             "not something molto builds");
+        }
     }
 
     /* target.compiler must be a known toolchain (if given). */

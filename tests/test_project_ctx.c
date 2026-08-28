@@ -73,12 +73,13 @@ MOLTEST(project_rejects_invalid_manifests) {
     EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"weird\"\n",
                                &ctx, err, sizeof err));
 
-    /* A known artifact kind is refused too: none of them changes what is built
-       yet, and silently ignoring the key would misreport what happened. */
+    /* `source` is the one artifact kind still refused: it describes a package a
+       registry serves rather than something to build, and silently ignoring the
+       key would misreport what happened. */
     err[0] = '\0';
-    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"static\"\n",
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"source\"\n",
                                &ctx, err, sizeof err));
-    EXPECT_NOT_NULL(strstr(err, "not supported yet"));
+    EXPECT_NOT_NULL(strstr(err, "registry"));
     EXPECT_FALSE(project_parse("[package]\nname = \"x\"\n[target]\ncompiler = \"turbo\"\n",
                                &ctx, err, sizeof err));
 
@@ -126,11 +127,12 @@ MOLTEST(project_refuses_an_unknown_package_key) {
     EXPECT_NOT_NULL(strstr(err, "licence"));
 
     /* artifact keeps its own message rather than being reported as unknown: it
-       is a key this manifest format defines and this version refuses. */
+       is a key this manifest format defines, and the one value it still refuses
+       says why rather than saying the key is unrecognised. */
     err[0] = '\0';
-    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"static\"\n", &ctx, err,
+    EXPECT_FALSE(project_parse("[package]\nname = \"x\"\nartifact = \"source\"\n", &ctx, err,
                                sizeof err));
-    EXPECT_NOT_NULL(strstr(err, "not supported yet"));
+    EXPECT_NOT_NULL(strstr(err, "registry"));
 
     /* Every key it does define still passes. */
     EXPECT_TRUE(project_parse("[package]\n"
@@ -403,4 +405,29 @@ MOLTEST(target_host_and_requires_are_different_lists) {
     ASSERT_EQ(1u, ctx.target.host_count);
     EXPECT_STREQ("c23", ctx.target.requires[0]);
     EXPECT_STREQ("zlib", ctx.target.host[0]);
+}
+
+/* The three kinds a project can be built as, and the default a manifest that
+   says nothing gets. The default is the one that matters: RFC-0003 originally
+   documented `static`, written before anything built one, and honouring that
+   would turn every project already written into a library it never asked for. */
+MOLTEST(project_reads_the_artifact_kind_it_is_built_as) {
+    project_ctx ctx;
+    char err[256] = "";
+
+    ASSERT_TRUE(project_parse("[package]\nname = \"x\"\nversion = \"1.0.0\"\n", &ctx, err,
+                              sizeof err));
+    EXPECT_EQ(artifact_executable, ctx.artifact);
+
+    ASSERT_TRUE(project_parse("[package]\nname = \"x\"\nartifact = \"executable\"\n", &ctx, err,
+                              sizeof err));
+    EXPECT_EQ(artifact_executable, ctx.artifact);
+
+    ASSERT_TRUE(project_parse("[package]\nname = \"x\"\nartifact = \"static\"\n", &ctx, err,
+                              sizeof err));
+    EXPECT_EQ(artifact_static, ctx.artifact);
+
+    ASSERT_TRUE(project_parse("[package]\nname = \"x\"\nartifact = \"shared\"\n", &ctx, err,
+                              sizeof err));
+    EXPECT_EQ(artifact_shared, ctx.artifact);
 }

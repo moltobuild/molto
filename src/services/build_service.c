@@ -4,6 +4,7 @@
 #include <molto/build/compile_flags.h>
 #include <molto/build/depfile.h>
 #include <molto/build/diagnostic_view.h>
+#include <molto/build/library.h>
 #include <molto/build/profile.h>
 #include <molto/build/report.h>
 #include <molto/exit_code.h>
@@ -30,10 +31,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Compiler command-line arguments. */
 #define ARG_COMPILE "-c"           /* compile only, do not link */
 #define ARG_OUTPUT "-o"            /* next argument is the output path */
+#define ARG_SHARED "-shared"       /* link a shared library rather than a program */
 #define ARG_DEBUG "-g"             /* emit debug symbols */
 #define ARG_DEPFILE_GEN "-MMD"     /* also write a header-dependency file */
 #define ARG_DEPFILE_OUT "-MF"      /* next argument is the dependency file path */
@@ -1041,6 +1044,12 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
         return false;
     }
     bool ok = str_list_push(argv, driver);
+    /* Read off the node rather than passed in: the document already says this
+       is a shared library, and a second way of saying it could disagree with
+       the first. The soname that goes with it is a LinkOption the frontend
+       wrote, and arrives with the rest of them below. */
+    if(ok && node->kind == ir_target_shared)
+        ok = str_list_push(argv, ARG_SHARED);
     for(size_t i = 0; ok && i < str_list_count(objects); i++)
         ok = str_list_push(argv, str_list_get(objects, i));
     if(ok)
@@ -1147,6 +1156,107 @@ static bool link_project(bool any_cpp, const str_list *objects, const char *bina
     free(command);
     str_list_free(&argv);
     return ok;
+}
+
+/*
+ * A static library: the objects, with an index, and nothing else.
+ *
+ * `ar` is not a linker and this is not a link. Nothing is resolved, no symbol
+ * is looked up and no other library is consulted — which is why the node's link
+ * options are not on this line. They belong to whoever links the program that
+ * finally uses this archive, and putting them here would be recording an
+ * intention `ar` has no way to honour.
+ *
+ * The archive is removed first rather than updated in place. `ar r` replaces
+ * the members it is given and leaves the rest, so an object whose source was
+ * deleted would stay in the archive across every later build — present at link
+ * time, absent from the sources, and impossible to account for.
+ */
+static bool build_archive_argv(str_list *argv, const char *archiver, const str_list *objects,
+                               const char *archive) {
+    bool ok =
+        str_list_push(argv, archiver) && str_list_push(argv, "rcs") && str_list_push(argv, archive);
+    for(size_t i = 0; ok && i < str_list_count(objects); i++)
+        ok = str_list_push(argv, str_list_get(objects, i));
+    return ok;
+}
+
+/* The same freshness discipline the link has, for the same reason: an archive
+   whose objects have not moved is an archive that does not need making, and
+   remaking it would give every consumer a new mtime to react to. */
+static bool archive_project(const str_list *objects, const char *archive, const project_env *env,
+                            const resolved_toolchain *chain, bool force, wsdb *db,
+                            build_report *report) {
+    char archiver[TOOLCHAIN_PATH_MAX];
+    if(!library_archiver(chain->cc, archiver, sizeof archiver)) {
+        build_report_message(report, "molto: the path to an archiver does not fit\n");
+        return false;
+    }
+
+    str_list argv;
+    str_list_init(&argv);
+    if(!build_archive_argv(&argv, archiver, objects, archive)) {
+        str_list_free(&argv);
+        return false;
+    }
+    char *command = command_fingerprint(&argv, env);
+
+    bool ok = true;
+    if(force || command == NULL || !wsdb_binary_fresh(db, archive, command) ||
+       link_needed(objects, archive)) {
+        (void)remove(archive);
+        char *output = malloc(BUILD_OUTPUT_SIZE);
+        bool truncated = false;
+        const int status =
+            run_str_argv(&argv, env, output, output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
+        ok = status == 0;
+        /* An archiver says almost nothing, and what it does say is not a
+           compiler diagnostic — so it is repeated as it came rather than framed
+           as one. */
+        if(!ok)
+            build_report_message(report, "molto: %s could not archive '%s'%s%s\n", archiver,
+                                 archive, output != NULL && output[0] != '\0' ? ": " : "",
+                                 output != NULL ? output : "");
+        free(output);
+        (void)truncated;
+        if(ok && (command == NULL || !wsdb_record_binary(db, archive, command)))
+            fprintf(stderr, "molto: warning: could not record '%s' as up to date\n", archive);
+    }
+    free(command);
+    str_list_free(&argv);
+    return ok;
+}
+
+/*
+ * The two names that point at a shared library, beside it.
+ *
+ * Relative, naming only the file: both links sit in the same directory as their
+ * target, and an absolute link would write this machine's build path inside an
+ * artifact whose whole purpose is to be copied somewhere else.
+ *
+ * A failure here is a warning and not a failed build. The library itself is
+ * built and correct; what is missing is the convenience of linking against
+ * `-lfoo`, and refusing a build over a symlink would be refusing the thing that
+ * worked because of the thing that did not.
+ */
+static void place_shared_links(const char *directory, const library_names *names,
+                               build_report *report) {
+    const char *const links[] = {names->soname, names->devlink};
+    for(size_t i = 0; i < sizeof links / sizeof links[0]; i++) {
+        if(links[i][0] == '\0' || strcmp(links[i], names->file) == 0)
+            continue;
+        char path[PATH_BUFFER_SIZE];
+        if(!fs_format_path(path, sizeof path, "%s/%s", directory, links[i])) {
+            (void)fs_report_long_path(links[i]);
+            continue;
+        }
+        /* Removed first: symlink refuses to replace what is already there, and
+           what is already there is a link to a version that has moved on. */
+        (void)remove(path);
+        if(symlink(names->file, path) != 0)
+            build_report_message(report, "molto: warning: could not link '%s' to '%s'\n", links[i],
+                                 names->file);
+    }
 }
 
 /*
@@ -1783,17 +1893,43 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
        document it holds. Releasing it where the last object was written would
        take the target node with it. */
     if(result == exit_ok) {
+        const ir_target *node = plan.project_units[0].node;
+
+        /* The name is worked out again from the manifest rather than read off
+           the document, for the same reason the host bounds are: what a
+           producer wrote is what is being checked, and a path taken from it
+           would be a path checking itself. For the native frontend the two
+           agree by construction, which is what makes this cheap. */
+        library_names names;
+        char name_err[512] = "";
         char binary[PATH_BUFFER_SIZE];
-        if(!compose_binary_path(root, profile, ctx.project_name, binary, sizeof binary)) {
+        char directory[PATH_BUFFER_SIZE];
+        if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, name_err,
+                             sizeof name_err) ||
+           !compose_binary_path(root, profile, names.file, binary, sizeof binary) ||
+           !fs_format_path(directory, sizeof directory, "%s/" DIR_BUILD "/%s", root,
+                           profile_name(profile))) {
+            if(name_err[0] != '\0')
+                build_report_message(report, "molto: %s\n", name_err);
             build_plan_free(&plan);
             str_list_free(&objects);
             (void)wsdb_close(db);
             return exit_build_failure;
         }
+
         /* Whatever the linker had to say has already been framed and printed
            by then; a line here would only repeat it less clearly. */
-        if(!link_project(any_cpp, &objects, binary, plan.project_units[0].node, &ctx.env, &chain,
-                         any_compiled, db, root, report))
+        bool produced = false;
+        if(node->kind == ir_target_static) {
+            produced =
+                archive_project(&objects, binary, &ctx.env, &chain, any_compiled, db, report);
+        } else {
+            produced = link_project(any_cpp, &objects, binary, node, &ctx.env, &chain, any_compiled,
+                                    db, root, report);
+            if(produced && node->kind == ir_target_shared)
+                place_shared_links(directory, &names, report);
+        }
+        if(!produced)
             result = exit_build_failure;
         if(result == exit_ok) {
             /* Prune objects orphaned by removed sources (scoped to src/). */

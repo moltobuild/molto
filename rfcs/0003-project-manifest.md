@@ -31,7 +31,7 @@ convention-over-configuration philosophy in RFC-0001.
 [package]
 name     = "my_app"
 version  = "0.1.0"
-artifact = "static"        # source | static | shared, default: static
+artifact = "static"        # executable | static | shared; default: executable
 
 [target]
 compiler = "gcc"            # preferred vendor; optional
@@ -84,17 +84,28 @@ debug_info = true
 |--------------|---------------|----------|-----------------------------------------------------------------------------|
 | `name`       | string        | yes      | Package identifier, `snake_case`                                            |
 | `version`    | string        | yes      | Semantic version                                                            |
-| `artifact`   | string        | no       | `source`, `static`, or `shared` (default `static`, see `spec.md` section 9) |
+| `artifact`   | string        | no       | `executable`, `static`, or `shared` (default `executable`)                   |
 | `description`| string        | no       | One line saying what the package is                                         |
 | `license`    | string        | no       | An SPDX licence expression, e.g. `MIT OR Apache-2.0`                        |
 | `homepage`   | string        | no       | URL of the project's page                                                   |
 | `repository` | string        | no       | URL of the source repository                                                |
 | `authors`    | array[string] | no       | At most 8 entries                                                           |
 
-**Current state:** `artifact` is **rejected** when declared. No kind changes
-what gets built yet — every project links an executable, and `static`/`shared`
-would require `ar`, `-shared` and `-fPIC` — so accepting the key and ignoring
-it would misreport what Molto did. It is refused until it means something.
+**Current state:** `executable`, `static` and `shared` are all built. `source`
+is still refused: it describes a package a registry serves as sources, which is
+a recipe's business (RFC-0009) rather than something built here, and accepting
+the key while building nothing would misreport what Molto did.
+
+**The default changed, and the change is the point.** An earlier revision of
+this table gave `artifact` a default of `static` — written before anything
+built a library, when the value could not be acted on. Honouring it literally
+the moment libraries arrived would have turned every project already written
+into a library it never asked for, so the default is now `executable`, which is
+what those manifests have always meant. `executable` is spelled as a value for
+the same reason: a default nobody can name is a default nobody can restate.
+
+What each kind produces, and the names it produces them under, is
+[RFC-0007](0007-build-system.md#what-a-built-thing-is-called).
 
 ### The publishing metadata
 

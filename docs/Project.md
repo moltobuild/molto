@@ -193,6 +193,59 @@ include = ["modules/moltest/include"]
 That produces `build/<profile>/tests/<package>_tests`. `[test]` also accepts
 `defines` and `flags`, applied only when compiling tests.
 
+### I want to build a library rather than a program
+
+```toml
+[package]
+name = "greet"
+version = "1.2.3"
+artifact = "shared"     # or "static"
+```
+
+That is the whole of it. `src/` is discovered exactly as before, and the output
+lands in `build/<profile>/` under the name the convention gives it:
+
+| `artifact` | You get |
+|---|---|
+| `executable` (the default) | `greet` |
+| `static` | `libgreet.a` |
+| `shared` | `libgreet.so.1.2.3`, plus `libgreet.so.1` and `libgreet.so` pointing at it |
+
+The three names for a shared library are not a preference. A consumer that links
+`-lgreet` resolves through `libgreet.so` and records the **soname**,
+`libgreet.so.1` — so replacing 1.2.3 with 1.9.0 keeps that program running, and
+replacing it with 2.0.0 does not. It is what semver already promises, written
+where a loader reads it.
+
+Which is why `artifact = "shared"` needs a `version` Molto can read. A version
+with no major is refused rather than guessed at:
+
+```
+molto: a shared library needs a major version and 'nightly' is not a version
+       molto can read; [package].version must be semver to build one
+```
+
+**Your tests do not change.** They link the objects of `src/` as they always
+have, so a library is tested exactly like a program was:
+
+```console
+$ molto test
+running 1 test (debug)
+  build/debug/tests/greet_test ... ok
+```
+
+**`molto run` will refuse**, before it builds anything, because there is nothing
+to run:
+
+```
+molto: this project builds a shared library and has nothing to run;
+       `molto test` runs what exercises it
+```
+
+One manifest still describes one thing. A library *and* the program that uses it
+is more than one target per project, which is not implemented — see
+[Not implemented yet](#not-implemented-yet).
+
 ### I want different settings per profile
 
 ```toml
@@ -236,7 +289,7 @@ Status is what the current binary does, not what RFC-0003 specifies.
 |---|---|---|---|
 | `name` | string | implemented | Required, `snake_case`, must start with a lowercase letter |
 | `version` | string | implemented | Free-form string; defaults to `0.0.0` |
-| `artifact` | string | **rejected** | Declaring it is a hard error — see below |
+| `artifact` | string | implemented | `executable` (default), `static` or `shared`. `source` is refused — see below |
 | `description` | string | implemented | One line saying what the package is |
 | `license` | string | implemented | An SPDX expression: `MIT`, `MIT OR Apache-2.0`, `Apache-2.0 WITH LLVM-exception` |
 | `homepage` | string | implemented | URL |
@@ -391,7 +444,8 @@ These are specified in RFC-0003 but do nothing in the current binary:
 
 | Table / key | Behaviour today |
 |---|---|
-| `package.artifact` | **Hard error.** Every project links an executable; `static`/`shared` would need `ar`, `-shared` and `-fPIC`, so the key is refused rather than accepted and ignored |
+| More than one target per project | A library **and** the program that uses it needs two targets, and a manifest describes one. The engine is not the limit — it already builds every target a document carries, which is how the test binaries are made |
+| `package.artifact = "source"` | **Hard error.** It describes a package a registry serves as sources, which is a recipe's business, so the key is refused rather than accepted while nothing is built. `executable`, `static` and `shared` are all built |
 | `molto update` | Exits with code 5, and stays that way: `molto add <name>` is the upgrade, the way `npm install` is |
 | A dependency published as a prebuilt library | Refused with a message. Only `[artifacts] type = "source"` can be consumed |
 | `[features]`, `[build-deps]`, `[workspace]` | Not read |
@@ -639,7 +693,9 @@ enough that one process per core starts swapping.
 | A `#ifdef` never fires | `defines` not declared | Add it to `[target].defines` |
 | `undefined reference` to `sqrt`, `pthread_create`, … | Library not linked | `link = ["m", "pthread"]` |
 | `unknown compiler '…'` | `compiler` names a binary, not a vendor | Use `gcc`/`clang`/`msvc`, or drop the key |
-| `artifact '…' is not supported yet` | `package.artifact` declared | Remove it |
+| `artifact 'source' describes a package a registry serves` | `artifact = "source"` in `[package]` | Use `static` or `shared`, or drop the key |
+| `a shared library needs a major version` | `artifact = "shared"` with a `version` that is not semver | Write a version the soname can take a major from |
+| `this project builds a … and has nothing to run` | `molto run` on a library | `molto test` runs what exercises it |
 | `fatal error: '…' file not found` for a dependency that is declared | It is in `[dev-deps]`, and the file including it is under `src/` | Move the dependency to `[deps]`, or the include into a test |
 | `is a version range, and versions are exact` | `^`, `~` or `>=` in a version | Write the one version you mean |
 | `is required twice and not as the same thing` | Two dependents disagree about a package | Change one of the two the message names |
