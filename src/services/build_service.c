@@ -13,6 +13,7 @@
 #include <molto/services/deps_service.h>
 #include <molto/services/frontend_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/host_service.h>
 #include <molto/services/ir_transform.h>
 #include <molto/services/manifest_service.h>
 #include <molto/services/object_cache.h>
@@ -1426,9 +1427,9 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
  *
  * False with a message in `err`. */
 [[nodiscard]] static bool document_is_allowed(const ir_document *doc, const char *root,
-                                              build_profile profile, const prepared_deps *deps,
-                                              const prepared_deps *dev, char *err,
-                                              size_t err_size) {
+                                              build_profile profile, const project_ctx *ctx,
+                                              const prepared_deps *deps, const prepared_deps *dev,
+                                              char *err, size_t err_size) {
     char build_dir[PATH_BUFFER_SIZE];
     if(!fs_format_path(build_dir, sizeof build_dir, "%s/" DIR_BUILD "/%s", root,
                        profile_name(profile)))
@@ -1442,12 +1443,35 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
        off the document would let anything that can write a `Dependency` node
        widen the bounds it is then held to, which is a check that checks
        nothing. Here the list cannot be influenced by the document at all. */
-    const size_t count = deps->unit_count + dev->unit_count;
+    /* A host library's directories are a bound too, and they are resolved here
+       rather than read off the document for exactly the reason above: the
+       frontend put them there, and a bound taken from what it wrote would be a
+       bound it chose. Asked again of the same resolver, from the manifest —
+       pkg-config is deterministic within a build, so the two agree, and the
+       cost is a process rather than a compromise. */
+    host_answer *host = NULL;
+    size_t host_dirs = 0;
+    if(ctx->target.host_count > 0) {
+        host = (host_answer *)calloc(ctx->target.host_count, sizeof *host);
+        if(host == NULL) {
+            snprintf(err, err_size, "out of memory checking the document's paths");
+            return false;
+        }
+        if(!host_resolve_all(&ctx->target, host, err, err_size)) {
+            free(host);
+            return false;
+        }
+        for(size_t i = 0; i < ctx->target.host_count; i++)
+            host_dirs += host[i].include_count;
+    }
+
+    const size_t count = deps->unit_count + dev->unit_count + host_dirs;
     const char **roots = NULL;
     if(count > 0) {
         roots = (const char **)calloc(count, sizeof *roots);
         if(roots == NULL) {
             snprintf(err, err_size, "out of memory checking the document's paths");
+            free(host);
             return false;
         }
         size_t at = 0;
@@ -1455,6 +1479,10 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
             roots[at++] = deps->units[i].root;
         for(size_t i = 0; i < dev->unit_count; i++)
             roots[at++] = dev->units[i].root;
+        for(size_t i = 0; i < ctx->target.host_count; i++) {
+            for(size_t j = 0; j < host[i].include_count; j++)
+                roots[at++] = host[i].includes[j];
+        }
     }
 
     const ir_bounds bounds = {.workspace = root,
@@ -1464,6 +1492,7 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
                               .root_count = count};
     const bool ok = ir_validate(doc, &bounds, err, err_size);
     free((void *)roots);
+    free(host);
     return ok;
 }
 
@@ -1571,8 +1600,8 @@ static int frontend_exit_code(frontend_result answer) {
     if(plan->labels == NULL)
         return exit_build_failure;
 
-    if(!document_is_allowed(&plan->doc, root, profile, &plan->deps, &plan->dev, frontend_err,
-                            sizeof frontend_err)) {
+    if(!document_is_allowed(&plan->doc, root, profile, ctx_out, &plan->deps, &plan->dev,
+                            frontend_err, sizeof frontend_err)) {
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }

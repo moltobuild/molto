@@ -121,6 +121,27 @@ static bool valid_compiler(const char *name) {
    because `defines` is deliberately larger: the last two slots belong to the
    name and version Molto contributes, and a manifest declaring the full
    sixteen must not take them. */
+/* A host capability is a name and never a path (RFC-0016).
+ *
+ * Refused rather than accepted, because `include = ["/usr/include/gtk-3.0"]` is
+ * the mistake this key exists to prevent and it is the one everybody whose
+ * machine happens to work will make. The value that belongs here is what
+ * pkg-config, vcpkg or a framework lookup is *asked* — `gtk+-3.0` — not what
+ * any of them answered on one machine. */
+[[nodiscard]] static bool check_host_capabilities(const project_target *target, char *err,
+                                                  size_t err_size) {
+    for(size_t i = 0; i < target->host_count; i++) {
+        if(strchr(target->host[i], '/') == NULL)
+            continue;
+        return set_error(err, err_size,
+                         "[target].host '%s' looks like a path, and a host library is named by "
+                         "capability so the same manifest builds on another machine; write the "
+                         "name a resolver is asked for, such as \"gtk+-3.0\"",
+                         target->host[i]);
+    }
+    return true;
+}
+
 [[nodiscard]] static bool read_option_array(const toml_document *doc, const char *section,
                                             const char *key,
                                             char dest[PROJECT_MAX_OPTS][PROJECT_OPT_LEN],
@@ -311,6 +332,15 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     /* target.requires: the features the project needs from a compiler. */
     ok = ok && read_option_array(doc, "target", "requires", out->target.requires,
                                  &out->target.requires_count, err, err_size);
+
+    /* target.host: the libraries it needs from the machine it builds on. A
+       separate key from `requires` and not an extension of it — that one is a
+       question for pickup about a compiler, this one is about a library, and
+       one list answered by two resolvers is a list nobody can read. */
+    ok = ok &&
+         read_option_array(doc, "target", "host", out->target.host, &out->target.host_count, err,
+                           err_size) &&
+         check_host_capabilities(&out->target, err, err_size);
 
     /* Base compilation options ([target]), the [env] table, and per-profile
        additions. */

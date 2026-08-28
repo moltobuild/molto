@@ -76,6 +76,13 @@ typedef struct {
        manifest portable between machines. */
     char requires[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t requires_count;
+    /* Libraries the host already provides, named as capabilities and never as
+       paths (RFC-0016). A resolver answers where the headers are — pkg-config
+       on Linux — because `/usr/include/glib-2.0` names one distribution, one
+       architecture and one version of a library, and a manifest that spells it
+       has decided all three for whoever reads it next. */
+    char host[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t host_count;
     project_options options; /* base defines/include/flags for all profiles */
 } project_target;
 

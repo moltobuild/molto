@@ -367,3 +367,40 @@ MOLTEST(project_reports_a_name_it_cannot_pass_on) {
     EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "name"));
 }
+
+/* A host library is named by capability, never by path: `/usr/include/gtk-3.0`
+   is one distribution, one architecture and one version, and a manifest that
+   spells it has decided all three for whoever reads it next (RFC-0016). */
+MOLTEST(target_host_refuses_a_path_where_a_capability_belongs) {
+    project_ctx ctx;
+    char err[512] = "";
+    EXPECT_FALSE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
+                               "[target]\nhost = [\"/usr/include/gtk-3.0\"]\n",
+                               &ctx, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "looks like a path"));
+}
+
+MOLTEST(target_host_reads_the_capabilities_a_manifest_names) {
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
+                              "[target]\nhost = [\"gtk+-3.0\", \"zlib\"]\n",
+                              &ctx, err, sizeof err));
+    ASSERT_EQ(2u, ctx.target.host_count);
+    EXPECT_STREQ("gtk+-3.0", ctx.target.host[0]);
+    EXPECT_STREQ("zlib", ctx.target.host[1]);
+}
+
+/* Separate lists answered by separate resolvers: `requires` is a question for
+   pickup about a compiler, `host` one for pkg-config about a library. */
+MOLTEST(target_host_and_requires_are_different_lists) {
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
+                              "[target]\nrequires = [\"c23\"]\nhost = [\"zlib\"]\n",
+                              &ctx, err, sizeof err));
+    ASSERT_EQ(1u, ctx.target.requires_count);
+    ASSERT_EQ(1u, ctx.target.host_count);
+    EXPECT_STREQ("c23", ctx.target.requires[0]);
+    EXPECT_STREQ("zlib", ctx.target.host[0]);
+}

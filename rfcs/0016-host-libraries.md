@@ -89,8 +89,14 @@ A manifest names **what it needs**, and something else answers **where it is**:
 
 ```toml
 [target]
-requires = ["glib-2.0"]
+host = ["gtk+-3.0"]
 ```
+
+A key of its own and not an extension of `requires`, which an earlier revision
+of this section proposed. Implementing it settled the question: `requires` is
+already serialised into a request for **pickup**, about a compiler, and one list
+answered by two resolvers is a list nobody can read — a `gtk+-3.0` in it would
+be asked of the wrong one. Two questions, two keys.
 
 Never this:
 
@@ -110,7 +116,7 @@ code needs — `c23`, `attr_nodiscard` — and **pickup** already answers them,
 through a request string that is both the question and the fingerprint its
 answer is cached under (`toolchain_service`). A host library is the same kind
 of question asked of the same resolver. What this RFC adds is vocabulary, not
-machinery.
+machinery, and a second key rather than a second meaning for an existing one.
 
 ## Rules
 
@@ -165,8 +171,8 @@ question here. That is a reason to design for it now rather than to defer it,
 because the cost of getting this wrong is not a port — it is a manifest format
 that has to change.
 
-The design survives it because a manifest never names a mechanism. `requires =
-["glib-2.0"]` says nothing about pkg-config; it is a question, and each platform
+The design survives it because a manifest never names a mechanism. `host =
+["gtk+-3.0"]` says nothing about pkg-config; it is a question, and each platform
 brings its own answerer:
 
 | Platform | What answers |
@@ -186,15 +192,20 @@ RFC-0009's Reserved section is for.
 
 Nothing. This RFC specifies and implements none of it.
 
-What exists and is reused rather than rebuilt: `[target].requires` and its
-parser (`project_ctx`), the request-string-as-fingerprint discipline and the
-workspace database that caches an answer (`toolchain_service`, `wsdb`), the
-bounds machinery an answered directory would join (`ir_validate`), and pickup
-itself, which is already the process Molto asks about its environment.
+Implemented in molto 0.32.0: `[target].host` and its refusal of a value carrying
+a path separator (`project_ctx`), the resolver itself (`host_service`, asking
+pkg-config and keeping only `-I`, `-l` and `-L` from its answer), the answer
+reaching the document as `IncludePath` nodes marked `system` and `LinkOption`
+nodes (`frontend_native`), and the answered directories joining the bounds a
+document is validated against (`build_service`) — resolved a second time from
+the manifest rather than read back off the document, so nothing a producer wrote
+can widen what it is held to.
 
-What does not exist: any resolver for a library rather than a compiler, the
-`[[host]]` section of the lock, and the refusal of a `requires` value containing
-a path separator.
+A GTK-3 application builds: `host = ["gtk+-3.0"]` alone, 25 include directories
+and 12 link flags, on Debian's own GTK.
+
+What does not exist: the `[[host]]` section of the lock, any resolver that is
+not pkg-config, and a capability in a recipe rather than a manifest.
 
 ## Non-Goals
 
@@ -203,7 +214,7 @@ capability that is absent is reported; what to do about it belongs to the
 machine's own package manager, and a build tool that started installing system
 packages would be one.
 
-Molto does not version-constrain a host library. `requires = ["glib-2.0"]` is a
+Molto does not version-constrain a host library. `host = ["gtk+-3.0"]` is a
 question about presence, and the lock records what answered. A range would be a
 promise Molto cannot keep, since it neither installs nor chooses what is on the
 host.
