@@ -44,7 +44,7 @@
 #define HOST_MAX_INCLUDES 64
 #define HOST_MAX_LINKS 64
 #define HOST_PATH_MAX 512
-#define HOST_FLAG_MAX 128
+#define HOST_FLAG_MAX 640 /* a -Wl,-rpath, carries a path */
 
 /* What one capability contributes to a build. */
 typedef struct {

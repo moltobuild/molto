@@ -46,7 +46,8 @@ static const char *const ANSWERS =
     "  --exists) [ \"$2\" = \"toykit\" ] && exit 0 || exit 1 ;;\n"
     "  --modversion) echo 3.24.33 ;;\n"
     "  --cflags) echo '-I/opt/toykit/include -I/opt/toykit/lib/include -pthread -D_REENTRANT'\n"
-    "            echo '-L/opt/toykit/lib -ltoykit -lm' ;;\n"
+    "            echo '-L/opt/toykit/lib -Wl,-rpath,/opt/toykit/lib -Wl,--enable-new-dtags'\n"
+    "            echo '-ltoykit -lm' ;;\n"
     "esac\n"
     "exit 0\n";
 
@@ -64,9 +65,10 @@ MOLTEST(a_host_capability_answers_with_its_includes_and_links) {
 
     /* As they reach the link line, and `-L` kept beside `-l`: a library outside
        the linker's default path needs both. */
-    ASSERT_EQ(3u, answer.link_count);
+    ASSERT_EQ(4u, answer.link_count);
     EXPECT_STREQ("-L/opt/toykit/lib", answer.links[0]);
-    EXPECT_STREQ("-ltoykit", answer.links[1]);
+    EXPECT_STREQ("-Wl,-rpath,/opt/toykit/lib", answer.links[1]);
+    EXPECT_STREQ("-ltoykit", answer.links[2]);
 
     EXPECT_STREQ("3.24.33", answer.version);
     stub_close(&at);
@@ -120,4 +122,28 @@ MOLTEST(a_capability_with_no_name_is_refused) {
     host_answer answer;
     char err[512] = "";
     EXPECT_FALSE(host_resolve("", &answer, err, sizeof err));
+}
+
+/* A library outside the default path is found at link time by `-L` and at run
+   time by `-rpath`, and they are one fact spelled twice. Keeping only the first
+   produces a binary that links and then cannot start — which is what SDL3 in a
+   custom prefix did before this. */
+MOLTEST(a_host_answer_keeps_the_rpath_that_makes_its_library_runnable) {
+    stub at;
+    ASSERT_TRUE(stub_open(&at, ANSWERS));
+
+    host_answer answer;
+    char err[512] = "";
+    ASSERT_TRUE(host_resolve("toykit", &answer, err, sizeof err));
+
+    bool found = false;
+    for (size_t i = 0; i < answer.link_count; i++) {
+        if (strcmp(answer.links[i], "-Wl,-rpath,/opt/toykit/lib") == 0)
+            found = true;
+        /* And nothing else that rides in on -Wl,: it is otherwise an escape
+           hatch onto the whole linker, and a resolver is not one. */
+        EXPECT_NULL(strstr(answer.links[i], "--enable-new-dtags"));
+    }
+    EXPECT_TRUE(found);
+    stub_close(&at);
 }

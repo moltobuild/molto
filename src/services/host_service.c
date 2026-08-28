@@ -73,13 +73,27 @@ static bool push_link(host_answer *out, const char *flag) {
     return true;
 }
 
+/* True for the one linker option a resolver may contribute: where the library
+   it just located can be found again at run time.
+
+   Kept for the same reason `-L` is, and it is worth being explicit about the
+   reason because `-Wl,` is otherwise an escape hatch onto the whole linker. A
+   resolver's job is to say where a library is; `-L` says that for the link and
+   `-rpath` says it for the run. They are one fact spelled twice, and keeping
+   only the first produces a binary that links and then cannot start — which is
+   what a library installed outside the default path does without this. */
+static bool is_rpath(const char *token) {
+    return strncmp(token, "-Wl,-rpath,", 11) == 0 || strncmp(token, "-Wl,-rpath=", 11) == 0;
+}
+
 /* One token of a resolver's answer.
  *
- * Only `-I` and the two link forms are kept. pkg-config emits `-pthread`,
- * `-D_REENTRANT`, `-m64` and whatever a `.pc` file's author put there, and each
- * of those would be a compile option entering the build from outside the
- * manifest that was reviewed. Dropped silently because the contract says what
- * is kept rather than what is refused: a resolver is not a source of options.
+ * Only `-I`, the two link forms and `-rpath` are kept. pkg-config emits
+ * `-pthread`, `-D_REENTRANT`, `-m64` and whatever a `.pc` file's author put
+ * there, and each of those would be a compile option entering the build from
+ * outside the manifest that was reviewed. Dropped silently because the contract
+ * says what is kept rather than what is refused: a resolver is not a source of
+ * options.
  *
  * `-L` is kept alongside `-l` because a library outside the linker's default
  * path needs both, and dropping one of the pair would fail at link time with a
@@ -87,7 +101,7 @@ static bool push_link(host_answer *out, const char *flag) {
 static bool take(const char *token, host_answer *out) {
     if(strncmp(token, "-I", 2) == 0)
         return token[2] == '\0' || push_include(out, token + 2);
-    if(strncmp(token, "-l", 2) == 0 || strncmp(token, "-L", 2) == 0)
+    if(strncmp(token, "-l", 2) == 0 || strncmp(token, "-L", 2) == 0 || is_rpath(token))
         return push_link(out, token);
     return true;
 }
