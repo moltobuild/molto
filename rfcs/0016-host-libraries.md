@@ -130,8 +130,12 @@ machinery, and a second key rather than a second meaning for an existing one.
   capability and the resolver that could not answer it. A missing header found
   by the compiler is a message about a file; a missing capability is a message
   about a dependency, and the second one says what to install.
-- **What the answer contributes is bounded to include directories and link
-  flags.** Not defines, not arbitrary flags. A resolver that could contribute
+- **What the answer contributes is bounded to include directories, `-l`, `-L`
+  and `-Wl,-rpath`.** Not defines, not arbitrary flags. The rpath is in that
+  list and the rest of `-Wl,` is not, which testing settled rather than taste:
+  SDL3 in a custom prefix linked and then could not start, because `-L` says
+  where a library is for the link and `-rpath` says it for the run. They are one
+  fact spelled twice, and a resolver whose job is to locate a library owes both. A resolver that could contribute
   `-D` would be deciding a consumer's ABI from outside its manifest, and a
   resolver that could contribute anything at all would be a second, unreviewed
   source of compile options — the thing RFC-0013's option refusals exist to
