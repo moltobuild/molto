@@ -1,4 +1,5 @@
 #include <molto/services/frontend_service.h>
+#include <molto/services/host_service.h>
 
 #include <molto/build/profile.h>
 #include <molto/project/project_ctx.h>
@@ -194,14 +195,44 @@ static bool push_link_scope(ir_target *target, const project_ctx *ctx, build_pro
     return true;
 }
 
+/* What the host answered, onto the target that asked (RFC-0016).
+ *
+ * The answer is resolved here rather than at load time so it lands in the
+ * document like everything else — an include is an `IncludePath` and a `-l` is
+ * a `LinkOption`, and nothing downstream needs to learn that a directory came
+ * from pkg-config rather than from the manifest. It is also what makes the
+ * paths visible in `molto ir`, which is where someone debugging a build looks.
+ *
+ * Marked as system includes: these are headers the machine owns, and a warning
+ * from inside `gtk/gtk.h` is not something a consumer can fix. */
+static bool push_host_scope(ir_target *target, const project_ctx *ctx, char *err, size_t err_size) {
+    for(size_t i = 0; i < ctx->target.host_count; i++) {
+        host_answer answer;
+        if(!host_resolve(ctx->target.host[i], &answer, err, err_size))
+            return false;
+        for(size_t j = 0; j < answer.include_count; j++) {
+            if(!ir_add_include(&target->includes, &target->include_count, answer.includes[j],
+                               ir_scope_target, true))
+                return false;
+        }
+        for(size_t j = 0; j < answer.link_count; j++) {
+            if(!ir_add_option(&target->links, &target->link_count, answer.links[j],
+                              ir_scope_target))
+                return false;
+        }
+    }
+    return true;
+}
+
 /* `[target]`'s own scope, the profile's scope and the link line. Every target
    the native frontend emits carries all three, so they are composed once: an executable and a test
    that filled their scopes in two places would drift, and the drift would show up as a test
    compiled against options the code under it was not. */
-static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile profile) {
+static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile profile, char *err,
+                        size_t err_size) {
     return push_scope(target, &ctx->target.options, ir_scope_target) &&
            push_scope(target, options_for(ctx, profile), ir_scope_profile) &&
-           push_link_scope(target, ctx, profile);
+           push_link_scope(target, ctx, profile) && push_host_scope(target, ctx, err, err_size);
 }
 
 /* `src/` on the include path.
@@ -262,8 +293,8 @@ static bool test_stem(const char *root, const char *source, char *out, size_t ou
  * that both the executable and the tests depend on, and the law stops needing
  * to be applied at all. */
 static bool fill_test(ir_target *target, const project_ctx *ctx, build_profile profile,
-                      const char *artifact) {
-    return fill_common(target, ctx, profile) &&
+                      const char *artifact, char *err, size_t err_size) {
+    return fill_common(target, ctx, profile, err, err_size) &&
            push_scope(target, &ctx->test.options, ir_scope_target) && fill_src_include(target) &&
            str_list_push(&target->depends_on, ctx->project_name) &&
            ir_set_artifact(target, ir_target_test, artifact, NULL);
@@ -272,7 +303,8 @@ static bool fill_test(ir_target *target, const project_ctx *ctx, build_profile p
 /* One target per test file, each bringing its own `main()`. The default, and
    what a suite of independent cases wants. */
 static bool add_tests_per_file(ir_document *out, const char *root, const project_ctx *ctx,
-                               build_profile profile, const str_list *sources) {
+                               build_profile profile, const str_list *sources, char *err,
+                               size_t err_size) {
     for(size_t i = 0; i < str_list_count(sources); i++) {
         const char *source = str_list_get(sources, i);
         char stem[NATIVE_PATH_MAX];
@@ -280,7 +312,7 @@ static bool add_tests_per_file(ir_document *out, const char *root, const project
             return false;
         ir_target *target = ir_add_target(out, stem, ir_target_test);
         if(target == NULL || !push_source(target, root, ctx, source) ||
-           !fill_test(target, ctx, profile, stem))
+           !fill_test(target, ctx, profile, stem, err, err_size))
             return false;
     }
     return true;
@@ -289,7 +321,8 @@ static bool add_tests_per_file(ir_document *out, const char *root, const project
 /* One target for the whole suite. The `main()` comes from the framework in
    `[test].sources`, which is why a framework that owns it needs this mode. */
 static bool add_tests_single(ir_document *out, const char *root, const project_ctx *ctx,
-                             build_profile profile, const str_list *sources) {
+                             build_profile profile, const str_list *sources, char *err,
+                             size_t err_size) {
     char name[NATIVE_PATH_MAX];
     char artifact[NATIVE_PATH_MAX];
     if(snprintf(name, sizeof name, "%s_tests", ctx->project_name) < 0 ||
@@ -297,7 +330,7 @@ static bool add_tests_single(ir_document *out, const char *root, const project_c
         return false;
     ir_target *target = ir_add_target(out, name, ir_target_test);
     return target != NULL && push_sources(target, root, ctx, sources) &&
-           fill_test(target, ctx, profile, artifact);
+           fill_test(target, ctx, profile, artifact, err, err_size);
 }
 
 /* The tests as targets, or nothing at all.
@@ -326,10 +359,14 @@ static bool add_test_targets(ir_document *out, const char *root, const project_c
 
     bool ok = true;
     if(str_list_count(&sources) > 0) {
+        err[0] = '\0';
         ok = ctx->test.mode == test_mode_single
-                 ? add_tests_single(out, root, ctx, profile, &sources)
-                 : add_tests_per_file(out, root, ctx, profile, &sources);
-        if(!ok)
+                 ? add_tests_single(out, root, ctx, profile, &sources, err, err_size)
+                 : add_tests_per_file(out, root, ctx, profile, &sources, err, err_size);
+        /* Only when nothing said anything: a host library that could not be
+           resolved has already written the message worth reading, and out of
+           memory is what is left when a helper failed and stayed quiet. */
+        if(!ok && err[0] == '\0')
             snprintf(err, err_size, "out of memory describing the tests");
     }
     str_list_free(&sources);
@@ -395,15 +432,23 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
        target pointer is only valid until the next ir_add_target on the same
        document. */
     ir_target *target = ir_add_target(out, ctx.project_name, ir_target_executable);
+    /* Cleared so the fallback below can tell "a helper explained itself" from
+       "a helper failed and did not". */
+    err[0] = '\0';
     const bool described = target != NULL && push_sources(target, absolute, &ctx, &sources) &&
-                           fill_common(target, &ctx, which) && fill_src_include(target) &&
+                           fill_common(target, &ctx, which, err, err_size) &&
+                           fill_src_include(target) &&
                            /* The artifact is relative to the profile's build directory, which is
                               where the engine puts it and is the only anchor an artifact path has
                               (RFC-0013). */
                            ir_set_artifact(target, ir_target_executable, ctx.project_name, NULL);
     str_list_free(&sources);
     if(!described) {
-        snprintf(err, err_size, "out of memory describing target '%s'", ctx.project_name);
+        /* Only when nothing said anything. A host library that could not be
+           resolved has already written the message worth reading, and out of
+           memory is what is left when a helper failed and stayed quiet. */
+        if(err[0] == '\0')
+            snprintf(err, err_size, "out of memory describing target '%s'", ctx.project_name);
         goto failed;
     }
 
