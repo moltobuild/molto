@@ -29,6 +29,11 @@
  * reporting a missing file.
  */
 
+/* What answered, for the lock to record. A name and not a path: which
+   pkg-config was run is this machine's business, and a lock that carried it
+   would differ between two machines that agreed about everything that matters. */
+#define HOST_RESOLVER_NAME "pkg-config"
+
 /* Sized from what is on a shelf rather than from a round number. `gtk+-3.0`
    answers with 25 include directories on an ordinary Debian, `gtk+-unix-print-3.0`
    with 26 and `webkit2gtk-4.0` with 29 — the toolkits are the reason this key

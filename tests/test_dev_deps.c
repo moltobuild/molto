@@ -359,7 +359,7 @@ MOLTEST(the_lock_records_each_scope) {
     dep_graph *graph = NULL;
     ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
 
-    char *text = lockfile_render(ctx.project_name, graph);
+    char *text = lockfile_render(ctx.project_name, graph, NULL, 0);
     ASSERT_NOT_NULL(text);
     const char *helper = strstr(text, "name = \"helper\"");
     const char *ships = strstr(text, "name = \"ships\"");

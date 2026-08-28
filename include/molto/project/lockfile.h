@@ -42,11 +42,27 @@ typedef struct {
     str_list dependencies;
 } lock_package;
 
+/* What a host library answered when this lock was written (RFC-0016).
+ *
+ * A record and not a pin. Molto neither installs nor chooses what is on a
+ * machine, so a build that gets a different version is not refused — but a
+ * build that behaves differently on two machines should leave something a
+ * reader can diff, and without this the lock would claim reproducibility it
+ * does not have. */
+typedef struct {
+    char capability[PROJECT_OPT_LEN];
+    char answered[32]; /* the resolver: "pkg-config" */
+    /* "" when the resolver knows of no version, which a `.pc` file may omit. */
+    char version[64];
+} lock_host;
+
 typedef struct {
     long version;
     char root[DEP_NAME_MAX]; /* the package this lock belongs to */
     lock_package *packages;
     size_t count;
+    lock_host *hosts;
+    size_t host_count;
 } lockfile;
 
 /* Render a graph as the text of a lock file. Heap, caller frees; NULL on
@@ -55,11 +71,13 @@ typedef struct {
    Separate from writing it because everything worth getting wrong is here —
    the ordering, the escaping, the keys — and none of it needs a filesystem to
    exercise. */
-[[nodiscard]] char *lockfile_render(const char *package, const dep_graph *graph);
+[[nodiscard]] char *lockfile_render(const char *package, const dep_graph *graph,
+                                    const lock_host *hosts, size_t host_count);
 
 /* Write `Molto.lock` at the workspace root, replacing any previous one. */
 [[nodiscard]] bool lockfile_write(const char *root, const char *package, const dep_graph *graph,
-                                  char *err, size_t err_size);
+                                  const lock_host *hosts, size_t host_count, char *err,
+                                  size_t err_size);
 
 /* Read `Molto.lock` from the workspace root.
 
@@ -89,6 +107,19 @@ typedef struct {
  */
 [[nodiscard]] bool lockfile_verify(const lockfile *lock, const dep_graph *graph, char *err,
                                    size_t err_size);
+
+/* Report where the host answers differ from what was locked.
+ *
+ * Reports rather than refuses, which is the whole difference between this and
+ * `lockfile_verify`. A package that resolves to different bytes is a registry
+ * rewriting history; a host library that answers a different version is
+ * Tuesday. What the reader needs is to know it happened, so the message names
+ * the capability, what the lock recorded and what this machine said — and the
+ * build goes on.
+ *
+ * Writes nothing and answers how many differences it found, so a caller can
+ * say something once rather than per entry. */
+size_t lockfile_report_host_drift(const lockfile *lock, const lock_host *hosts, size_t host_count);
 
 void lockfile_free(lockfile *lock);
 
