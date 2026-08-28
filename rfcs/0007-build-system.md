@@ -335,24 +335,66 @@ objects. Excluding the package's `main` is what allows the suite to provide its
 own, and it is why a project's library code is testable without being split into
 a separate target first.
 
-The output is `build/<profile>/<package-name>`. There is exactly one executable
-per package **as implemented**; the limit is the engine's and no longer the
-model's, since RFC-0013 makes a target a node and a project may describe
-several.
+The output goes in `build/<profile>/`, under the name the next section gives it.
+There is exactly one target per package **as implemented**; the limit is the
+engine's and no longer the model's, since RFC-0013 makes a target a node and a
+project may describe several — and the engine already builds as many as a
+document carries, which is how the test binaries are made.
 
-RFC-0003 defines `[package].artifact` as `source`, `static` or `shared`. Molto
-**rejects the manifest** that sets it, with any value, rather than accepting the
-key and ignoring it. Producing a `.a` requires `ar`, and a `.so` requires
-`-fPIC`, a soname and a versioning policy; none of that exists. An explicit
-refusal costs the user one error message, while silent acceptance costs them a
-debugging session over a shared library that was never built.
+## What a built thing is called
 
-The refusal moves rather than relaxes. An IR document may carry an `Artifact`
-of either kind — a frontend for a build system whose whole vocabulary is
-libraries has to be able to say so — and the engine reports that it cannot
-build it. What a representation can express and what an implementation can
-produce are two questions, and conflating them would mean no frontend could be
-written until shared libraries were.
+`[package].artifact` says what a project builds, and the name follows from it:
+
+| `artifact` | Produces | Also |
+|---|---|---|
+| `executable` (default) | `<name>` | — |
+| `static` | `lib<name>.a` | — |
+| `shared` | `lib<name>.so.<major>.<minor>.<patch>` | soname `lib<name>.so.<major>`, and symlinks `lib<name>.so.<major>` and `lib<name>.so` beside it |
+
+These names are not Molto's to choose. `libz.so.1.2.13` recording a soname of
+`libz.so.1` is what every linker, every packager and every `pkg-config` on a
+Unix expects to find, and a shared library that departs from it is one nothing
+else can consume. Molto is not the audience for these names — the rest of the
+system is.
+
+**The soname carries the major and nothing else**, which is the whole of the
+convention: a program linked against `lib<name>.so.1` keeps running when 1.2.3
+is replaced by 1.9.0 and stops when it is replaced by 2.0.0. That is what semver
+already promises, said in the one place a loader reads it. It follows that
+`artifact = "shared"` requires `[package].version` to be a version Molto can
+read: a version with no major is **refused** rather than guessed at, because a
+guess would put a wrong number in the one place a wrong number is a promise
+about ABI.
+
+Both extra names are symlinks and not copies, and both are **relative** — they
+sit beside their target, and an absolute link would write the building machine's
+directory inside an artifact whose purpose is to be copied elsewhere. Failing to
+place one is a warning and not a failed build: the library is built and correct,
+and what is missing is the convenience of `-l<name>`.
+
+**A static library is archived, not linked.** `ar` resolves nothing, looks up no
+symbol and consults no other library, so the node's link options are not on that
+line — they belong to whoever links the program that finally uses the archive.
+The archive is **removed before it is written** rather than updated in place:
+`ar r` replaces the members it is given and leaves the rest, so an object whose
+source was deleted would otherwise stay in the archive across every later build,
+present at link time and absent from the sources.
+
+The archiver is looked for beside the resolved compiler before anywhere else,
+because a toolchain's own archiver is the one that understands its objects —
+`clang` with `-flto` wants `llvm-ar`, and binutils `ar` fails on those objects.
+Falling back to a bare `ar` departs from the rule that Molto does not search a
+`PATH`, deliberately: the alternative is failing on the ordinary machine where
+binutils sits exactly where every compiler expects it, and a compiler already
+reaches `as` and `ld` the same way. `MOLTO_AR` decides it outright.
+
+`artifact = "source"` is still **refused**. It describes a package a registry
+serves as sources, which is a recipe's business (RFC-0009), and accepting the
+key while building nothing would misreport what Molto did.
+
+`molto run` on a library **refuses before it builds**: a project with nothing to
+run should be told so rather than told after spending a minute compiling
+something the command cannot use.
 
 ## Profiles
 
@@ -551,12 +593,22 @@ mid-compile edit guard, per-profile output directories, the compile and link
 lines above with their scopes, test binaries in both modes, pruning of orphaned
 outputs, the work-stealing pool with `-j`, and the compilation database.
 
+`static` and `shared` artifacts arrived with the naming above: `ar` for an
+archive, `-shared` with a soname for a library, and the two symlinks beside it.
+`-fPIC` and the soname are written onto the target by the frontend rather than
+applied by the engine, so both are visible in `molto ir` and present in
+`compile_commands.json` — a file analysed without `-fPIC` is a different
+translation unit than the one that was built.
+
 Not implemented, each waiting on something other than this RFC:
 
 - **The global cache.** It is only worth building once there are dependencies to
   put in it, which is RFC-0008.
-- **`static` and `shared` artifacts.** They need `ar`, `-fPIC` and a soname
-  policy. Rejected explicitly in the meantime.
+- **More than one target per project** — a library and the program that uses
+  it, described by one manifest. What is missing is a manifest surface and not
+  an engine: the engine already builds every target a document carries, which is
+  how the test binaries are made, and a plugin's document can already name
+  several.
 - **`molto bench`.** The `bench` profile is honoured, but no command runs
   benchmarks and `bench/` is not discovered.
 - **Arbitrarily named profiles**, and rejection of the reserved profile keys.
