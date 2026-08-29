@@ -4,7 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 #define MOLTEST_VERSION "0.1.0"
 
@@ -381,10 +386,27 @@ static void print_summary(const moltest_summary *summary) {
 /* Runner                                                               */
 /* ------------------------------------------------------------------ */
 
+/* A clock that only goes forwards, for measuring how long a suite took.
+ *
+ * `clock_gettime` is declared by mingw and not provided by it, so a suite built
+ * for Windows compiles and then fails to link — which is why this is here and
+ * not in a platform block somebody could forget to look in. */
 static double now_seconds(void) {
+#ifdef _WIN32
+    /* The performance counter rather than the tick count: it needs no minimum
+       Windows version declared, and a suite's duration is the one number here
+       that should not quantise to 16 milliseconds. */
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart == 0)
+        return 0.0;
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart / (double)frequency.QuadPart;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
 }
 
 /* ---- output capture: a test's own printing is hidden unless it fails ---- */
