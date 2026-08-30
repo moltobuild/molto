@@ -91,6 +91,18 @@ One temporary-directory helper and one remove-tree helper in **moltest** retire
 That is the shape of the whole port. It looks like thirty-three thousand lines
 and it is four service files and two test helpers.
 
+**And this measurement was wrong about the tests, in a way worth recording.**
+The two idioms were real and retiring them was easy. What it missed is that
+seven test files fabricate a fake compiler by writing `#!/bin/sh` into a file
+and calling `chmod` — a POSIX dependency that no grep for POSIX headers or
+POSIX calls can see, because it is a string literal. Windows has no shebang for
+`CreateProcess` to honour, so on the first Windows run those seven files took
+about forty tests down with them.
+
+The lesson generalises past this port: **a count of what the code calls is not a
+count of what the code assumes.** The assumptions that hurt are the ones written
+as data.
+
 ## What this is not
 
 **Not cross-compilation.** Producing a `.exe` from Linux needs a toolchain that
@@ -194,14 +206,69 @@ project exists not to do."* So the claim is not made until all of it holds:
 Until then `spec.md` §19 continues to overstate what is true, and the honest fix
 in the meantime is to say so there rather than here.
 
+## What a compiler cannot tell you
+
+The single most useful thing this port taught, and the reason its CI has the
+shape it does: **compiling proves almost nothing.** Every failure below appeared
+one layer deeper than the last, and none of them was visible to the layer above.
+
+| Layer | What failed | Why nothing earlier caught it |
+|---|---|---|
+| Compile | `realpath`, `lstat`, `st_mtim`, `mkdir`, `fork`, `pipe`, `waitpid`, the `W*` macros | — |
+| Link | `nanosleep`, `clock_gettime` | mingw **declares** both and provides neither, so the compiler is satisfied |
+| Discovery | every candidate is `gcc.exe`; `PATH` splits on `;` | the binary builds, starts, and reports version 0 toolchains — exit 0 |
+| Meaning | the toolchain was *named* `gcc.exe`, so `c++` was chosen to compile C; the health probe linked into `/tmp` | everything ran; the answers were wrong |
+
+Two of those deserve keeping.
+
+**On Windows a suffix is a permission.** There is no execute bit, so
+`access(path, X_OK)` succeeds for any file that exists and filters nothing. What
+says a file may be run is that it is called `.exe` — which makes the suffix the
+filter, and makes requiring it the Windows half of a check POSIX does with a
+mode.
+
+**A name is not a filename.** `gcc.exe` is what the filesystem holds; `gcc` is
+what the program is called, and everything that ranks a driver, prefers one
+spelling over another, or derives `g++` from `gcc` reads the name. Keeping the
+suffix on it produced a toolchain that was neither preferred nor recognised as a
+C++ driver, and so lost to a `c++` that then could not compile C. The two need
+separate functions and the conversion needs to be inverse.
+
+The order the CI asks its questions in comes straight from this table: build,
+then *find a compiler*, then *answer for one*, then the suite. A job that only
+built would have gone green with every one of these inside it.
+
 ## Implementation Status
 
-Nothing. This RFC specifies and implements none of it.
+**pickup builds, runs, finds a compiler and answers for one on Windows.** It
+does so in CI, on a Windows runner, against the MSYS2 gcc that runner has. That
+is the first three of the four bars in *What proves it*; the fourth, the suite,
+is watched rather than gated: of 263 cases, **192 pass, 57 fail and 14 skip**,
+against 262 passing and 1 skipped on Linux.
 
-The measurement above is the only work done: it establishes that the port is
-four service files, two test helpers and a set of scattered details that can be
-counted on two hands, rather than an unbounded rewrite. It does not establish
-that the decision to defer was wrong — only what the decision costs.
+Molto itself is untouched, which is the order this document argued for.
+
+What the measurement got right: the platform lives in the services, and
+`fs_service` and `process_service` carried nearly all of it. What it got wrong,
+in both directions:
+
+- **More services were involved than two.** `paths_service` needed one
+  `#ifdef` — Windows names the home directory `USERPROFILE`, and only a shell
+  that brings its own environment sets `HOME` at all. The rule held everywhere
+  else: no platform knowledge reached `detect/`, `commands/` or `model/`, and
+  the callers that used to spell `realpath` or split `PATH` now ask a service.
+- **The duplication was worse and therefore better.** Two files had their own
+  copy of the PATH-splitting loop and their own `PATH_SEPARATOR`; fixing the
+  separator in one would have left the trap in the other. They share
+  `fs_walk_path` now, and the port left the tree smaller than it found it.
+- **The scattered details were as small as counted** — the separator, the
+  console, the four absolute paths — but there were more of them than the sweep
+  found, because a sweep for calls does not find a `/tmp` inside a `#define`.
+
+The suite's forty remaining failures are one cause: the fake programs above.
+Making them real programs is the last piece of pickup's port, and it carries a
+decision of its own — a suite that fabricates an executable needs a compiler to
+*run*, not only to build.
 
 ## Non-Goals
 
