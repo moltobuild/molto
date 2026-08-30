@@ -564,14 +564,11 @@ static void parent_of(const char *path, char *out, size_t size) {
 /* Resolved, and under `root_real`. `path` must exist; a caller holding one that
    may not asks about its directory instead. */
 static bool resolve_inside(const char *root_real, const char *path) {
-    char *real = realpath(path, NULL);
-    if(real == NULL)
+    char real[SOURCE_PATH_MAX];
+    if(!fs_real_path(path, real, sizeof real))
         return false;
     const size_t length = strlen(root_real);
-    const bool inside =
-        strncmp(real, root_real, length) == 0 && (real[length] == '/' || real[length] == '\0');
-    free(real);
-    return inside;
+    return strncmp(real, root_real, length) == 0 && (real[length] == '/' || real[length] == '\0');
 }
 
 /* One entry's path, joined onto the root and checked against it.
@@ -704,13 +701,8 @@ bool source_provide(const char *root, const struct recipe_provide *provide, char
         return true;
 
     char root_real[SOURCE_PATH_MAX];
-    char *real = realpath(root, NULL);
-    if(real == NULL)
+    if(!fs_real_path(root, root_real, sizeof root_real))
         return fail_about(err, err_size, "the source cannot be resolved", root);
-    const int written = snprintf(root_real, sizeof root_real, "%s", real);
-    free(real);
-    if(written < 0 || (size_t)written >= sizeof root_real)
-        return fail(err, err_size, "the path to the source does not fit");
 
     for(size_t i = 0; i < provide->count; i++) {
         if(!provide_one(root, root_real, &provide->items[i], i, err, err_size))

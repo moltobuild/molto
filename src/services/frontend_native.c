@@ -437,9 +437,9 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
        and a document anchored at a working directory means something different
        depending on where it was produced. */
     char absolute[NATIVE_PATH_MAX];
-    char *real = realpath(root, NULL);
-    const int written = snprintf(absolute, sizeof absolute, "%s", real != NULL ? real : root);
-    free(real);
+    char resolved[NATIVE_PATH_MAX];
+    const bool got = fs_real_path(root, resolved, sizeof resolved);
+    const int written = snprintf(absolute, sizeof absolute, "%s", got ? resolved : root);
     if(written < 0 || (size_t)written >= sizeof absolute) {
         snprintf(err, err_size, "the project root does not fit in a path");
         return false;

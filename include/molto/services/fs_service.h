@@ -107,6 +107,29 @@ typedef struct {
 /* Take the lock at `path`, creating the file if it is not there. Returns false
    without waiting when someone else holds it: a second molto in the same
    workspace is told so, never queued behind the first. */
+/* Resolve `path` to an absolute one with no `.`, `..` or symlink left in it,
+   and false when it cannot be resolved — which for an existing file means only
+   that the buffer was too small.
+
+   POSIX resolves symlinks and requires the file to exist; Windows resolves
+   neither, because it has no `realpath` and the closest call it does have
+   answers lexically. Callers use it to compare two paths or to record one, and
+   both survive the difference; a caller that needed the symlink followed would
+   need a different function and a note saying why. */
+[[nodiscard]] bool fs_real_path(const char *path, char *out, size_t size);
+
+/* A second name for an existing file. False when the system will not make one.
+ *
+ * A symlink on POSIX and a hard link on Windows, and the difference is not
+ * carelessness: a Windows symlink needs a privilege or Developer Mode, and a
+ * build tool that works only for an administrator is not a build tool. A hard
+ * link needs neither and gives what the one caller wants — a second name for
+ * the same bytes.
+ *
+ * The one caller places the two links beside a shared library, and treats a
+ * failure as a warning rather than a failed build. */
+[[nodiscard]] bool fs_link(const char *target, const char *path);
+
 [[nodiscard]] bool fs_lock_take(const char *path, fs_lock *out);
 
 /* Let go of a lock. Safe on one that was never taken. */

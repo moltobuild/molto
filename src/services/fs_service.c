@@ -13,6 +13,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/file.h>
 #include <unistd.h>
 #endif
@@ -157,9 +158,27 @@ bool fs_is_dir(const char *path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
+/*
+ * `stat` that does not follow a symlink.
+ *
+ * Windows has no `lstat`, and what it does have does not answer the same
+ * question — a reparse point is not a symlink and the only caller here is
+ * asking whether to walk into a directory. Following is the safe answer there,
+ * because nothing Molto makes on Windows is a symlink: `fs_link` makes hard
+ * links, which a stat cannot tell from the file itself. The day something does
+ * create one, this is where the answer has to change.
+ */
+static int stat_no_follow(const char *path, struct stat *out) {
+#ifdef _WIN32
+    return stat(path, out);
+#else
+    return lstat(path, out);
+#endif
+}
+
 bool fs_is_dir_no_follow(const char *path) {
     struct stat info;
-    return lstat(path, &info) == 0 && S_ISDIR(info.st_mode);
+    return stat_no_follow(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
 bool fs_format_path(char *out, size_t size, const char *format, ...) {
@@ -315,4 +334,24 @@ void fs_lock_release(fs_lock *lock) {
     lock->fd = -1;
 #endif
     lock->held = false;
+}
+
+bool fs_real_path(const char *path, char *out, size_t size) {
+#ifdef _WIN32
+    const DWORD written = GetFullPathNameA(path, (DWORD)size, out, NULL);
+    return written > 0 && written < size;
+#else
+    char resolved[PATH_MAX];
+    if(realpath(path, resolved) == NULL)
+        return false;
+    return fs_format_path(out, size, "%s", resolved);
+#endif
+}
+
+bool fs_link(const char *target, const char *path) {
+#ifdef _WIN32
+    return CreateHardLinkA(path, target, NULL) != 0;
+#else
+    return symlink(target, path) == 0;
+#endif
 }

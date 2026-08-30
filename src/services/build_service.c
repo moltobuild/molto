@@ -1272,7 +1272,7 @@ static void place_shared_links(const char *directory, const library_names *names
         /* Removed first: symlink refuses to replace what is already there, and
            what is already there is a link to a version that has moved on. */
         (void)remove(path);
-        if(symlink(names->file, path) != 0)
+        if(!fs_link(names->file, path))
             build_report_message(report, "molto: warning: could not link '%s' to '%s'\n", links[i],
                                  names->file);
     }

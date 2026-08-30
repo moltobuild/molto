@@ -4,45 +4,94 @@
    people, and 80 columns of leading tabs is not read by anyone. */
 #define INDENT_WIDTH 2
 
+/* --- the destination --- */
+
+static void sink_putc(json_sink *sink, char c) {
+    if(sink->stream != NULL) {
+        fputc(c, sink->stream);
+        return;
+    }
+    /* One byte is always kept back for the terminator, which is what makes the
+       buffer readable at any moment rather than only when finished. */
+    if(sink->used + 1 >= sink->size) {
+        sink->overflow = true;
+        return;
+    }
+    sink->buffer[sink->used++] = c;
+    sink->buffer[sink->used] = '\0';
+}
+
+static void sink_puts(json_sink *sink, const char *text) {
+    for(const char *c = text; *c != '\0'; c++)
+        sink_putc(sink, *c);
+}
+
+/* The one place a number is formatted, and it is always four hex digits. */
+static void sink_escape_code(json_sink *sink, unsigned char value) {
+    char escaped[7];
+    snprintf(escaped, sizeof escaped, "\\u%04x", value);
+    sink_puts(sink, escaped);
+}
+
 void json_writer_init(json_writer *writer, FILE *stream) {
-    writer->stream = stream;
+    writer->sink = (json_sink){.stream = stream};
     writer->depth = 0;
     writer->pending_comma = false;
     writer->empty[0] = true;
 }
 
-void json_writer_finish(json_writer *writer) { fputc('\n', writer->stream); }
+void json_writer_init_buffer(json_writer *writer, char *buffer, size_t size) {
+    writer->sink = (json_sink){.buffer = buffer, .size = size};
+    if(size > 0)
+        buffer[0] = '\0';
+    else
+        writer->sink.overflow = true;
+    writer->depth = 0;
+    writer->pending_comma = false;
+    writer->empty[0] = true;
+}
 
-void json_write_string(FILE *stream, const char *text) {
-    fputc('"', stream);
+bool json_writer_overflowed(const json_writer *writer) { return writer->sink.overflow; }
+
+void json_writer_finish(json_writer *writer) { sink_putc(&writer->sink, '\n'); }
+
+static void string_to_sink(json_sink *sink, const char *text) {
+    sink_putc(sink, '"');
     for(const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
         switch(*p) {
         case '"':
-            fputs("\\\"", stream);
+            sink_puts(sink, "\\\"");
             break;
         case '\\':
-            fputs("\\\\", stream);
+            sink_puts(sink, "\\\\");
             break;
         case '\n':
-            fputs("\\n", stream);
+            sink_puts(sink, "\\n");
             break;
         case '\r':
-            fputs("\\r", stream);
+            sink_puts(sink, "\\r");
             break;
         case '\t':
-            fputs("\\t", stream);
+            sink_puts(sink, "\\t");
             break;
         default:
             /* Everything below a space has to leave as an escape; a raw one is
                a document no parser will take. */
             if(*p < 0x20)
-                fprintf(stream, "\\u%04x", *p);
+                sink_escape_code(sink, *p);
             else
-                fputc((int)*p, stream);
+                sink_putc(sink, (char)*p);
             break;
         }
     }
-    fputc('"', stream);
+    sink_putc(sink, '"');
+}
+
+/* The public escaper still takes a stream, because its two other callers hand
+   it one directly and have no writer to offer. */
+void json_write_string(FILE *stream, const char *text) {
+    json_sink sink = {.stream = stream};
+    string_to_sink(&sink, text);
 }
 
 /* Whether the container currently open has had anything written into it.
@@ -58,29 +107,29 @@ static void mark_current_used(json_writer *writer) {
 }
 
 static void write_indent(json_writer *writer) {
-    fputc('\n', writer->stream);
+    sink_putc(&writer->sink, '\n');
     for(int i = 0; i < writer->depth * INDENT_WIDTH; i++)
-        fputc(' ', writer->stream);
+        sink_putc(&writer->sink, ' ');
 }
 
 /* Everything that comes before a value: the comma the previous one earned, the
    line it goes on, and the key when it has one. */
 static void begin_value(json_writer *writer, const char *key) {
     if(writer->pending_comma)
-        fputc(',', writer->stream);
+        sink_putc(&writer->sink, ',');
     if(writer->depth > 0)
         write_indent(writer);
     mark_current_used(writer);
 
     if(key != NULL) {
-        json_write_string(writer->stream, key);
-        fputs(": ", writer->stream);
+        string_to_sink(&writer->sink, key);
+        sink_puts(&writer->sink, ": ");
     }
 }
 
 static void open_container(json_writer *writer, const char *key, char bracket) {
     begin_value(writer, key);
-    fputc(bracket, writer->stream);
+    sink_putc(&writer->sink, bracket);
 
     writer->depth++;
     if(writer->depth < JSON_WRITE_MAX_DEPTH)
@@ -97,7 +146,7 @@ static void close_container(json_writer *writer, char bracket) {
     if(!was_empty)
         write_indent(writer);
 
-    fputc(bracket, writer->stream);
+    sink_putc(&writer->sink, bracket);
     writer->pending_comma = true;
 }
 
@@ -111,7 +160,7 @@ void json_array_close(json_writer *writer) { close_container(writer, ']'); }
 
 void json_write_field(json_writer *writer, const char *key, const char *value) {
     begin_value(writer, key);
-    json_write_string(writer->stream, value);
+    string_to_sink(&writer->sink, value);
     writer->pending_comma = true;
 }
 
@@ -121,6 +170,6 @@ void json_write_element(json_writer *writer, const char *value) {
 
 void json_write_raw(json_writer *writer, const char *key, const char *literal) {
     begin_value(writer, key);
-    fputs(literal, writer->stream);
+    sink_puts(&writer->sink, literal);
     writer->pending_comma = true;
 }
