@@ -33,3 +33,10 @@ report
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     report >> "$GITHUB_STEP_SUMMARY"
 fi
+
+# Left behind for the verdict step. Each measuring step swallows its own
+# failure so the one after it still runs, which means no step conclusion says
+# anything true any more — a green tick beside "Compile molto for Windows" on
+# a tree that does not compile is worse than a red one. The verdict reads
+# these back and ends the job the way the port actually stands.
+echo "$errors" >> tally.count

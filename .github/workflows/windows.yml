@@ -114,6 +114,20 @@ jobs:
         continue-on-error: true
         run: file build/molto* | grep -q 'PE32+ executable'
 
+      # The job ends the way the port stands, and `continue-on-error` on the
+      # job is what keeps that from blocking anyone. That flag exists for
+      # exactly this: a watch that reports honestly without gating. It comes
+      # off, along with this step, when the tally reaches zero.
+      - name: Where the port stands
+        run: |
+          if [ ! -f tally.count ]; then
+            echo "no tally was produced, which is its own kind of red"
+            exit 1
+          fi
+          total=$(awk '{ sum += $1 } END { print sum + 0 }' tally.count)
+          echo "$total errors between here and a Windows binary"
+          test "$total" -eq 0
+
   # Half two: does the binary do molto's job?
   #
   # It has to be a Windows runner, because the question is about behaviour and
@@ -170,13 +184,24 @@ jobs:
           C_COMPILER: gcc
           CPP_COMPILER: g++
         run: |
-          molto="$PWD/build/molto"
-          "$molto" --version
-          cd "$(mktemp -d)"
-          "$molto" new smoke_test
-          cd smoke_test
-          "$molto" run | tee output
-          grep -q "Hello, world!" output
+          set +e
+          here=$PWD
+          (
+            set -e
+            molto="$here/build/molto"
+            "$molto" --version
+            cd "$(mktemp -d)"
+            "$molto" new smoke_test
+            cd smoke_test
+            "$molto" run | tee output
+            grep -q "Hello, world!" output
+          )
+          status=$?
+          # The tally counts compiler errors, and this step asks a question no
+          # compiler answers. A molto that builds and cannot build anything is
+          # the failure this job exists for, so it counts itself.
+          [ $status -eq 0 ] || echo 1 >> "$here/tally.count"
+          exit $status
 
       # Watched, not gated, while the port is in progress — and the distinction
       # is deliberate. Reported rather than skipped: skipping edits the tests to
@@ -186,3 +211,17 @@ jobs:
       - name: Run the suite (watched, not yet a gate)
         continue-on-error: true
         run: make test CC=gcc
+
+      # The job ends the way the port stands, and `continue-on-error` on the
+      # job is what keeps that from blocking anyone. That flag exists for
+      # exactly this: a watch that reports honestly without gating. It comes
+      # off, along with this step, when the tally reaches zero.
+      - name: Where the port stands
+        run: |
+          if [ ! -f tally.count ]; then
+            echo "no tally was produced, which is its own kind of red"
+            exit 1
+          fi
+          total=$(awk '{ sum += $1 } END { print sum + 0 }' tally.count)
+          echo "$total errors between here and a Windows binary"
+          test "$total" -eq 0
