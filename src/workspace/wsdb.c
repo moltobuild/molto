@@ -4,14 +4,10 @@
 #include <molto/util/str_list.h>
 #include <molto/util/str_map.h>
 
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #define WSDB_MAGIC "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
@@ -80,7 +76,7 @@ struct wsdb {
     char root[WSDB_ROOT_MAX];
     uint32_t version;
     str_map *entries;
-    int lock_fd;
+    fs_lock lock;
     bool dirty;
 };
 
@@ -132,14 +128,6 @@ static void entry_set_command(wsdb_entry *e, const char *command) {
     return fs_format_path(out, out_size, "%s/" DIR_BIN "/%s", root, name);
 }
 
-/* Nanoseconds in one second, for composing a timestamp. */
-#define NANOS_PER_SECOND 1000000000LL
-
-/* Modification time of an already stat-ed file, in nanoseconds. */
-static int64_t stat_mtime_ns(const struct stat *info) {
-    return (int64_t)info->st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info->st_mtim.tv_nsec;
-}
-
 /* FNV-1a 64-bit hash of a file's content, and false when it cannot be read.
  *
  * A read that fails halfway leaves the loop the same way the end of the file
@@ -177,13 +165,13 @@ static int64_t stat_mtime_ns(const struct stat *info) {
     char full[WSDB_PATH];
     if(!make_full(db->root, rel, full, sizeof full))
         return false;
-    struct stat info;
-    if(stat(full, &info) != 0)
+    int64_t mtime_ns = 0;
+    uint64_t size = 0;
+    if(!fs_stamp(full, &mtime_ns, &size))
         return false; /* deleted */
 
     wsdb_entry *e = str_map_get(db->entries, rel);
-    if(e != NULL && e->kind == wsdb_input_kind && stat_mtime_ns(&info) == e->mtime_ns &&
-       (uint64_t)info.st_size == e->size) {
+    if(e != NULL && e->kind == wsdb_input_kind && mtime_ns == e->mtime_ns && size == e->size) {
         *out = e->hash;
         return true;
     }
@@ -199,8 +187,8 @@ static int64_t stat_mtime_ns(const struct stat *info) {
             return true;
         }
     }
-    e->mtime_ns = stat_mtime_ns(&info);
-    e->size = (uint64_t)info.st_size;
+    e->mtime_ns = mtime_ns;
+    e->size = size;
     e->hash = hash;
     db->dirty = true;
     *out = hash;
@@ -267,8 +255,7 @@ bool wsdb_object_fresh(wsdb *db, const char *object, const char *command) {
         return false;
     if(e->command == NULL || strcmp(e->command, command) != 0)
         return false;
-    struct stat info;
-    if(stat(object, &info) != 0)
+    if(!fs_path_exists(object))
         return false;
     return prereqs_unchanged(db, e);
 }
@@ -300,8 +287,7 @@ bool wsdb_binary_fresh(wsdb *db, const char *binary, const char *command) {
         return false;
     if(e->command == NULL || strcmp(e->command, command) != 0)
         return false;
-    struct stat info;
-    return stat(binary, &info) == 0;
+    return fs_path_exists(binary);
 }
 
 bool wsdb_record_binary(wsdb *db, const char *binary, const char *command) {
@@ -724,7 +710,7 @@ wsdb *wsdb_open(const char *root) {
         return NULL;
     snprintf(db->root, sizeof db->root, "%s", root);
     db->version = WSDB_VERSION;
-    db->lock_fd = -1;
+    db->lock = (fs_lock){0};
     db->entries = str_map_create(entry_free);
     if(db->entries == NULL) {
         free(db);
@@ -744,10 +730,7 @@ wsdb *wsdb_open(const char *root) {
         free(db);
         return NULL;
     }
-    db->lock_fd = open(lockpath, O_CREAT | O_RDWR, 0644);
-    if(db->lock_fd < 0 || flock(db->lock_fd, LOCK_EX | LOCK_NB) != 0) {
-        if(db->lock_fd >= 0)
-            close(db->lock_fd);
+    if(!fs_lock_take(lockpath, &db->lock)) {
         str_map_destroy(db->entries);
         free(db);
         return NULL;
@@ -762,8 +745,7 @@ bool wsdb_close(wsdb *db) {
     if(db == NULL)
         return true;
     bool saved = !db->dirty || wsdb_save(db);
-    if(db->lock_fd >= 0)
-        close(db->lock_fd); /* releases the flock */
+    fs_lock_release(&db->lock);
     str_map_destroy(db->entries);
     free(db);
     return saved;

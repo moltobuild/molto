@@ -7,7 +7,48 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
+#endif
+
+/*
+ * The platform, in one block, because every function below this line is one
+ * question asked of the filesystem and none of them should have to know which
+ * system is answering (RFC-0017).
+ */
+
+/* Windows has no mode argument: a directory's permissions come from its parent
+   rather than from the call that creates it. */
+#ifdef _WIN32
+#define make_one_dir(path) _mkdir(path)
+#else
+#define make_one_dir(path) mkdir((path), 0755)
+#endif
+
+/* Nanoseconds in one second, for composing a timestamp. */
+#define NANOS_PER_SECOND 1000000000LL
+
+/* Modification time of an already stat-ed file, in nanoseconds.
+
+   Windows keeps whole seconds in `st_mtime` and has no `st_mtim`, so the
+   nanoseconds are zero there and the resolution of a freshness check is a
+   second: two writes inside one are simultaneous, and a rebuild nanoseconds
+   would have triggered is not. That is the ceiling of the interface, not a
+   rounding this code chose — and `fs_signature` folds in the size, which is
+   what keeps the common case of an edited file honest. */
+static int64_t stat_mtime_ns(const struct stat *info) {
+#ifdef _WIN32
+    return (int64_t)info->st_mtime * NANOS_PER_SECOND;
+#else
+    return (int64_t)info->st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info->st_mtim.tv_nsec;
+#endif
+}
 
 bool fs_path_exists(const char *path) {
     struct stat info;
@@ -15,7 +56,7 @@ bool fs_path_exists(const char *path) {
 }
 
 bool fs_make_dir(const char *path) {
-    if(mkdir(path, 0755) == 0)
+    if(make_one_dir(path) == 0)
         return true;
     /* Treat an already existing directory as success. */
     struct stat info;
@@ -177,23 +218,31 @@ bool fs_remove_tree(const char *path) {
     return rmdir(path) == 0 && ok;
 }
 
-/* Nanoseconds in one second, for composing a timestamp. */
-#define NANOS_PER_SECOND 1000000000LL
-
 bool fs_mtime_ns(const char *path, int64_t *out) {
     struct stat info;
     if(stat(path, &info) != 0)
         return false;
-    *out = (int64_t)info.st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info.st_mtim.tv_nsec;
+    *out = stat_mtime_ns(&info);
+    return true;
+}
+
+bool fs_stamp(const char *path, int64_t *mtime_ns, uint64_t *size) {
+    struct stat info;
+    if(stat(path, &info) != 0)
+        return false;
+    if(mtime_ns != NULL)
+        *mtime_ns = stat_mtime_ns(&info);
+    if(size != NULL)
+        *size = (uint64_t)info.st_size;
     return true;
 }
 
 uint64_t fs_signature(const char *path) {
-    struct stat info;
-    int64_t mtime_ns;
-    if(stat(path, &info) != 0 || !fs_mtime_ns(path, &mtime_ns))
+    int64_t mtime_ns = 0;
+    uint64_t size = 0;
+    if(!fs_stamp(path, &mtime_ns, &size))
         return 0;
-    return (uint64_t)mtime_ns + (uint64_t)info.st_size;
+    return (uint64_t)mtime_ns + size;
 }
 
 bool fs_source_newer(const char *source, const char *target) {
@@ -218,4 +267,52 @@ const char *fs_relative_to(const char *path, const char *root) {
     if(strncmp(path, root, root_length) == 0 && path[root_length] == '/')
         return path + root_length + 1;
     return path;
+}
+
+/*
+ * The workspace lock.
+ *
+ * Two ways of saying the same thing. POSIX asks for the lock separately from
+ * opening the file, so the two calls are two steps. Windows has no advisory
+ * lock of this shape, but it does not need one: a file opened with a sharing
+ * mode of zero is exclusive by the act of opening it, and a second opener is
+ * refused. Both release on close, and both therefore release when the process
+ * dies however it dies — which is the property that matters, because a lock a
+ * crash leaves behind is a workspace nobody can build in.
+ */
+
+bool fs_lock_take(const char *path, fs_lock *out) {
+    out->held = false;
+#ifdef _WIN32
+    out->file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, NULL);
+    if(out->file == INVALID_HANDLE_VALUE) {
+        out->file = NULL;
+        return false;
+    }
+#else
+    out->fd = open(path, O_CREAT | O_RDWR, 0644);
+    if(out->fd < 0)
+        return false;
+    if(flock(out->fd, LOCK_EX | LOCK_NB) != 0) {
+        close(out->fd);
+        out->fd = -1;
+        return false;
+    }
+#endif
+    out->held = true;
+    return true;
+}
+
+void fs_lock_release(fs_lock *lock) {
+    if(lock == NULL || !lock->held)
+        return;
+#ifdef _WIN32
+    (void)CloseHandle(lock->file);
+    lock->file = NULL;
+#else
+    (void)close(lock->fd); /* releases the flock */
+    lock->fd = -1;
+#endif
+    lock->held = false;
 }

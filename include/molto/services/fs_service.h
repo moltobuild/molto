@@ -79,6 +79,39 @@ bool fs_report_long_path(const char *what);
    report whole seconds. */
 [[nodiscard]] bool fs_mtime_ns(const char *path, int64_t *out);
 
+/* Modification time and size of `path`, in one call. Returns false if the file
+   cannot be stat-ed. Either output may be NULL.
+
+   It exists so that a caller wanting both does not have to stat the file
+   itself: doing that means holding a `struct stat`, and the two fields this
+   returns are exactly the two whose spelling differs between platforms. */
+[[nodiscard]] bool fs_stamp(const char *path, int64_t *mtime_ns, uint64_t *size);
+
+/* The single-writer lock on a workspace, held for as long as the process holds
+ * this handle and released when it lets go — including when the process dies,
+ * because the operating system closes it.
+ *
+ * What identifies the lock is the one thing in this header a platform decides:
+ * a file descriptor on POSIX, an object handle on Windows. No caller reads the
+ * field — they pass the handle back to `fs_lock_release` — so the `#ifdef`
+ * stays here and never reaches the code that takes the lock (RFC-0017). */
+typedef struct {
+#ifdef _WIN32
+    void *file; /* HANDLE, opaque so callers need no windows.h */
+#else
+    int fd;
+#endif
+    bool held;
+} fs_lock;
+
+/* Take the lock at `path`, creating the file if it is not there. Returns false
+   without waiting when someone else holds it: a second molto in the same
+   workspace is told so, never queued behind the first. */
+[[nodiscard]] bool fs_lock_take(const char *path, fs_lock *out);
+
+/* Let go of a lock. Safe on one that was never taken. */
+void fs_lock_release(fs_lock *lock);
+
 /* Return true if `target` must be rebuilt from `source`: true when `target`
    is missing or `source` has a newer modification time (nanosecond precision,
    so two edits within the same second are still told apart). */
