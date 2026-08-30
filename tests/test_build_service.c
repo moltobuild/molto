@@ -49,14 +49,14 @@ MOLTEST(build_service) {
         "int main(void) { printf(\"hi\\n\"); return answer(); }\n"));
 
     /* First build compiles and links. */
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
     EXPECT_TRUE(fs_path_exists(binary));
     int64_t linked_at = mtime_of(binary);
 
     /* A no-op rebuild must NOT re-link (the binary is left untouched). */
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
     /* Touching a header recompiles the units that include it. main.c includes
@@ -64,7 +64,7 @@ MOLTEST(build_service) {
     char util_header[512];
     snprintf(util_header, sizeof util_header, "%s/src/util.h", root);
     EXPECT_TRUE(fs_write_file(util_header, "int answer(void); /* touched */\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
     linked_at = mtime_of(binary); /* rebase for the next step */
 
@@ -74,7 +74,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(main_path,
         "#include <stdio.h>\n"
         "int main(void) { printf(\"hi again\\n\"); return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
 
     /* The produced binary runs successfully. */
@@ -88,7 +88,7 @@ MOLTEST(build_service) {
     /* A directory without Project.toml is an invalid-manifest error. */
     char empty[] = "/tmp/molto_empty_XXXXXX";
     EXPECT_TRUE(mkdtemp(empty) != NULL);
-    EXPECT_TRUE(build_project(empty, profile_debug, false, 0, NULL, 0) == exit_invalid_manifest);
+    EXPECT_TRUE(build_project(empty, profile_debug, NULL, false, 0, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
 
@@ -106,7 +106,7 @@ MOLTEST(build_service) {
     EXPECT_TRUE(fs_write_file(path,
         "#include <math.h>\n"
         "int main(void) { return (int)sqrt(4.0) - 2; }\n"));
-    EXPECT_TRUE(build_project(lib_root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(lib_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
     (void)system(cmd);
 
@@ -121,13 +121,13 @@ MOLTEST(build_service) {
     snprintf(path, sizeof path, "%s/Project.toml", fp_root);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 0\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     char fp_obj[512];
     snprintf(fp_obj, sizeof fp_obj, "%s/build/debug/obj/src/main.c.o", fp_root);
     int64_t compiled_at = mtime_of(fp_obj);
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
-    EXPECT_TRUE(build_project(fp_root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(fp_obj) > compiled_at); /* recompiled due to changed opt_level */
     snprintf(cmd, sizeof cmd, "rm -rf %s", fp_root);
     (void)system(cmd);
@@ -143,7 +143,7 @@ MOLTEST(build_service) {
         "[package]\nname = \"def\"\n[target]\ndefines = [\"ANSWER=42\"]\n"));
     snprintf(path, sizeof path, "%s/src/main.c", def_root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return ANSWER - 42; }\n"));
-    EXPECT_TRUE(build_project(def_root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(def_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
     (void)system(cmd);
 }
@@ -163,7 +163,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     EXPECT_TRUE(fs_write_file(path, "this is not valid C\n"));
 
     /* The build fails because of bad.c... */
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_build_failure);
 
     /* ...but good.c did compile, and its object is recorded as up to date. */
     char good_object[512];
@@ -173,7 +173,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
 
     /* A second attempt only retries the broken unit: the good object is left
        alone instead of being thrown away and rebuilt. */
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_build_failure);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_build_failure);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at);
 
     /* No stale depfile is left behind for the unit that failed. */
@@ -184,7 +184,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     /* Fixing the broken unit completes the build. */
     snprintf(path, sizeof path, "%s/src/bad.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
 
     char cmd[600];
@@ -219,7 +219,7 @@ MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
     EXPECT_EQ(exit_build_failure,
-              build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
 
     char text[8192] = "";
     (void)fflush(said);
@@ -259,7 +259,7 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
     ASSERT_NOT_NULL(said);
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
-    EXPECT_EQ(exit_ok, build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+    EXPECT_EQ(exit_ok, build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
 
     char text[8192] = "";
     (void)fflush(said);
@@ -320,7 +320,7 @@ MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
     EXPECT_EQ(exit_build_failure,
-              build_project_with(root, profile_debug, false, 0, NULL, 0, report));
+              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
 
     char text[8192] = "";
     (void)fflush(said);
@@ -364,7 +364,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
         "    return 1;\n"
         "}\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/cpp_app", root);
@@ -391,7 +391,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_release, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_release, NULL, false, 0, NULL, 0) == exit_ok);
 
     /* Each profile gets its own output tree, so debug and release coexist. */
     char release_binary[512];
@@ -401,7 +401,7 @@ MOLTEST(build_honours_the_release_profile) {
     snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast", root);
     EXPECT_FALSE(fs_path_exists(debug_binary));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(fs_path_exists(debug_binary));
     EXPECT_TRUE(fs_path_exists(release_binary));
 
@@ -439,7 +439,7 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
     snprintf(deep, sizeof deep, "%s/deep/nested", root);
     ASSERT_TRUE(chdir(deep) == 0);
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[600];
@@ -506,7 +506,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
     remember_env("C_COMPILER", saved_cc, sizeof saved_cc, &had_cc);
     ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char log[512];
     snprintf(log, sizeof log, "%s/calls", tools);
@@ -519,7 +519,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
        Recording it would leave nothing to rebuild it, and the next link would
        quietly take the stale object — which is how a test suite ends up
        running against code that was already changed. */
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     char *second = fs_read_file(log);
     ASSERT_NOT_NULL(second);
     EXPECT_TRUE(strlen(second) > after_first);
@@ -592,7 +592,7 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
         "#ifndef BETA_API\n#error \"an interface did not reach the consumer\"\n#endif\n"
         "int main(void) { return alpha_answer() + beta_answer() - 3; }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -634,7 +634,7 @@ MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
 
-    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -677,7 +677,7 @@ MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read
 
     char app[600];
     snprintf(app, sizeof app, "%s/app", root);
-    EXPECT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(app, profile_debug, NULL, false, 0, NULL, 0));
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -728,7 +728,7 @@ MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
         "#error \"a dependency's standard reached the consumer\"\n#endif\n"
         "int main(void) { return legacy_answer(); }\n"));
 
-    EXPECT_TRUE(build_project(root, profile_debug, false, 0, NULL, 0) == exit_ok);
+    EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
     snprintf(cmd, sizeof cmd, "rm -rf %s", root);
@@ -756,7 +756,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
              "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"one\"\n");
     EXPECT_TRUE(fs_write_file(manifest_path, manifest));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char object[512];
     char binary[512];
@@ -768,7 +768,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
 
     /* Same manifest, same fingerprint: the string has to be stable across runs
        or nothing would ever be up to date. */
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) == compiled_at);
     EXPECT_TRUE(mtime_of(binary) == linked_at);
 
@@ -776,7 +776,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
              "[package]\nname = \"flavoured\"\n[env]\nMOLTO_FLAVOUR = \"two\"\n");
     EXPECT_TRUE(fs_write_file(manifest_path, manifest));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) != compiled_at);
     EXPECT_TRUE(mtime_of(binary) != linked_at);
 
@@ -803,7 +803,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
     EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
                                              "[env]\nZED = \"z\"\nALPHA = \"a\"\n"));
 
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char object[512];
     snprintf(object, sizeof object, "%s/build/debug/obj/src/main.c.o", root);
@@ -812,7 +812,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
 
     EXPECT_TRUE(fs_write_file(manifest_path, "[package]\nname = \"shuffled\"\n"
                                              "[env]\nALPHA = \"a\"\nZED = \"z\"\n"));
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     EXPECT_TRUE(mtime_of(object) == compiled_at);
 
     char cmd[600];
@@ -900,7 +900,7 @@ MOLTEST(build_writes_the_compilation_database) {
 
     /* -j 1 is the flag doing something observable: one worker compiles both
        units, which is the case a machine with one core has always had. */
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 1, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 1, NULL, 0));
 
     char database[512];
     snprintf(database, sizeof database, "%s/compile_commands.json", root);
@@ -946,7 +946,7 @@ MOLTEST(build_writes_the_compilation_database) {
 
     /* A rebuild that compiles nothing still describes everything: an editor
        asks what a file compiles as, and "it was up to date" is no answer. */
-    EXPECT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     text = fs_read_file(database);
     ASSERT_NOT_NULL(text);
     doc = json_parse(text);
@@ -964,7 +964,7 @@ MOLTEST(build_writes_the_compilation_database) {
 
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_EQ(exit_ok, build_tests(root, profile_debug, false, 2, &binaries, NULL));
+    EXPECT_EQ(exit_ok, build_tests(root, profile_debug, NULL, false, 2, &binaries, NULL));
     str_list_free(&binaries);
 
     text = fs_read_file(database);
@@ -981,7 +981,7 @@ MOLTEST(build_writes_the_compilation_database) {
     snprintf(path, sizeof path, "%s/src/util.c", root);
     ASSERT_TRUE(fs_write_file(path, "int used(void) { return \n"));
     ASSERT_TRUE(remove(database) == 0);
-    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     text = fs_read_file(database);
     ASSERT_NOT_NULL(text);
     doc = json_parse(text);
@@ -1059,7 +1059,7 @@ MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
     ASSERT_TRUE(mkdtemp(root) != NULL);
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char archive[512];
     snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
@@ -1087,14 +1087,14 @@ MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
     char extra[512];
     snprintf(extra, sizeof extra, "%s/src/bye.c", root);
     ASSERT_TRUE(fs_write_file(extra, "int bye(void) { return 1; }\n"));
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char archive[512];
     snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
     EXPECT_TRUE(archive_has_member(archive, "bye.c.o"));
 
     ASSERT_EQ(0, remove(extra));
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     EXPECT_FALSE(archive_has_member(archive, "bye.c.o"));
     EXPECT_TRUE(archive_has_member(archive, "greet.c.o"));
@@ -1113,7 +1113,7 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
     ASSERT_TRUE(mkdtemp(root) != NULL);
     ASSERT_TRUE(library_project(root, "shared", "1.2.3"));
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char library[512];
     snprintf(library, sizeof library, "%s/build/debug/libgreet.so.1.2.3", root);
@@ -1146,7 +1146,7 @@ MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
     ASSERT_TRUE(mkdtemp(root) != NULL);
     ASSERT_TRUE(library_project(root, "shared", "nightly"));
 
-    EXPECT_NE(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    EXPECT_NE(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     remove_tree(root);
 }
@@ -1158,13 +1158,119 @@ MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
     ASSERT_TRUE(mkdtemp(root) != NULL);
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     char archive[512];
     snprintf(archive, sizeof archive, "%s/build/debug/libgreet.a", root);
     const int64_t first = mtime_of(archive);
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, false, 0, NULL, 0));
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
     EXPECT_EQ(first, mtime_of(archive));
+
+    remove_tree(root);
+}
+
+/* --- building for another platform (RFC-0017) --- */
+
+/*
+ * A build for elsewhere gets a directory of its own.
+ *
+ * It cannot share the host's: the objects are called the same and hold
+ * different code, so one would silently be read as the other. The target that
+ * is asked for here is this machine's own, because what is under test is where
+ * the output lands rather than whether a cross toolchain exists.
+ */
+MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
+    char root[] = "/tmp/molto_target_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"far\"\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    /* Resolution is bypassed on purpose: what is under test is where the
+       output lands, not whether this machine owns a compiler that emits for
+       somewhere else. `C_COMPILER` is the documented way to say "use this one
+       and ask nobody", and it leaves the target deciding only the path. */
+    char saved_cc[4096];
+    bool had_cc;
+    remember_env("C_COMPILER", saved_cc, sizeof saved_cc, &had_cc);
+    ASSERT_TRUE(setenv("C_COMPILER", "cc", 1) == 0);
+
+    const int code = build_project(root, profile_debug, "sparc-unknown-none-elf", false, 0, NULL, 0);
+    restore_env("C_COMPILER", saved_cc, had_cc);
+    ASSERT_EQ(exit_ok, code);
+
+    char binary[512];
+    snprintf(binary, sizeof binary, "%s/build/sparc-unknown-none-elf/debug/far", root);
+    EXPECT_TRUE(fs_path_exists(binary));
+
+    /* And the objects went with it, rather than into the host's tree where the
+       next ordinary build would read them as its own. */
+    char object[512];
+    snprintf(object, sizeof object, "%s/build/sparc-unknown-none-elf/debug/obj/src/main.c.o", root);
+    EXPECT_TRUE(fs_path_exists(object));
+
+    char host_tree[512];
+    snprintf(host_tree, sizeof host_tree, "%s/build/debug", root);
+    EXPECT_FALSE(fs_path_exists(host_tree));
+
+    remove_tree(root);
+}
+
+/* And a build that asks for nothing keeps the path it always had: no project
+   that never wanted a target sees one appear. */
+MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
+    char root[] = "/tmp/molto_notarget_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"near\"\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
+
+    char binary[512];
+    snprintf(binary, sizeof binary, "%s/build/debug/near", root);
+    EXPECT_TRUE(fs_path_exists(binary));
+
+    remove_tree(root);
+}
+
+/*
+ * `[target].host` and another platform cannot both be true.
+ *
+ * pkg-config answers for the machine it runs on, so a cross build would compile
+ * this host's headers into a binary for somewhere else — a build that succeeds
+ * and produces something that cannot link there. Refused, and the message says
+ * which of the two is the problem.
+ */
+MOLTEST(a_host_library_cannot_be_resolved_for_another_platform) {
+    char root[] = "/tmp/molto_hostcross_XXXXXX";
+    ASSERT_TRUE(mkdtemp(root) != NULL);
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"needy\"\n"
+                                    "\n[target]\nhost = [\"some-toolkit\"]\n"));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    EXPECT_EQ(exit_invalid_manifest,
+              build_project(root, profile_debug, "sparc-unknown-none-elf", false, 0, NULL, 0));
+
+    /* And the same manifest builds when nothing foreign is asked for — the
+       refusal is about the pair, not about either one. */
+    EXPECT_NE(exit_invalid_manifest, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     remove_tree(root);
 }

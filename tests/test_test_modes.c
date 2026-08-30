@@ -93,7 +93,7 @@ MOLTEST(tests_link_into_one_binary_in_single_mode) {
 
     str_list binaries;
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) == exit_ok);
 
     /* One executable for the whole suite, named after the package. */
     ASSERT_EQ(1, str_list_count(&binaries));
@@ -133,7 +133,7 @@ MOLTEST(per_file_mode_is_still_the_default) {
 
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) != exit_ok);
+    EXPECT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) != exit_ok);
 
     str_list_free(&binaries);
     cleanup(root);
@@ -150,7 +150,7 @@ MOLTEST(extra_test_sources_must_exist) {
        would fail to link later with a message about a missing symbol. */
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) != exit_ok);
+    EXPECT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) != exit_ok);
 
     str_list_free(&binaries);
     cleanup(root);
@@ -164,7 +164,7 @@ MOLTEST(an_unknown_test_mode_is_a_manifest_error) {
 
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_invalid_manifest);
+    EXPECT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) == exit_invalid_manifest);
 
     str_list_free(&binaries);
     cleanup(root);

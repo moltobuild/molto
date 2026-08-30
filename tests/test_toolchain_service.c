@@ -146,7 +146,7 @@ MOLTEST(toolchain_reads_the_answer_from_the_resolver) {
     ASSERT_NOT_NULL(db);
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
 
     EXPECT_STREQ("/bin/sh", chain.cc);
     EXPECT_STREQ("/bin/echo", chain.cxx);
@@ -170,12 +170,12 @@ MOLTEST(toolchain_is_asked_once_and_then_remembered) {
 
     wsdb *db = wsdb_open(root);
     ASSERT_NOT_NULL(db);
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
     ASSERT_EQ(1, stub_calls(&stub));
 
     /* Same request, same database: the recorded answer is used and no process
        is spawned. This is the whole point of caching it. */
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
     EXPECT_EQ(1, stub_calls(&stub));
     EXPECT_STREQ("/bin/sh", chain.cc);
 
@@ -183,7 +183,7 @@ MOLTEST(toolchain_is_asked_once_and_then_remembered) {
     (void)wsdb_close(db);
     db = wsdb_open(root);
     ASSERT_NOT_NULL(db);
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
     EXPECT_EQ(1, stub_calls(&stub));
 
     (void)wsdb_close(db);
@@ -202,20 +202,20 @@ MOLTEST(toolchain_is_asked_again_when_the_request_changes) {
     resolved_toolchain chain;
 
     project_target target = target_requiring("attr_nodiscard");
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
     ASSERT_EQ(1, stub_calls(&stub));
 
     /* Requiring something else is a different question, so it gets asked. */
     project_target stricter = target_requiring("typeof");
-    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, false, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, NULL, false, db, false, &chain));
     EXPECT_EQ(2, stub_calls(&stub));
 
     /* So is asking for C++ rather than C. */
-    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, true, db, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, NULL, true, db, false, &chain));
     EXPECT_EQ(3, stub_calls(&stub));
 
     /* And an explicit refresh asks even when nothing changed. */
-    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, true, db, true, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&stricter, NULL, true, db, true, &chain));
     EXPECT_EQ(4, stub_calls(&stub));
 
     (void)wsdb_close(db);
@@ -235,7 +235,7 @@ MOLTEST(toolchain_reports_when_nothing_satisfies_the_request) {
     ASSERT_NOT_NULL(db);
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
-    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, false, db, false, &chain));
+    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, NULL, false, db, false, &chain));
 
     (void)wsdb_close(db);
     workspace_teardown(root);
@@ -249,7 +249,7 @@ MOLTEST(toolchain_reports_a_resolver_that_cannot_run) {
 
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
-    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, false, NULL, false, &chain));
+    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, NULL, false, NULL, false, &chain));
 
     stub_teardown(&stub);
 }
@@ -260,7 +260,7 @@ MOLTEST(toolchain_reports_an_unreadable_answer) {
 
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
-    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, false, NULL, false, &chain));
+    EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, NULL, false, NULL, false, &chain));
 
     stub_teardown(&stub);
 }
@@ -276,7 +276,7 @@ MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
 
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
-    ASSERT_EQ(exit_ok, toolchain_resolve(&target, false, NULL, false, &chain));
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, NULL, false, &chain));
     EXPECT_STREQ("/usr/bin/some-cc", chain.cc);
     EXPECT_STREQ("/usr/bin/some-c++", chain.cxx);
     EXPECT_EQ(0, stub_calls(&stub));

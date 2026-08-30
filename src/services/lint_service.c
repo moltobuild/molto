@@ -534,7 +534,7 @@ static int prepare(const char *root, const lint_request *request, lint_setup *se
     /* The database is opened only to reuse the recorded answers about the
        compiler and the linter, so lint does not pay pickup's cost every run. */
     wsdb *db = wsdb_open(root);
-    int code = toolchain_resolve(&setup->ctx.target, needs_cpp(sources), db,
+    int code = toolchain_resolve(&setup->ctx.target, NULL, needs_cpp(sources), db,
                                  request->refresh_toolchain, &setup->chain);
     if(code != exit_ok) {
         wsdb_close(db);
