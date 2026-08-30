@@ -16,6 +16,10 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#else
+#include <unistd.h>
+#endif
+#ifdef _WIN32
 
 static inline int setenv(const char *name, const char *value, int overwrite) {
     if (!overwrite && getenv(name) != NULL)
@@ -42,6 +46,12 @@ static inline int unsetenv(const char *name) {
  * False when the directory could not be made, which a caller should treat as
  * a failed fixture rather than as a test result.
  */
+/* A temporary file of one's own, created empty and named.
+ *
+ * The companion of moltest_temp_dir, and here for the same reason: a suite that
+ * spells `/tmp` itself is a suite that only runs on one platform. */
+[[nodiscard]] static inline bool moltest_temp_file(const char *prefix, char *out, size_t size);
+
 [[nodiscard]] static inline bool moltest_temp_dir(const char *prefix, char *out, size_t size) {
 #ifdef _WIN32
     const char *base = getenv("TEMP");
@@ -62,6 +72,36 @@ static inline int unsetenv(const char *name) {
     return _mkdir(out) == 0;
 #else
     return mkdtemp(out) != NULL;
+#endif
+}
+
+static inline bool moltest_temp_file(const char *prefix, char *out, size_t size) {
+#ifdef _WIN32
+    const char *base = getenv("TEMP");
+    if (base == NULL)
+        base = getenv("TMP");
+    if (base == NULL)
+        base = ".";
+#else
+    const char *base = "/tmp";
+#endif
+    const int written = snprintf(out, size, "%s/%s_XXXXXX", base, prefix);
+    if (written < 0 || (size_t)written >= size)
+        return false;
+#ifdef _WIN32
+    if (_mktemp_s(out, (size_t)written + 1) != 0)
+        return false;
+    FILE *file = fopen(out, "wb");
+    if (file == NULL)
+        return false;
+    (void)fclose(file);
+    return true;
+#else
+    const int fd = mkstemp(out);
+    if (fd < 0)
+        return false;
+    (void)close(fd);
+    return true;
 #endif
 }
 
