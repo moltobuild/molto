@@ -279,6 +279,19 @@ larger in one place:
   `report`. Whether mingw provides it is a question for the cross job, not for
   a reading of the source — which is the lesson of *What a compiler cannot tell
   you*, applied before the fact for once.
+- `<fnmatch.h>` in `style_config.c`, **which the reading above missed**. mingw
+  has no such header, and the first run of the cross job hit it in the first
+  file it compiled. It was missed because the sweep looked for a fixed list of
+  POSIX headers and a fixed list of POSIX calls, and `fnmatch` was in neither —
+  the same shape of miss as the `/tmp` inside a `#define`. Glob matching is
+  needed on both platforms and belongs in a service, which is where it goes.
+
+That first run taught something about the job as well as the port: it reported
+one error and stopped, because `make` halts at the first translation unit that
+fails. One error out of an unknown number is a tripwire, not a measurement. The
+job runs `make -k` now and prints a tally — errors, files, and distinct kinds,
+which is the figure that directs the work: eleven `realpath` sites are an
+afternoon and one `fork` is a week.
 
 What the measurement got right: the platform lives in the services, and
 `fs_service` and `process_service` carried nearly all of it. What it got wrong,

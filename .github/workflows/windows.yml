@@ -55,6 +55,14 @@ jobs:
   #     `report`. Whether mingw provides it is a question for this job, not
   #     for a reading of the source.
   #
+  # And one the reading missed, which the first run of this job found in the
+  # very first file it compiled: `<fnmatch.h>` in `style_config.c`, the glob
+  # matching behind `format.json`'s exclusions. mingw has no such header. It
+  # was missed because the sweep looked for a fixed list of POSIX headers and a
+  # fixed list of POSIX calls, and `fnmatch` was in neither — the same shape of
+  # miss as the `/tmp` inside a `#define` that pickup's sweep walked past. A
+  # sweep finds what it was told to look for, which is why this job exists.
+  #
   # What this job cannot say anything about is how the binary behaves. That is
   # the whole reason half two exists.
   cross:
@@ -70,17 +78,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y -o Acquire::Retries=3 gcc-mingw-w64-x86-64
 
+      # `-k` is what makes this a measurement rather than a tripwire. Without
+      # it make stops at the first translation unit that fails, and the port
+      # is reported as one error out of an unknown number — which is how this
+      # job first ran, and it said `fnmatch.h: No such file or directory` and
+      # nothing else about a tree of sixty-six files.
+      #
+      # The step still exits with make's status, so the job stays honest; the
+      # tally is printed first, and `continue-on-error` on the step itself is
+      # what lets the next one run. Job-level `continue-on-error` does not do
+      # that — it spares the workflow, not the steps after a red one.
       - name: Compile molto for Windows
-        run: make build CC=x86_64-w64-mingw32-gcc
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build CC=x86_64-w64-mingw32-gcc 2>&1 | tee compile.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh compile.log "molto for Windows"
+          exit $status
 
       # Built and not run: these are Windows binaries on a Linux runner.
       # Running them is half two's job. Building them is still worth doing
       # here, because the suite has POSIX of its own, and a port whose tests
       # cannot be compiled is a port that cannot be proven.
       - name: Compile its suite for Windows
-        run: make build/molto_tests CC=x86_64-w64-mingw32-gcc
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build/molto_tests CC=x86_64-w64-mingw32-gcc 2>&1 | tee suite.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh suite.log "its suite for Windows"
+          exit $status
 
       - name: And it really is a Windows binary
+        continue-on-error: true
         run: file build/molto* | grep -q 'PE32+ executable'
 
   # Half two: does the binary do molto's job?
@@ -115,7 +146,13 @@ jobs:
       # right to pin a version on the machine it was written for, so the
       # override belongs here.
       - name: Build
-        run: make build CC=gcc
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build CC=gcc 2>&1 | tee compile.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh compile.log "molto on Windows"
+          exit $status
 
       # Before the suite, deliberately. A job that stops at the first failure
       # reports whatever it reached, and "does it build a program at all" is
@@ -128,6 +165,7 @@ jobs:
       # a process, walking a directory, taking the workspace lock, and getting
       # an executable out the other end.
       - name: It builds and runs a project
+        continue-on-error: true
         env:
           C_COMPILER: gcc
           CPP_COMPILER: g++
