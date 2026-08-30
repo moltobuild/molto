@@ -1,0 +1,188 @@
+name: Windows
+
+# Deliberately not part of `ci.yml`.
+#
+# This file measures how far molto's Windows port has got; `ci.yml` is what has
+# to be green. Both jobs below fail today and are marked `continue-on-error`
+# for that reason — a red gate nobody can fix teaches people to ignore red
+# gates. When they pass, the flag comes off and they move into `ci.yml`. That
+# move is the definition of "supported" in RFC-0017.
+#
+# Pickup went through this same file first, and what it learnt shapes this one:
+# compiling proves almost nothing. Its port failed at link (mingw declares
+# `nanosleep` and does not provide it), at discovery (`gcc` is not a filename,
+# `gcc.exe` is) and at meaning (`PATH` separates on `;`, and a colon belongs to
+# a drive letter) — three layers a compiler cannot see. So half two builds and
+# *runs*, and asks its questions in that order.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  # Half one: does molto compile for Windows at all?
+  #
+  # Asked on a Linux runner with a cross compiler, because it needs no Windows
+  # queue and no MSYS2 install — a minute against ten. It catches every missing
+  # declaration and every struct field that differs, which is what stands
+  # between here and a binary.
+  #
+  # Read out of the source before this job ever ran, so the first number it
+  # prints can be checked against an expectation:
+  #
+  #   - `fork` + `pipe` + `dup2` + `waitpid` + `poll` in `process_service.c`,
+  #     which has to become `CreateProcess`. Bigger than pickup's was: molto
+  #     streams a compiler's output through a poll loop while it runs.
+  #   - `flock` in `wsdb.c:748`, the single-writer lock, which is `LockFileEx`.
+  #   - `symlink()` in `build_service.c:1275`, the two links beside a shared
+  #     library. Not a substitution: Windows symlinks need a privilege or
+  #     Developer Mode, so this is a design question RFC-0017 has to answer.
+  #   - `sys/ioctl.h` in `viewport.c` and `termios.h` in `conflict_prompt.c`,
+  #     which are the console API.
+  #   - `realpath` seven times, plus `mkdtemp`, `mkstemp`, `lstat`, `chmod`
+  #     and `access` — every one of which pickup's `fs_service` already
+  #     answered, so molto copies rather than invents.
+  #   - `<threads.h>`, C11 rather than pthreads, in `task_pool`, `loader` and
+  #     `report`. Whether mingw provides it is a question for this job, not
+  #     for a reading of the source.
+  #
+  # And one the reading missed, which the first run of this job found in the
+  # very first file it compiled: `<fnmatch.h>` in `style_config.c`, the glob
+  # matching behind `format.json`'s exclusions. mingw has no such header. It
+  # was missed because the sweep looked for a fixed list of POSIX headers and a
+  # fixed list of POSIX calls, and `fnmatch` was in neither — the same shape of
+  # miss as the `/tmp` inside a `#define` that pickup's sweep walked past. A
+  # sweep finds what it was told to look for, which is why this job exists.
+  #
+  # What this job cannot say anything about is how the binary behaves. That is
+  # the whole reason half two exists.
+  cross:
+    name: Compiles for Windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install the mingw-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 gcc-mingw-w64-x86-64
+
+      # `-k` is what makes this a measurement rather than a tripwire. Without
+      # it make stops at the first translation unit that fails, and the port
+      # is reported as one error out of an unknown number — which is how this
+      # job first ran, and it said `fnmatch.h: No such file or directory` and
+      # nothing else about a tree of sixty-six files.
+      #
+      # The step still exits with make's status, so the job stays honest; the
+      # tally is printed first, and `continue-on-error` on the step itself is
+      # what lets the next one run. Job-level `continue-on-error` does not do
+      # that — it spares the workflow, not the steps after a red one.
+      - name: Compile molto for Windows
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build CC=x86_64-w64-mingw32-gcc 2>&1 | tee compile.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh compile.log "molto for Windows"
+          exit $status
+
+      # Built and not run: these are Windows binaries on a Linux runner.
+      # Running them is half two's job. Building them is still worth doing
+      # here, because the suite has POSIX of its own, and a port whose tests
+      # cannot be compiled is a port that cannot be proven.
+      - name: Compile its suite for Windows
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build/molto_tests CC=x86_64-w64-mingw32-gcc 2>&1 | tee suite.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh suite.log "its suite for Windows"
+          exit $status
+
+      - name: And it really is a Windows binary
+        continue-on-error: true
+        run: file build/molto* | grep -q 'PE32+ executable'
+
+  # Half two: does the binary do molto's job?
+  #
+  # It has to be a Windows runner, because the question is about behaviour and
+  # no cross build can answer it.
+  windows:
+    name: Runs on Windows
+    runs-on: windows-2022
+    timeout-minutes: 25
+    continue-on-error: true
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # MSYS2 rather than the runner's own MinGW: it brings `make`, which the
+      # bootstrap Makefile needs, and a gcc from the same family the cross job
+      # compiles with, so the two halves disagree about as little as possible.
+      # TODO: pin to an exact tag, the way every other action here is pinned.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+
+      # `CC=gcc` because the bootstrap Makefile reaches for `gcc-12` when
+      # nobody names a compiler, and MSYS2 calls its own `gcc`. The Makefile is
+      # right to pin a version on the machine it was written for, so the
+      # override belongs here.
+      - name: Build
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build CC=gcc 2>&1 | tee compile.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh compile.log "molto on Windows"
+          exit $status
+
+      # Before the suite, deliberately. A job that stops at the first failure
+      # reports whatever it reached, and "does it build a program at all" is
+      # the headline this job exists to answer — worth more, while the port is
+      # in progress, than knowing which of eight hundred cases went red.
+      #
+      # `C_COMPILER=gcc` skips pickup on purpose. Pickup on Windows is its own
+      # port with its own tally, and mixing the two would make a red here
+      # unattributable. What is under test is molto's own machinery: spawning
+      # a process, walking a directory, taking the workspace lock, and getting
+      # an executable out the other end.
+      - name: It builds and runs a project
+        continue-on-error: true
+        env:
+          C_COMPILER: gcc
+          CPP_COMPILER: g++
+        run: |
+          molto="$PWD/build/molto"
+          "$molto" --version
+          cd "$(mktemp -d)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
+      # Watched, not gated, while the port is in progress — and the distinction
+      # is deliberate. Reported rather than skipped: skipping edits the tests to
+      # hide them, while this leaves every failure printed and counted, so the
+      # tally is a number to watch move. The step above stays a hard gate, so a
+      # regression in building or running a project still turns this red.
+      - name: Run the suite (watched, not yet a gate)
+        continue-on-error: true
+        run: make test CC=gcc

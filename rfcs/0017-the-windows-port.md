@@ -243,10 +243,55 @@ built would have gone green with every one of these inside it.
 **pickup builds, runs, finds a compiler and answers for one on Windows.** It
 does so in CI, on a Windows runner, against the MSYS2 gcc that runner has. That
 is the first three of the four bars in *What proves it*; the fourth, the suite,
-is watched rather than gated: of 263 cases, **192 pass, 57 fail and 14 skip**,
-against 262 passing and 1 skipped on Linux.
+is watched rather than gated: of 267 cases on master at 2026-08-30, **221 pass,
+36 fail and 10 skip**, against a green Linux run of the same tree.
 
-Molto itself is untouched, which is the order this document argued for.
+That tally moved from 192/57/14 by making the fake programs real programs, and
+the move is worth more than its size. What remains is no longer one cause: the
+36 fall across `recipe` (15), `diagnostics` (7), `archive_service` (6),
+`gcc_install` (3), `install_service` (2) and three singletons. Six of them are
+the colon again, one layer further out — MSYS2's `tar` reads `D:\path` as
+`host:path` and answers `Cannot connect to D: resolve failed`. A drive letter
+is not a hostname, and nothing in pickup's own code was wrong.
+
+**Molto is untouched, which is the order this document argued for** — but it is
+now measured, and the reading is in `.github/workflows/windows.yml` beside the
+job that will check it. Its POSIX surface is the same shape as pickup's and
+larger in one place:
+
+- `fork` + `pipe` + `dup2` + `waitpid` + `poll` in `process_service.c`, which
+  has to become `CreateProcess`. Bigger than pickup's was, because Molto
+  streams a compiler's output through a poll loop while it runs rather than
+  collecting it at the end.
+- `flock` in `wsdb.c`, the single-writer lock, which is `LockFileEx`.
+- `symlink()` in `build_service.c`, the two links beside a shared library.
+  **This is the one that is not a substitution**: Windows symlinks need a
+  privilege or Developer Mode, so the Unix convention this project adopted for
+  shared libraries has no faithful Windows spelling, and choosing what replaces
+  it — a copy, an import library, nothing at all — is a design decision this
+  RFC still owes.
+- `sys/ioctl.h` in `viewport.c` and `termios.h` in `conflict_prompt.c`, which
+  are the console API.
+- `realpath` seven times, plus `mkdtemp`, `mkstemp`, `lstat`, `chmod` and
+  `access` — every one already answered inside pickup's `fs_service`. Molto
+  copies the answers rather than inventing second ones.
+- `<threads.h>`, C11 rather than pthreads, in `task_pool`, `loader` and
+  `report`. Whether mingw provides it is a question for the cross job, not for
+  a reading of the source — which is the lesson of *What a compiler cannot tell
+  you*, applied before the fact for once.
+- `<fnmatch.h>` in `style_config.c`, **which the reading above missed**. mingw
+  has no such header, and the first run of the cross job hit it in the first
+  file it compiled. It was missed because the sweep looked for a fixed list of
+  POSIX headers and a fixed list of POSIX calls, and `fnmatch` was in neither —
+  the same shape of miss as the `/tmp` inside a `#define`. Glob matching is
+  needed on both platforms and belongs in a service, which is where it goes.
+
+That first run taught something about the job as well as the port: it reported
+one error and stopped, because `make` halts at the first translation unit that
+fails. One error out of an unknown number is a tripwire, not a measurement. The
+job runs `make -k` now and prints a tally — errors, files, and distinct kinds,
+which is the figure that directs the work: eleven `realpath` sites are an
+afternoon and one `fork` is a week.
 
 What the measurement got right: the platform lives in the services, and
 `fs_service` and `process_service` carried nearly all of it. What it got wrong,
@@ -264,11 +309,14 @@ in both directions:
 - **The scattered details were as small as counted** — the separator, the
   console, the four absolute paths — but there were more of them than the sweep
   found, because a sweep for calls does not find a `/tmp` inside a `#define`.
+- **A tool a test shells out to is part of the port.** The sweep looked for
+  POSIX calls in the source and found none in `archive_service`, which spawns
+  `tar`. The trap was in the argument, not the call.
 
-The suite's forty remaining failures are one cause: the fake programs above.
-Making them real programs is the last piece of pickup's port, and it carries a
-decision of its own — a suite that fabricates an executable needs a compiler to
-*run*, not only to build.
+**Neither tool ships a Windows binary, and neither should yet.** Both release
+workflows publish one static x86-64 Linux artifact, and adding a `.exe` beside
+it would name a platform as supported on the evidence of a compile. That is the
+one thing *What proves it* exists to forbid.
 
 ## Non-Goals
 
