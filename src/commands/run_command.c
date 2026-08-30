@@ -67,8 +67,8 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
 
     char binary[4096];
     build_report *report = build_report_create(stderr);
-    int code =
-        build_project_with(root, profile, refresh_toolchain, jobs, binary, sizeof binary, report);
+    int code = build_project_with(root, profile, NULL, refresh_toolchain, jobs, binary,
+                                  sizeof binary, report);
     build_report_finish(report, profile_name(profile), code);
     build_report_destroy(report);
     if(code != exit_ok)

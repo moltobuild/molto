@@ -165,10 +165,25 @@ static build_unit_label label_for_target(const ir_document *doc, const ir_target
 }
 
 /* Compose the output executable path for a package. */
-[[nodiscard]] static bool compose_binary_path(const char *root, build_profile profile,
+/*
+ * Where this build's output goes under `build/`: the profile, with the target
+ * in front of it when one was named.
+ *
+ * A build for elsewhere cannot share a directory with the host's: the objects
+ * are called the same and hold different code. Absent a target the segment is
+ * what it has always been, so no project that never asked for one sees a path
+ * move.
+ */
+[[nodiscard]] static bool build_segment(build_profile profile, const char *platform, char *out,
+                                        size_t out_size) {
+    if(platform == NULL)
+        return fs_format_path(out, out_size, "%s", profile_name(profile));
+    return fs_format_path(out, out_size, "%s/%s", platform, profile_name(profile));
+}
+
+[[nodiscard]] static bool compose_binary_path(const char *root, const char *segment,
                                               const char *name, char *out, size_t out_size) {
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_name(profile),
-                          name) ||
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, segment, name) ||
            fs_report_long_path(name);
 }
 
@@ -565,6 +580,10 @@ typedef struct {
 typedef struct {
     const char *root;
     build_profile profile;
+    /* Where output goes under `build/`: the profile, and the target before it
+       when one was named. Carried rather than recomposed, so every object of
+       one build lands under one directory. */
+    const char *segment;
     manifest_profile settings;
     const project_env *env;
     const resolved_toolchain *chain;
@@ -867,7 +886,7 @@ static void share_in_object_cache(const char *source, const char *object, const 
         if(source_is_cpp(source))
             *any_cpp = true;
         char object[PATH_BUFFER_SIZE];
-        if(!object_path_for(env->root, profile_name(env->profile), source, object, sizeof object))
+        if(!object_path_for(env->root, env->segment, source, object, sizeof object))
             return exit_build_failure;
         if(!make_parent_dirs(object)) {
             fprintf(stderr, "molto: could not create output directory for '%s'\n", object);
@@ -1604,12 +1623,14 @@ static void report_plan(const build_plan *plan, const char *root, build_report *
  *
  * False with a message in `err`. */
 [[nodiscard]] static bool document_is_allowed(const ir_document *doc, const char *root,
-                                              build_profile profile, const project_ctx *ctx,
-                                              const prepared_deps *deps, const prepared_deps *dev,
-                                              char *err, size_t err_size) {
+                                              build_profile profile, const char *platform,
+                                              const project_ctx *ctx, const prepared_deps *deps,
+                                              const prepared_deps *dev, char *err,
+                                              size_t err_size) {
+    char segment[PATH_BUFFER_SIZE];
     char build_dir[PATH_BUFFER_SIZE];
-    if(!fs_format_path(build_dir, sizeof build_dir, "%s/" DIR_BUILD "/%s", root,
-                       profile_name(profile)))
+    if(!build_segment(profile, platform, segment, sizeof segment) ||
+       !fs_format_path(build_dir, sizeof build_dir, "%s/" DIR_BUILD "/%s", root, segment))
         return fs_report_long_path(root);
 
     char cache[PATH_BUFFER_SIZE];
@@ -1698,11 +1719,32 @@ static int frontend_exit_code(frontend_result answer) {
    project's own build would compile — without compiling any of them. `objects`
    is caller-initialised and caller-freed; everything the units borrow belongs
    to `plan`. Shared by build_project and build_tests. */
-[[nodiscard]] static int plan_project(const char *root, build_profile profile, wsdb *db,
-                                      bool refresh_toolchain, const pass_options *options,
+[[nodiscard]] static int plan_project(const char *root, build_profile profile, const char *platform,
+                                      bool refresh_toolchain, wsdb *db, const pass_options *options,
                                       project_ctx *ctx_out, resolved_toolchain *chain_out,
                                       str_list *objects_out, build_plan *plan) {
     int result = load_project(root, ctx_out);
+    if(result == exit_ok && platform != NULL && ctx_out->target.host_count > 0) {
+        /*
+         * Refused rather than answered wrongly.
+         *
+         * `[target].host` asks pkg-config where a library is, and pkg-config
+         * answers for the machine it runs on. Cross-compiling, that answer
+         * names this host's headers and this host's `-l`, which would be
+         * compiled into a binary for somewhere else — a build that succeeds and
+         * produces something that cannot link there, or worse, links against
+         * the wrong ABI and starts.
+         *
+         * Answering it properly needs a sysroot with its own `.pc` files and
+         * PKG_CONFIG_SYSROOT_DIR pointing at it, which is RFC-0016's business
+         * and not a flag's.
+         */
+        fprintf(stderr,
+                "molto: '%s' declares [target].host, and molto cannot resolve a host library "
+                "for another platform: pkg-config answers for this machine\n",
+                ctx_out->project_name);
+        return exit_invalid_manifest;
+    }
     if(result != exit_ok)
         return result;
 
@@ -1777,7 +1819,7 @@ static int frontend_exit_code(frontend_result answer) {
     if(plan->labels == NULL)
         return exit_build_failure;
 
-    if(!document_is_allowed(&plan->doc, root, profile, ctx_out, &plan->deps, &plan->dev,
+    if(!document_is_allowed(&plan->doc, root, profile, platform, ctx_out, &plan->deps, &plan->dev,
                             frontend_err, sizeof frontend_err)) {
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
@@ -1809,13 +1851,21 @@ static int frontend_exit_code(frontend_result answer) {
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->sources, i));
     for(size_t i = 0; i < str_list_count(&plan->package_sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->package_sources, i));
-    result = toolchain_resolve(&ctx_out->target, needs_cpp, db, refresh_toolchain, chain_out);
+    result =
+        toolchain_resolve(&ctx_out->target, platform, needs_cpp, db, refresh_toolchain, chain_out);
     if(result != exit_ok)
         return result;
+
+    char segment[PATH_BUFFER_SIZE];
+    if(!build_segment(profile, platform, segment, sizeof segment)) {
+        (void)fs_report_long_path(root);
+        return exit_build_failure;
+    }
 
     const build_pass_env env = {
         .root = root,
         .profile = profile,
+        .segment = segment,
         .settings = profile_settings(ctx_out, profile),
         .env = &ctx_out->env,
         .chain = chain_out,
@@ -1854,14 +1904,15 @@ static void publish_compile_db(const compile_db *cdb, const char *root) {
                         "editors and static analysers will have to guess\n");
 }
 
-int build_project(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
-                  char *out_binary, size_t out_binary_size) {
-    return build_project_with(root, profile, refresh_toolchain, jobs, out_binary, out_binary_size,
-                              NULL);
+int build_project(const char *root, build_profile profile, const char *platform,
+                  bool refresh_toolchain, size_t jobs, char *out_binary, size_t out_binary_size) {
+    return build_project_with(root, profile, platform, refresh_toolchain, jobs, out_binary,
+                              out_binary_size, NULL);
 }
 
-int build_project_with(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
-                       char *out_binary, size_t out_binary_size, build_report *report) {
+int build_project_with(const char *root, build_profile profile, const char *platform,
+                       bool refresh_toolchain, size_t jobs, char *out_binary,
+                       size_t out_binary_size, build_report *report) {
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -1878,8 +1929,8 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
     build_plan plan;
     build_plan_init(&plan);
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result =
-        plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain, &objects, &plan);
+    int result = plan_project(root, profile, platform, refresh_toolchain, db, &options, &ctx,
+                              &chain, &objects, &plan);
     if(result == exit_ok) {
         report_plan(&plan, root, report);
         build_report_begin(report, plan.to_build);
@@ -1904,11 +1955,12 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
         char name_err[512] = "";
         char binary[PATH_BUFFER_SIZE];
         char directory[PATH_BUFFER_SIZE];
+        char segment[PATH_BUFFER_SIZE];
         if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, name_err,
                              sizeof name_err) ||
-           !compose_binary_path(root, profile, names.file, binary, sizeof binary) ||
-           !fs_format_path(directory, sizeof directory, "%s/" DIR_BUILD "/%s", root,
-                           profile_name(profile))) {
+           !build_segment(profile, platform, segment, sizeof segment) ||
+           !compose_binary_path(root, segment, names.file, binary, sizeof binary) ||
+           !fs_format_path(directory, sizeof directory, "%s/" DIR_BUILD "/%s", root, segment)) {
             if(name_err[0] != '\0')
                 build_report_message(report, "molto: %s\n", name_err);
             build_plan_free(&plan);
@@ -1935,7 +1987,7 @@ int build_project_with(const char *root, build_profile profile, bool refresh_too
             /* Prune objects orphaned by removed sources (scoped to src/). */
             char prefix[PATH_BUFFER_SIZE];
             if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_SRC "/",
-                              root, profile_name(profile)))
+                              root, segment))
                 wsdb_prune(db, &objects, prefix);
             if(out_binary != NULL && !fs_format_path(out_binary, out_binary_size, "%s", binary)) {
                 (void)fs_report_long_path(binary);
@@ -2056,14 +2108,16 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     return ok ? exit_ok : exit_build_failure;
 }
 
-int build_tests(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
-                str_list *test_binaries_out, project_env *env_out) {
-    return build_tests_with(root, profile, refresh_toolchain, jobs, test_binaries_out, env_out,
-                            NULL);
+int build_tests(const char *root, build_profile profile, const char *platform,
+                bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
+                project_env *env_out) {
+    return build_tests_with(root, profile, platform, refresh_toolchain, jobs, test_binaries_out,
+                            env_out, NULL);
 }
 
-int build_tests_with(const char *root, build_profile profile, bool refresh_toolchain, size_t jobs,
-                     str_list *test_binaries_out, project_env *env_out, build_report *report) {
+int build_tests_with(const char *root, build_profile profile, const char *platform,
+                     bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
+                     project_env *env_out, build_report *report) {
     /* Cleared up front so a caller that keeps going after a failure runs
        nothing in a half-read environment. */
     if(env_out != NULL)
@@ -2087,8 +2141,8 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
        what makes `molto test` the command that leaves an editor able to follow
        a test into the code it exercises. */
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
-    int result =
-        plan_project(root, profile, db, refresh_toolchain, &options, &ctx, &chain, &objects, &plan);
+    int result = plan_project(root, profile, platform, refresh_toolchain, db, &options, &ctx,
+                              &chain, &objects, &plan);
     if(result != exit_ok) {
         build_plan_free(&plan);
         publish_compile_db(options.cdb, root);
@@ -2100,16 +2154,25 @@ int build_tests_with(const char *root, build_profile profile, bool refresh_toolc
     if(env_out != NULL)
         *env_out = ctx.env;
 
+    char profile_dir_storage[PATH_BUFFER_SIZE];
+    if(!build_segment(profile, platform, profile_dir_storage, sizeof profile_dir_storage)) {
+        (void)fs_report_long_path(root);
+        build_plan_free(&plan);
+        str_list_free(&objects);
+        return exit_build_failure;
+    }
+    const char *profile_dir = profile_dir_storage;
+
     const build_pass_env env = {
         .root = root,
         .profile = profile,
+        .segment = profile_dir,
         .settings = profile_settings(&ctx, profile),
         .env = &ctx.env,
         .chain = &chain,
         .db = db,
         .options = &options,
     };
-    const char *profile_dir = profile_name(profile);
 
     /* Object of src/main.c (the app entry point), if any, to exclude from test
        links: the tests supply their own entry point. */

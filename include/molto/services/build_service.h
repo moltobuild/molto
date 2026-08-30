@@ -23,8 +23,9 @@
    including the ones it found up to date: it is what the tools that parse this
    code without being the build read (RFC-0007).
    Returns a molto_exit_code. */
-[[nodiscard]] int build_project(const char *root, build_profile profile, bool refresh_toolchain,
-                                size_t jobs, char *out_binary, size_t out_binary_size);
+[[nodiscard]] int build_project(const char *root, build_profile profile, const char *platform,
+                                bool refresh_toolchain, size_t jobs, char *out_binary,
+                                size_t out_binary_size);
 
 /* The same build, saying what it is doing.
  *
@@ -32,7 +33,7 @@
  * a person typed and not to the service: `molto build` wants an inventory and a
  * bar, and a test suite building a hundred fixtures wants silence. `NULL` is
  * that silence, which is what the plain `build_project` above passes. */
-[[nodiscard]] int build_project_with(const char *root, build_profile profile,
+[[nodiscard]] int build_project_with(const char *root, build_profile profile, const char *platform,
                                      bool refresh_toolchain, size_t jobs, char *out_binary,
                                      size_t out_binary_size, build_report *report);
 
@@ -73,12 +74,13 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size);
    handed back rather than read again from the manifest because the build may
    rewrite Project.toml on its way through, and a test that runs under a
    different environment than the one that compiled it is the bug this avoids. */
-[[nodiscard]] int build_tests(const char *root, build_profile profile, bool refresh_toolchain,
-                              size_t jobs, str_list *test_binaries_out, project_env *env_out);
+[[nodiscard]] int build_tests(const char *root, build_profile profile, const char *platform,
+                              bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
+                              project_env *env_out);
 
 /* The same test build, saying what it is doing. See build_project_with. */
-[[nodiscard]] int build_tests_with(const char *root, build_profile profile, bool refresh_toolchain,
-                                   size_t jobs, str_list *test_binaries_out, project_env *env_out,
-                                   build_report *report);
+[[nodiscard]] int build_tests_with(const char *root, build_profile profile, const char *platform,
+                                   bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
+                                   project_env *env_out, build_report *report);
 
 #endif /* MOLTO_BUILD_SERVICE_H */

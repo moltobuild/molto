@@ -57,6 +57,8 @@ static const cli_option add_options[] = {
 static const cli_option build_options[] = {
     {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
      "debug"},
+    {"--target", 't', cli_opt_value, "<triple>",
+     "Platform to build for; this machine's when absent", NULL},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
      "Resolve the compiler again instead of reusing the cached one", NULL},
     {"--jobs", 'j', cli_opt_value, "<n>", "Compile at most n units at once (default: every core)",
@@ -228,7 +230,8 @@ static int handle_build(const cli_args *args) {
     size_t jobs = 0;
     if(!parse_jobs(args, &jobs))
         return report_bad_jobs(args);
-    return build_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs);
+    return build_command_run(cli_args_option(args, "--profile"), cli_args_option(args, "--target"),
+                             wants_refresh(args), jobs);
 }
 
 static int handle_run(const cli_args *args) {

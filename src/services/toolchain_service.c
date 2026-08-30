@@ -20,6 +20,7 @@
 
 /* The pickup sub-command and its arguments. */
 #define ARG_RESOLVE "resolve"
+#define ARG_TARGET "--target"
 #define ARG_HOST "host"
 #define ARG_LANG "--lang"
 #define LANG_C "c"
@@ -87,17 +88,19 @@ static bool compose_features(const project_target *target, char *out, size_t out
 
 /* Serialize the request. This string is both what pickup is asked and the
    fingerprint the answer is stored under, so the two can never disagree. */
-static bool compose_request(const project_target *target, bool needs_cpp, const char *features,
-                            char *out, size_t out_size) {
+static bool compose_request(const project_target *target, const char *platform, bool needs_cpp,
+                            const char *features, char *out, size_t out_size) {
     const char *vendor = vendor_of(target->compiler);
-    return fs_format_path(out, out_size, "lang=%s std=%s require=%s vendor=%s",
+    return fs_format_path(out, out_size, "lang=%s std=%s require=%s vendor=%s target=%s",
                           needs_cpp ? LANG_CXX : LANG_C, target->std[0] != '\0' ? target->std : "-",
-                          features[0] != '\0' ? features : "-", vendor != NULL ? vendor : "-");
+                          features[0] != '\0' ? features : "-", vendor != NULL ? vendor : "-",
+                          platform != NULL ? platform : "-");
 }
 
 /* Build the pickup command line for this request. */
-static bool build_pickup_argv(const char *program, const project_target *target, bool needs_cpp,
-                              const char *features, str_list *argv) {
+static bool build_pickup_argv(const char *program, const project_target *target,
+                              const char *platform, bool needs_cpp, const char *features,
+                              str_list *argv) {
     bool ok = str_list_push(argv, program) && str_list_push(argv, ARG_RESOLVE) &&
               str_list_push(argv, ARG_LANG) && str_list_push(argv, needs_cpp ? LANG_CXX : LANG_C);
     if(ok && target->std[0] != '\0')
@@ -107,6 +110,8 @@ static bool build_pickup_argv(const char *program, const project_target *target,
     const char *vendor = vendor_of(target->compiler);
     if(ok && vendor != NULL)
         ok = str_list_push(argv, ARG_VENDOR) && str_list_push(argv, vendor);
+    if(ok && platform != NULL)
+        ok = str_list_push(argv, ARG_TARGET) && str_list_push(argv, platform);
     return ok && str_list_push(argv, ARG_FORMAT) && str_list_push(argv, FORMAT_TOML);
 }
 
@@ -208,13 +213,13 @@ static void remember(wsdb *db, const char *request, const resolved_toolchain *ch
 }
 
 /* Ask pickup, and turn its failures into messages that say what to do. */
-static int ask_pickup(const project_target *target, bool needs_cpp, const char *features,
-                      resolved_toolchain *out) {
+static int ask_pickup(const project_target *target, const char *platform, bool needs_cpp,
+                      const char *features, resolved_toolchain *out) {
     const char *program = pickup_program();
 
     str_list argv;
     str_list_init(&argv);
-    if(!build_pickup_argv(program, target, needs_cpp, features, &argv)) {
+    if(!build_pickup_argv(program, target, platform, needs_cpp, features, &argv)) {
         str_list_free(&argv);
         return exit_build_failure;
     }
@@ -263,8 +268,8 @@ bool toolchain_host_target(char *out, size_t out_size) {
     return ok;
 }
 
-int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db, bool refresh,
-                      resolved_toolchain *out) {
+int toolchain_resolve(const project_target *target, const char *platform, bool needs_cpp, wsdb *db,
+                      bool refresh, resolved_toolchain *out) {
     /* An explicit choice by the user outranks resolution, and is not cached:
        the compile command already carries the path, so changing the variable
        rebuilds on its own. */
@@ -274,7 +279,7 @@ int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db, bo
     char features[REQUEST_SIZE];
     char request[REQUEST_SIZE];
     if(!compose_features(target, features, sizeof features) ||
-       !compose_request(target, needs_cpp, features, request, sizeof request)) {
+       !compose_request(target, platform, needs_cpp, features, request, sizeof request)) {
         fprintf(stderr, "molto: [target] requirements are too long to resolve\n");
         return exit_build_failure;
     }
@@ -282,7 +287,7 @@ int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db, bo
     if(!refresh && take_from_wsdb(db, request, out))
         return exit_ok;
 
-    int code = ask_pickup(target, needs_cpp, features, out);
+    int code = ask_pickup(target, platform, needs_cpp, features, out);
     if(code == exit_ok)
         remember(db, request, out);
     return code;

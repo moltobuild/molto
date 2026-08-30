@@ -8,7 +8,8 @@
 
 #include <stdio.h>
 
-int build_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs) {
+int build_command_run(const char *requested_profile, const char *platform, bool refresh_toolchain,
+                      size_t jobs) {
     build_profile profile = profile_debug;
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
@@ -24,7 +25,8 @@ int build_command_run(const char *requested_profile, bool refresh_toolchain, siz
        the error it was supposed to precede — and it would also pollute the
        output of anyone redirecting a build. */
     build_report *report = build_report_create(stderr);
-    int code = build_project_with(root, profile, refresh_toolchain, jobs, NULL, 0, report);
+    int code =
+        build_project_with(root, profile, platform, refresh_toolchain, jobs, NULL, 0, report);
     /* After the link and not before it: what the line reports is how long the
        whole command took, and the link is part of the command. */
     build_report_finish(report, profile_name(profile), code);

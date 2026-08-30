@@ -52,7 +52,13 @@ typedef struct {
    and a wrong answer kept in a database is worse than a cheap right one. */
 [[nodiscard]] bool toolchain_host_target(char *out, size_t out_size);
 
-[[nodiscard]] int toolchain_resolve(const project_target *target, bool needs_cpp, wsdb *db,
-                                    bool refresh, resolved_toolchain *out);
+/* `platform` is the triple the code is being built for, or NULL for this
+   machine's own. It reaches pickup as `--target` and it is part of the request
+   string, so a cross build never answers itself with the compiler the host
+   build resolved: the question changed, and the remembered answer was to the
+   other one. */
+[[nodiscard]] int toolchain_resolve(const project_target *target, const char *platform,
+                                    bool needs_cpp, wsdb *db, bool refresh,
+                                    resolved_toolchain *out);
 
 #endif /* MOLTO_TOOLCHAIN_SERVICE_H */

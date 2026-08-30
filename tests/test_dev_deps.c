@@ -117,7 +117,7 @@ MOLTEST(a_test_may_include_a_development_dependency) {
     app_path(&at, app, sizeof app);
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, false, 0, &binaries, NULL));
+    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, NULL, false, 0, &binaries, NULL));
 
     str_list_free(&binaries);
     sandbox_close(&at);
@@ -164,11 +164,11 @@ MOLTEST(a_development_dependencys_library_reaches_only_the_test_link) {
     app_path(&at, app, sizeof app);
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, false, 0, &binaries, NULL));
+    EXPECT_EQ(exit_ok, build_tests(app, profile_debug, NULL, false, 0, &binaries, NULL));
 
     /* And `molto build` links an executable that never saw it: the fold puts a
        development dependency on targets of kind `test` and on nothing else. */
-    EXPECT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(app, profile_debug, NULL, false, 0, NULL, 0));
 
     str_list_free(&binaries);
     sandbox_close(&at);
@@ -188,7 +188,7 @@ MOLTEST(src_may_not_include_a_development_dependency) {
 
     char app[PATH_MAX_LEN];
     app_path(&at, app, sizeof app);
-    EXPECT_EQ(exit_build_failure, build_project(app, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_build_failure, build_project(app, profile_debug, NULL, false, 0, NULL, 0));
 
     sandbox_close(&at);
 }
@@ -214,7 +214,7 @@ MOLTEST(src_may_not_include_a_development_dependency_under_test_either) {
     app_path(&at, app, sizeof app);
     str_list binaries;
     str_list_init(&binaries);
-    EXPECT_EQ(exit_build_failure, build_tests(app, profile_debug, false, 0, &binaries, NULL));
+    EXPECT_EQ(exit_build_failure, build_tests(app, profile_debug, NULL, false, 0, &binaries, NULL));
 
     str_list_free(&binaries);
     sandbox_close(&at);
@@ -240,7 +240,7 @@ MOLTEST(src_may_include_a_runtime_dependency) {
 
     char app[PATH_MAX_LEN];
     app_path(&at, app, sizeof app);
-    EXPECT_EQ(exit_ok, build_project(app, profile_debug, false, 0, NULL, 0));
+    EXPECT_EQ(exit_ok, build_project(app, profile_debug, NULL, false, 0, NULL, 0));
 
     sandbox_close(&at);
 }

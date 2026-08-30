@@ -130,7 +130,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
 
     str_list binaries;
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) == exit_ok);
     EXPECT_EQ(2, str_list_count(&binaries));
     str_list_free(&binaries);
 
@@ -146,7 +146,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
        `molto test` would keep running forever. */
     EXPECT_TRUE(remove(doomed) == 0);
     str_list_init(&binaries);
-    ASSERT_TRUE(build_tests(root, profile_debug, false, 0, &binaries, NULL) == exit_ok);
+    ASSERT_TRUE(build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL) == exit_ok);
     EXPECT_EQ(1, str_list_count(&binaries));
     str_list_free(&binaries);
 
