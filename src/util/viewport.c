@@ -7,8 +7,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#else
 #include <sys/ioctl.h>
 #include <unistd.h>
+#endif
 
 /* Bytes the closing reset needs, terminator included, kept back from the end
    of the buffer so a line that fills it can still be closed. */
@@ -46,15 +51,45 @@ viewport_size viewport_size_from_env(const char *columns, const char *lines) {
     };
 }
 
+/* Ask the terminal behind `out` how big it is. False when there is no terminal
+   there, or when there is one and it would not say.
+
+   The two systems disagree about what a terminal even is. On Windows the
+   console is an object with its own API rather than a device answering an
+   ioctl, and the size that matters is `srWindow`, the part a person can see —
+   `dwSize` is the scrollback buffer, which is routinely nine thousand rows
+   tall and would have the region take the whole screen forever. */
+static bool ask_the_terminal(FILE *out, unsigned long *columns, unsigned long *rows) {
+#ifdef _WIN32
+    const HANDLE console = (HANDLE)_get_osfhandle(_fileno(out));
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if(console == INVALID_HANDLE_VALUE || GetConsoleScreenBufferInfo(console, &info) == 0)
+        return false;
+    const int wide = info.srWindow.Right - info.srWindow.Left + 1;
+    const int high = info.srWindow.Bottom - info.srWindow.Top + 1;
+    if(wide <= 0 || high <= 0)
+        return false;
+    *columns = (unsigned long)wide;
+    *rows = (unsigned long)high;
+    return true;
+#else
+    struct winsize window;
+    if(ioctl(fileno(out), TIOCGWINSZ, &window) != 0 || window.ws_col == 0 || window.ws_row == 0)
+        return false;
+    *columns = window.ws_col;
+    *rows = window.ws_row;
+    return true;
+#endif
+}
+
 viewport_size viewport_measure(FILE *out) {
-    if(out != NULL) {
-        struct winsize window;
-        if(ioctl(fileno(out), TIOCGWINSZ, &window) == 0 && window.ws_col > 0 && window.ws_row > 0)
-            return (viewport_size){
-                .columns = clamped(window.ws_col, VIEWPORT_COLUMNS_MAX),
-                .rows = clamped(window.ws_row, VIEWPORT_ROWS_MAX),
-            };
-    }
+    unsigned long columns = 0;
+    unsigned long rows = 0;
+    if(out != NULL && ask_the_terminal(out, &columns, &rows))
+        return (viewport_size){
+            .columns = clamped(columns, VIEWPORT_COLUMNS_MAX),
+            .rows = clamped(rows, VIEWPORT_ROWS_MAX),
+        };
     /* No terminal behind it, or a terminal that would not say. The two
        variables are what a caller has left to describe one. */
     return viewport_size_from_env(getenv("COLUMNS"), getenv("LINES"));
