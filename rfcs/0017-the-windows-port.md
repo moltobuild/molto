@@ -293,6 +293,26 @@ job runs `make -k` now and prints a tally — errors, files, and distinct kinds,
 which is the figure that directs the work: eleven `realpath` sites are an
 afternoon and one `fork` is a week.
 
+**The first real measurement, on 2026-08-30**: 14 errors across 9 files under
+mingw 10.3 cross-compiling, and **31 across 16** under MSYS2's gcc 16.2 on a
+Windows runner — `realpath` five times, `st_mtim` four, `threads.h` three, and
+one each of `mkdir`'s arity, `termios.h`, `sys/ioctl.h`, `poll.h`, `LOCK_EX`,
+`LOCK_NB`, `fnmatch.h`, `symlink`, `strsignal`, `lstat`, `fmemopen` and
+`flock`. The seven `-Wint-conversion` errors are not their own problem: they
+are what an implicit `realpath` returning `int` does to the line that assigns
+it.
+
+**That 31 is a floor, not a total.** A missing header ends its translation unit
+where it stands, so `process_service.c` reported `poll.h` and said nothing
+about the `fork`, `pipe`, `dup2` and `waitpid` behind it — the largest piece of
+the port is the one the count cannot see yet. The same shape as the lesson
+above, one level down: a build that stops early does not merely delay the news,
+it reports a smaller number with no sign that it is smaller.
+
+And `tests/` is not in either figure. The test binary links every object under
+`src/`, so nothing under `tests/` is compiled until `src/` does, and a step
+that tried anyway just re-reported the source errors and doubled the total.
+
 What the measurement got right: the platform lives in the services, and
 `fs_service` and `process_service` carried nearly all of it. What it got wrong,
 in both directions:
