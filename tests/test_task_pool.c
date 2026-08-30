@@ -1,9 +1,9 @@
 #include <moltest.h>
 
 #include <molto/util/task_pool.h>
+#include <molto/util/thread.h>
 
 #include <stdatomic.h>
-#include <threads.h>
 
 static void increment_task(void *arg) {
     atomic_int *counter = arg;
@@ -11,8 +11,7 @@ static void increment_task(void *arg) {
 }
 
 static void slow_task(void *arg) {
-    struct timespec nap = { .tv_sec = 0, .tv_nsec = 200000 }; /* 0.2 ms */
-    thrd_sleep(&nap, NULL);
+    thread_sleep_ms(1);
     atomic_fetch_add((atomic_int *)arg, 1);
 }
 
