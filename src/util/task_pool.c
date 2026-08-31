@@ -5,7 +5,7 @@
  * each) across several CPU cores at once.
  *
  * How it works, in plain terms:
- *   - A "worker" is a real operating-system thread (thrd_t). We create one per
+ *   - A "worker" is a real operating-system thread. We create one per
  *     CPU core by default. They run for the whole life of the pool.
  *   - Each worker owns its own queue of tasks, called a "deque" (double-ended
  *     queue). The owner adds and removes tasks at the BOTTOM (last-in first-out,
@@ -20,22 +20,25 @@
  *     task_pool_wait() blocks until it reaches zero.
  *
  * C primitives used here:
- *   - thrd_t / thrd_create / thrd_join : an OS thread and its start/join.
- *   - mtx_t (mutex)      : a lock; only one thread holds it at a time.
- *   - cnd_t (condition)  : a way to sleep until another thread signals you.
+ *   - thread / thread_start / thread_join : an OS thread and its start/join.
+ *   - mutex              : a lock; only one thread holds it at a time.
+ *   - condition          : a way to sleep until another thread signals you.
  *   - atomic_*           : reads/writes that are safe to do from many threads
  *                          without a lock (used for simple counters and flags).
+ *
+ * The first three come from molto/util/thread.h rather than from C11
+ * <threads.h>, which mingw does not ship (RFC-0017). On POSIX each one is the
+ * C11 call it always was, so nothing about how this behaves here changed.
  */
 
 #include <molto/util/task_pool.h>
+
+#include <molto/util/thread.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
-#include <time.h>
-#include <unistd.h>
 
 /* Growth policy for a worker's deque: start small, then double on demand. */
 #define DEQUE_INITIAL_CAPACITY 16
@@ -45,8 +48,6 @@
  * timeout (rather than an indefinite wait) also guarantees liveness even if a
  * wake-up signal is ever missed. */
 #define PARK_TIMEOUT_MS 2
-#define NANOS_PER_MILLI (1000L * 1000L)
-#define NANOS_PER_SECOND (1000L * 1000L * 1000L)
 
 /* xorshift64: a tiny, fast pseudo-random number generator. Each worker uses it
  * to pick a random victim to steal from, which spreads out stealing and avoids
@@ -73,13 +74,13 @@ typedef struct {
     size_t capacity;
     size_t top;    /* index thieves steal from */
     size_t bottom; /* index the owner pushes to / pops from */
-    mtx_t mtx;
+    mutex mtx;
 } deque;
 
 /* One worker: its own deque, its OS thread, and a private RNG state. */
 typedef struct {
     deque queue;
-    thrd_t thread;
+    thread worker;
     uint64_t rng; /* xorshift64 state for victim selection */
     struct task_pool *pool;
     bool started; /* was the OS thread actually created? */
@@ -93,11 +94,11 @@ struct task_pool {
     atomic_size_t round_robin_next; /* next worker index to receive a submit */
 
     /* Idle workers wait on work_cnd; submitters signal it. */
-    mtx_t work_mtx;
-    cnd_t work_cnd;
+    mutex work_mtx;
+    condition work_cnd;
     /* task_pool_wait waits on done_cnd; it fires when pending reaches zero. */
-    mtx_t done_mtx;
-    cnd_t done_cnd;
+    mutex done_mtx;
+    condition done_cnd;
 };
 
 /* --- deque operations (each locks the deque's own mutex) --- */
@@ -107,11 +108,11 @@ static bool deque_init(deque *d) {
     d->capacity = 0;
     d->top = 0;
     d->bottom = 0;
-    return mtx_init(&d->mtx, mtx_plain) == thrd_success;
+    return mutex_init(&d->mtx);
 }
 
 static void deque_destroy(deque *d) {
-    mtx_destroy(&d->mtx);
+    mutex_destroy(&d->mtx);
     free(d->items);
 }
 
@@ -129,7 +130,7 @@ static bool deque_grow(deque *d) {
  * when possible so memory stays bounded to the queue's live size. */
 static bool deque_push_bottom(deque *d, task value) {
     bool ok = true;
-    mtx_lock(&d->mtx);
+    mutex_lock(&d->mtx);
     if(d->top == d->bottom) {
         /* Empty: reset both indices to the front. */
         d->top = 0;
@@ -145,31 +146,31 @@ static bool deque_push_bottom(deque *d, task value) {
         ok = false;
     else
         d->items[d->bottom++] = value;
-    mtx_unlock(&d->mtx);
+    mutex_unlock(&d->mtx);
     return ok;
 }
 
 /* Remove a task from the bottom (owner side, LIFO). */
 static bool deque_pop_bottom(deque *d, task *out) {
     bool got = false;
-    mtx_lock(&d->mtx);
+    mutex_lock(&d->mtx);
     if(d->bottom > d->top) {
         *out = d->items[--d->bottom];
         got = true;
     }
-    mtx_unlock(&d->mtx);
+    mutex_unlock(&d->mtx);
     return got;
 }
 
 /* Steal a task from the top (thief side, FIFO). */
 static bool deque_steal_top(deque *d, task *out) {
     bool got = false;
-    mtx_lock(&d->mtx);
+    mutex_lock(&d->mtx);
     if(d->top < d->bottom) {
         *out = d->items[d->top++];
         got = true;
     }
-    mtx_unlock(&d->mtx);
+    mutex_unlock(&d->mtx);
     return got;
 }
 
@@ -204,26 +205,19 @@ static bool pool_next_task(task_pool *pool, worker *self, task *out) {
  * the subtraction, so a return of 1 means we just reached 0. */
 static void pool_mark_done(task_pool *pool) {
     if(atomic_fetch_sub(&pool->pending, 1) == 1) {
-        mtx_lock(&pool->done_mtx);
-        cnd_broadcast(&pool->done_cnd);
-        mtx_unlock(&pool->done_mtx);
+        mutex_lock(&pool->done_mtx);
+        condition_broadcast(&pool->done_cnd);
+        mutex_unlock(&pool->done_mtx);
     }
 }
 
 /* Sleep briefly while there is no work, so an idle worker does not burn CPU. */
 static void pool_park(task_pool *pool) {
-    mtx_lock(&pool->work_mtx);
+    mutex_lock(&pool->work_mtx);
     if(!atomic_load(&pool->shutdown)) {
-        struct timespec deadline;
-        timespec_get(&deadline, TIME_UTC);
-        deadline.tv_nsec += PARK_TIMEOUT_MS * NANOS_PER_MILLI;
-        if(deadline.tv_nsec >= NANOS_PER_SECOND) {
-            deadline.tv_sec += 1;
-            deadline.tv_nsec -= NANOS_PER_SECOND;
-        }
-        cnd_timedwait(&pool->work_cnd, &pool->work_mtx, &deadline);
+        condition_wait_ms(&pool->work_cnd, &pool->work_mtx, PARK_TIMEOUT_MS);
     }
-    mtx_unlock(&pool->work_mtx);
+    mutex_unlock(&pool->work_mtx);
 }
 
 /* The function every worker thread runs: pull work and execute it until the
@@ -244,19 +238,17 @@ static int worker_main(void *arg) {
 }
 
 static void destroy_sync(task_pool *pool) {
-    cnd_destroy(&pool->work_cnd);
-    cnd_destroy(&pool->done_cnd);
-    mtx_destroy(&pool->work_mtx);
-    mtx_destroy(&pool->done_mtx);
+    condition_destroy(&pool->work_cnd);
+    condition_destroy(&pool->done_cnd);
+    mutex_destroy(&pool->work_mtx);
+    mutex_destroy(&pool->done_mtx);
 }
 
 /* --- public API --- */
 
 task_pool *task_pool_create(size_t workers) {
-    if(workers == 0) {
-        long online = sysconf(_SC_NPROCESSORS_ONLN);
-        workers = online > 0 ? (size_t)online : 1;
-    }
+    if(workers == 0)
+        workers = thread_cpu_count();
 
     task_pool *pool = calloc(1, sizeof *pool);
     if(pool == NULL)
@@ -266,10 +258,8 @@ task_pool *task_pool_create(size_t workers) {
     atomic_init(&pool->pending, 0);
     atomic_init(&pool->round_robin_next, 0);
 
-    if(mtx_init(&pool->work_mtx, mtx_plain) != thrd_success ||
-       cnd_init(&pool->work_cnd) != thrd_success ||
-       mtx_init(&pool->done_mtx, mtx_plain) != thrd_success ||
-       cnd_init(&pool->done_cnd) != thrd_success) {
+    if(!mutex_init(&pool->work_mtx) || !condition_init(&pool->work_cnd) ||
+       !mutex_init(&pool->done_mtx) || !condition_init(&pool->done_cnd)) {
         free(pool);
         return NULL;
     }
@@ -299,7 +289,7 @@ task_pool *task_pool_create(size_t workers) {
 
     /* Start the worker threads. */
     for(size_t i = 0; i < workers; i++) {
-        if(thrd_create(&pool->workers[i].thread, worker_main, &pool->workers[i]) == thrd_success) {
+        if(thread_start(&pool->workers[i].worker, worker_main, &pool->workers[i])) {
             pool->workers[i].started = true;
         } else {
             /* Could not start them all: tear everything down cleanly. */
@@ -321,17 +311,17 @@ bool task_pool_submit(task_pool *pool, task_fn fn, void *arg) {
         return false;
     }
     /* Wake one parked worker to pick this up. */
-    mtx_lock(&pool->work_mtx);
-    cnd_signal(&pool->work_cnd);
-    mtx_unlock(&pool->work_mtx);
+    mutex_lock(&pool->work_mtx);
+    condition_signal(&pool->work_cnd);
+    mutex_unlock(&pool->work_mtx);
     return true;
 }
 
 void task_pool_wait(task_pool *pool) {
-    mtx_lock(&pool->done_mtx);
+    mutex_lock(&pool->done_mtx);
     while(atomic_load(&pool->pending) > 0)
-        cnd_wait(&pool->done_cnd, &pool->done_mtx);
-    mtx_unlock(&pool->done_mtx);
+        condition_wait(&pool->done_cnd, &pool->done_mtx);
+    mutex_unlock(&pool->done_mtx);
 }
 
 void task_pool_destroy(task_pool *pool) {
@@ -339,12 +329,12 @@ void task_pool_destroy(task_pool *pool) {
         return;
     /* Ask workers to stop and wake every parked one. */
     atomic_store(&pool->shutdown, true);
-    mtx_lock(&pool->work_mtx);
-    cnd_broadcast(&pool->work_cnd);
-    mtx_unlock(&pool->work_mtx);
+    mutex_lock(&pool->work_mtx);
+    condition_broadcast(&pool->work_cnd);
+    mutex_unlock(&pool->work_mtx);
     for(size_t i = 0; i < pool->worker_count; i++) {
         if(pool->workers[i].started)
-            thrd_join(pool->workers[i].thread, NULL);
+            thread_join(&pool->workers[i].worker);
     }
     for(size_t i = 0; i < pool->worker_count; i++)
         deque_destroy(&pool->workers[i].queue);

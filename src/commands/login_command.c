@@ -1,13 +1,12 @@
 #include <molto/commands/login_command.h>
 
 #include <molto/exit_code.h>
+#include <molto/services/console_service.h>
 #include <molto/services/credentials_service.h>
 #include <molto/services/registry_service.h>
 
 #include <stdio.h>
 #include <string.h>
-#include <termios.h>
-#include <unistd.h>
 
 /* Name the token carries in the account page's list. */
 #define TOKEN_NAME "molto login"
@@ -35,31 +34,19 @@ static bool prompt_line(const char *label, char *out, size_t size) {
    have been written down somewhere. `--token` is the way to log in without a
    terminal. */
 static bool prompt_password(char *out, size_t size) {
-    if(!isatty(STDIN_FILENO)) {
+    switch(console_read_secret("Password: ", out, size)) {
+    case console_secret_ok:
+        return true;
+    case console_secret_not_a_terminal:
         report("a password can only be typed at a terminal; use --token instead");
         return false;
-    }
-
-    struct termios original;
-    if(tcgetattr(STDIN_FILENO, &original) != 0) {
-        report("could not take control of the terminal to hide the password");
-        return false;
-    }
-
-    struct termios hidden = original;
-    hidden.c_lflag &= (tcflag_t)~ECHO;
-    if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) != 0) {
+    case console_secret_no_control:
         report("could not turn off echo, so the password would be visible");
         return false;
+    case console_secret_empty:
+        return false;
     }
-
-    fputs("Password: ", stderr);
-    fflush(stderr);
-    const bool ok = read_line(out, size) && out[0] != '\0';
-
-    (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
-    fputs("\n", stderr);
-    return ok;
+    return false;
 }
 
 /* Forgets a secret before its buffer goes out of scope. Not a guarantee — the

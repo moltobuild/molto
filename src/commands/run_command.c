@@ -98,7 +98,7 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
         /* The program started but was killed by a signal (e.g. a crash). */
         int signal_number = status - SIGNAL_EXIT_BASE;
         fprintf(stderr, "molto: '%s' terminated by signal %d (%s)\n", binary, signal_number,
-                strsignal(signal_number));
+                process_signal_name(signal_number));
     }
     return status;
 }

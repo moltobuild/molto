@@ -12,3 +12,6 @@
 
 # The compilation database every build writes (derived, never edited by hand)
 /compile_commands.json
+build-win/
+tally.count
+*.log

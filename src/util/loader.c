@@ -1,18 +1,19 @@
 #include <molto/util/loader.h>
 
+#include <molto/util/thread.h>
+
 #include <molto/util/progress.h>
 #include <molto/util/viewport.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
 
 /* How long a frame is on the screen. Ten frames at this rate is a turn of the
    cell every eight tenths of a second: fast enough to read as motion, slow
    enough that a terminal over ssh is not redrawing a row a hundred times a
    second for a build it is not otherwise talking to. */
-#define LOADER_INTERVAL_NS 80000000L
+#define LOADER_INTERVAL_MS 80U
 
 struct loader {
     FILE *out;
@@ -25,7 +26,7 @@ struct loader {
 
     atomic_bool drawing; /* cleared to ask the drawer to stop */
     bool running;        /* whether there is a drawer to join */
-    thrd_t drawer;
+    thread drawer;
 };
 
 /* Compose the current frame and put it on the screen, one row.
@@ -51,10 +52,9 @@ static void draw(loader *load) {
  */
 static int drawer_run(void *arg) {
     loader *load = arg;
-    const struct timespec interval = {.tv_sec = 0, .tv_nsec = LOADER_INTERVAL_NS};
     while(atomic_load(&load->drawing)) {
         draw(load);
-        (void)thrd_sleep(&interval, NULL);
+        thread_sleep_ms(LOADER_INTERVAL_MS);
     }
     return 0;
 }
@@ -74,7 +74,7 @@ loader *loader_start(FILE *out, const char *label) {
     viewport_init(&load->view, out);
     atomic_init(&load->drawing, true);
 
-    if(thrd_create(&load->drawer, drawer_run, load) != thrd_success) {
+    if(!thread_start(&load->drawer, drawer_run, load)) {
         viewport_free(&load->view);
         free(load);
         return NULL;
@@ -88,7 +88,7 @@ void loader_stop(loader *load) {
         return;
     if(load->running) {
         atomic_store(&load->drawing, false);
-        (void)thrd_join(load->drawer, NULL);
+        thread_join(&load->drawer);
     }
     /* Clear after the drawer has been joined, never before: a frame painted
        between the clearing and the join would be left on the screen for good. */

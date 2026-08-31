@@ -45,6 +45,15 @@ typedef struct {
    stderr, clang-tidy on stdout, and both read the same either way. */
 [[nodiscard]] int process_execute(const char *const argv[], process_spec *spec);
 
+/* The name of the signal a child died from, for the 128 + N codes above.
+ *
+ * It lives here because the convention does: a caller reporting one has the
+ * number this service handed it. `strsignal` is POSIX, and on Windows the
+ * question does not arise — nothing there dies from a signal, so the answer is
+ * the honest "unknown signal" rather than a table of names for a mechanism the
+ * platform does not have. */
+[[nodiscard]] const char *process_signal_name(int signal_number);
+
 /* Run a command described by a NULL-terminated `argv`, inheriting stdio so
    the child's output (e.g. compiler diagnostics) is shown verbatim. */
 [[nodiscard]] int process_run(const char *const argv[]);

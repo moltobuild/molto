@@ -5,11 +5,10 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 bool workspace_find_root(char *out, size_t out_size) {
     char dir[PATH_MAX];
-    if(getcwd(dir, sizeof dir) == NULL)
+    if(!fs_current_dir(dir, sizeof dir))
         return false;
 
     for(;;) {

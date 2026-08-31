@@ -662,7 +662,7 @@ static const char *shown_source(const build_unit_label *label, const char *root)
     /* Already relative, which is how a path dependency is kept: the manifest
        named it the way the reader would type it, and there is nothing to
        shorten. */
-    if(label->source[0] != '/')
+    if(!fs_path_is_absolute(label->source))
         return label->source;
     const char *relative = fs_relative_to(label->source, root);
     return relative != label->source ? relative : NULL;
@@ -1272,7 +1272,7 @@ static void place_shared_links(const char *directory, const library_names *names
         /* Removed first: symlink refuses to replace what is already there, and
            what is already there is a link to a version that has moved on. */
         (void)remove(path);
-        if(symlink(names->file, path) != 0)
+        if(!fs_link(names->file, path))
             build_report_message(report, "molto: warning: could not link '%s' to '%s'\n", links[i],
                                  names->file);
     }

@@ -15,7 +15,12 @@ STD    ?= c2x
 # to change it, and no binary that disagrees with the file it was built from.
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
 
-CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -Wall -Wextra -Wpedantic -pthread -Iinclude
+# __USE_MINGW_ANSI_STDIO: mingw's default printf comes from msvcrt, which does
+# not know `%z`. Molto prints a size with it in forty-one places, and each one
+# would come out as the literal letters on Windows. The macro asks mingw for its
+# own conforming implementation, and has to be set before <stdio.h> — which a
+# -D does and a #define in one file cannot. Nothing on Linux reads it.
+CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -D__USE_MINGW_ANSI_STDIO=1 -Wall -Wextra -Wpedantic -pthread -Iinclude
 CFLAGS += -DMOLTO_PKG_VERSION='"$(VERSION)"'
 
 # For a caller that wants to add to the build rather than replace it: -Werror,

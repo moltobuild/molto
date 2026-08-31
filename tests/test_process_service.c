@@ -1,10 +1,10 @@
 #include <moltest.h>
 
 #include <molto/services/process_service.h>
+#include <molto/util/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
 
 MOLTEST(process_service) {
     const char *ok[] = { "true", NULL };
@@ -98,12 +98,17 @@ MOLTEST(process_capture_still_leaves_stderr_alone) {
     EXPECT_NULL(strstr(out, "noise"));
 }
 
-/* Hold a capture open for long enough that another one overlaps it. */
-static int hold_a_pipe_open(void *unused) {
-    (void)unused;
+/* Hold a capture open for long enough that another one overlaps it.
+
+   The result comes back through the argument rather than the return value: a
+   thread's exit code is one of the things the two platforms disagree about, so
+   molto/util/thread.h does not carry one back. */
+static int hold_a_pipe_open(void *out_code) {
     const char *const argv[] = { "sh", "-c", "sleep 1", NULL };
     char out[64] = "";
-    return process_capture_all(argv, NULL, 0, out, sizeof out, NULL);
+    const int code = process_capture_all(argv, NULL, 0, out, sizeof out, NULL);
+    *(int *)out_code = code;
+    return code;
 }
 
 /* How many descriptors a child of this process inherits. Counted rather than
@@ -128,15 +133,15 @@ MOLTEST(a_capture_does_not_leak_its_pipe_into_another_child) {
     const unsigned long alone = inherited_descriptors();
     ASSERT_TRUE(alone > 0);
 
-    thrd_t holder;
-    ASSERT_EQ(thrd_success, thrd_create(&holder, hold_a_pipe_open, NULL));
-    (void)thrd_sleep(&(struct timespec){ .tv_nsec = 200000000L }, NULL); /* 200 ms */
+    int held = -1;
+    thread holder;
+    ASSERT_TRUE(thread_start(&holder, hold_a_pipe_open, &held));
+    thread_sleep_ms(200);
 
     const unsigned long beside_a_capture = inherited_descriptors();
     EXPECT_EQ(alone, beside_a_capture);
 
-    int held = -1;
-    (void)thrd_join(holder, &held);
+    thread_join(&holder);
     EXPECT_EQ(0, held);
 }
 

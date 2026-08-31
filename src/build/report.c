@@ -1,7 +1,9 @@
 #include <molto/build/report.h>
 
 #include <molto/util/ansi.h>
+#include <molto/util/clock.h>
 #include <molto/util/progress.h>
+#include <molto/util/thread.h>
 #include <molto/util/viewport.h>
 
 #include <stdarg.h>
@@ -9,8 +11,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
-#include <time.h>
 
 /* The widest the bar is drawn. Wide enough for a percentage to be visible in
    it, narrow enough to leave the figure room on an eighty-column terminal —
@@ -40,7 +40,7 @@
 /* How often the bar is redrawn while the build runs. It is also what repairs
    the line after a compiler diagnostic scrolled over it, so it ticks on a
    build where nothing is finishing. */
-#define DRAW_INTERVAL_NS 50000000L /* 50 ms */
+#define DRAW_INTERVAL_MS 50U
 
 /* Columns the origin word occupies, padding included, so every name in the
    inventory starts in the same place. The longest word is "registry". */
@@ -127,16 +127,16 @@ struct build_report {
     /* Held around every write to `out`, because taking the bar off the line,
        writing, and putting it back is one act and the drawer is another
        thread. */
-    mtx_t lock;
+    mutex lock;
 
     viewport view;
     bool frame_up; /* the region is on the screen */
 
     atomic_bool drawing; /* cleared to ask the drawer to stop */
     bool running;        /* whether there is a drawer to join */
-    thrd_t drawer;
+    thread drawer;
 
-    struct timespec started;
+    double started;
 };
 
 /* --- the pieces of a line --- */
@@ -147,12 +147,7 @@ static const char *paint(const build_report *report, const char *colour) {
 
 /* Seconds since the report was created, on the clock that does not jump. */
 static double elapsed_seconds(const build_report *report) {
-    struct timespec now;
-    if(clock_gettime(CLOCK_MONOTONIC, &now) != 0)
-        return 0.0;
-    const double seconds = (double)(now.tv_sec - report->started.tv_sec);
-    const double nanos = (double)(now.tv_nsec - report->started.tv_nsec);
-    return seconds + nanos / 1e9;
+    return clock_monotonic_seconds() - report->started;
 }
 
 /* One line with the shape of an inventory line: a glyph in the origin's
@@ -345,12 +340,11 @@ static void erase_frame_locked(build_report *report) {
  */
 static int drawer_run(void *arg) {
     build_report *report = arg;
-    const struct timespec interval = {.tv_sec = 0, .tv_nsec = DRAW_INTERVAL_NS};
     while(atomic_load(&report->drawing)) {
-        (void)mtx_lock(&report->lock);
+        mutex_lock(&report->lock);
         draw_frame_locked(report);
-        (void)mtx_unlock(&report->lock);
-        (void)thrd_sleep(&interval, NULL);
+        mutex_unlock(&report->lock);
+        thread_sleep_ms(DRAW_INTERVAL_MS);
     }
     return 0;
 }
@@ -359,7 +353,7 @@ static void stop_drawer(build_report *report) {
     if(!report->running)
         return;
     atomic_store(&report->drawing, false);
-    (void)thrd_join(report->drawer, NULL);
+    thread_join(&report->drawer);
     report->running = false;
 }
 
@@ -371,7 +365,7 @@ build_report *build_report_create(FILE *out) {
     build_report *report = calloc(1, sizeof *report);
     if(report == NULL)
         return NULL;
-    if(mtx_init(&report->lock, mtx_plain) != thrd_success) {
+    if(!mutex_init(&report->lock)) {
         free(report);
         return NULL;
     }
@@ -383,7 +377,7 @@ build_report *build_report_create(FILE *out) {
     viewport_init(&report->view, out);
     atomic_init(&report->done, 0);
     atomic_init(&report->drawing, false);
-    (void)clock_gettime(CLOCK_MONOTONIC, &report->started);
+    report->started = clock_monotonic_seconds();
     return report;
 }
 
@@ -397,7 +391,7 @@ void build_report_destroy(build_report *report) {
     }
     free(report->entries);
     viewport_free(&report->view);
-    mtx_destroy(&report->lock);
+    mutex_destroy(&report->lock);
     free(report);
 }
 
@@ -459,7 +453,7 @@ void build_report_begin(build_report *report, size_t total) {
     report->total = total;
     atomic_store(&report->done, 0);
 
-    (void)mtx_lock(&report->lock);
+    mutex_lock(&report->lock);
     /* Grouped by origin rather than printed in the order the passes were
        planned: what a dependency contributes and what the tests do are two
        different things to read, and the build's own order interleaves them. */
@@ -485,11 +479,11 @@ void build_report_begin(build_report *report, size_t total) {
     if(draw) {
         draw_frame_locked(report);
         atomic_store(&report->drawing, true);
-        report->running = thrd_create(&report->drawer, drawer_run, report) == thrd_success;
+        report->running = thread_start(&report->drawer, drawer_run, report);
         if(!report->running)
             atomic_store(&report->drawing, false);
     }
-    (void)mtx_unlock(&report->lock);
+    mutex_unlock(&report->lock);
 }
 
 /* The first free slot, or INFLIGHT_MAX when the build is wider than the table.
@@ -508,7 +502,7 @@ build_report_slot build_report_unit_started(build_report *report, const build_un
     if(report == NULL || !report->interactive)
         return BUILD_REPORT_NO_SLOT;
 
-    (void)mtx_lock(&report->lock);
+    mutex_lock(&report->lock);
     const size_t slot = free_slot(report);
     if(slot < INFLIGHT_MAX) {
         inflight_slot *entry = &report->inflight[slot];
@@ -522,7 +516,7 @@ build_report_slot build_report_unit_started(build_report *report, const build_un
         if(slot + 1 > report->inflight_high)
             report->inflight_high = slot + 1;
     }
-    (void)mtx_unlock(&report->lock);
+    mutex_unlock(&report->lock);
     return slot < INFLIGHT_MAX ? slot : BUILD_REPORT_NO_SLOT;
 }
 
@@ -532,7 +526,7 @@ void build_report_unit_done(build_report *report, build_report_slot slot) {
     /* Under the lock, which this used not to need: the slot it gives back is
        one the drawer reads. What it costs is a mutex nobody is holding, next
        to a compilation that has just finished forking a compiler. */
-    (void)mtx_lock(&report->lock);
+    mutex_lock(&report->lock);
     if(slot < INFLIGHT_MAX && report->inflight[slot].busy) {
         report->inflight[slot].busy = false;
         report->inflight_busy--;
@@ -540,7 +534,7 @@ void build_report_unit_done(build_report *report, build_report_slot slot) {
     /* Counted with the slot already cleared, so no frame can show a unit
        tallied as done and still listed as running. */
     (void)atomic_fetch_add(&report->done, 1);
-    (void)mtx_unlock(&report->lock);
+    mutex_unlock(&report->lock);
 }
 
 void build_report_message(build_report *report, const char *format, ...) {
@@ -553,7 +547,7 @@ void build_report_message(build_report *report, const char *format, ...) {
         va_end(args);
         return;
     }
-    (void)mtx_lock(&report->lock);
+    mutex_lock(&report->lock);
     const bool redraw = report->frame_up;
     erase_frame_locked(report);
     (void)vfprintf(report->out, format, args);
@@ -561,7 +555,7 @@ void build_report_message(build_report *report, const char *format, ...) {
         draw_frame_locked(report);
     else
         (void)fflush(report->out);
-    (void)mtx_unlock(&report->lock);
+    mutex_unlock(&report->lock);
     va_end(args);
 }
 
@@ -571,7 +565,7 @@ void build_report_finish(build_report *report, const char *profile, molto_exit_c
     stop_drawer(report);
     const bool ok = code == exit_ok;
 
-    (void)mtx_lock(&report->lock);
+    mutex_lock(&report->lock);
     /* The region goes, whether the build worked or not.
      *
      * A list of files being compiled stops being true the instant the build
@@ -594,5 +588,5 @@ void build_report_finish(build_report *report, const char *profile, molto_exit_c
         (void)fputs(line, report->out);
     }
     (void)fflush(report->out);
-    (void)mtx_unlock(&report->lock);
+    mutex_unlock(&report->lock);
 }

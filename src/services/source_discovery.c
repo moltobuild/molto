@@ -78,8 +78,8 @@ bool source_discovery_collect_styleable(const char *root, str_list *out) {
    anchored at the project root when not — the same rule every relative path in
    a manifest obeys (RFC-0003). */
 static bool entry_path(const char *root, const char *entry, char *out, size_t out_size) {
-    return entry[0] == '/' ? fs_format_path(out, out_size, "%s", entry)
-                           : fs_format_path(out, out_size, "%s/%s", root, entry);
+    return fs_path_is_absolute(entry) ? fs_format_path(out, out_size, "%s", entry)
+                                      : fs_format_path(out, out_size, "%s/%s", root, entry);
 }
 
 static bool collect_entry(const char *root, const char *entry, str_list *out, char *err,

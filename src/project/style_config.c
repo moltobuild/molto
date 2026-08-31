@@ -1,9 +1,9 @@
 #include <molto/project/style_config.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/util/glob.h>
 #include <molto/util/json.h>
 
-#include <fnmatch.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,7 +74,7 @@ void lint_config_defaults(lint_config *out) {
 bool style_excludes_match(const style_excludes *excludes, const char *relative_path) {
     for(size_t i = 0; i < excludes->exclude_count; i++) {
         const char *pattern = excludes->exclude[i];
-        if(fnmatch(pattern, relative_path, 0) == 0)
+        if(glob_match(pattern, relative_path))
             return true;
 
         /* A globstar pattern should cover the directory it names too, which the
@@ -84,7 +84,7 @@ bool style_excludes_match(const style_excludes *excludes, const char *relative_p
         if(length > suffix && strcmp(pattern + length - suffix, RECURSIVE_SUFFIX) == 0) {
             char directory[STYLE_EXCLUDE_MAX];
             snprintf(directory, sizeof directory, "%.*s", (int)(length - suffix), pattern);
-            if(fnmatch(directory, relative_path, 0) == 0)
+            if(glob_match(directory, relative_path))
                 return true;
         }
     }

@@ -79,6 +79,91 @@ bool fs_report_long_path(const char *what);
    report whole seconds. */
 [[nodiscard]] bool fs_mtime_ns(const char *path, int64_t *out);
 
+/* Modification time and size of `path`, in one call. Returns false if the file
+   cannot be stat-ed. Either output may be NULL.
+
+   It exists so that a caller wanting both does not have to stat the file
+   itself: doing that means holding a `struct stat`, and the two fields this
+   returns are exactly the two whose spelling differs between platforms. */
+[[nodiscard]] bool fs_stamp(const char *path, int64_t *mtime_ns, uint64_t *size);
+
+/* The single-writer lock on a workspace, held for as long as the process holds
+ * this handle and released when it lets go — including when the process dies,
+ * because the operating system closes it.
+ *
+ * What identifies the lock is the one thing in this header a platform decides:
+ * a file descriptor on POSIX, an object handle on Windows. No caller reads the
+ * field — they pass the handle back to `fs_lock_release` — so the `#ifdef`
+ * stays here and never reaches the code that takes the lock (RFC-0017). */
+typedef struct {
+#ifdef _WIN32
+    void *file; /* HANDLE, opaque so callers need no windows.h */
+#else
+    int fd;
+#endif
+    bool held;
+} fs_lock;
+
+/* Take the lock at `path`, creating the file if it is not there. Returns false
+   without waiting when someone else holds it: a second molto in the same
+   workspace is told so, never queued behind the first. */
+/* The directory this process is in, in Molto's separator. False if it does not
+   fit or cannot be read.
+
+   A service rather than a `getcwd` at each caller, and not only for the
+   spelling: what Windows hands back is separated by backslashes, and Molto has
+   one separator everywhere else (RFC-0017 refuses a second path model). The
+   conversion belongs at the boundary the path comes in through, which is
+   here — a caller that received one already converted can compare it against
+   anything else Molto composed. */
+[[nodiscard]] bool fs_current_dir(char *out, size_t size);
+
+/* Rewrite `path` in place to use Molto's separator.
+ *
+ * For a path that came from outside — a compiler wrote it into a depfile, a
+ * person typed it — rather than one Molto composed, which already uses it. A
+ * no-op on POSIX, and it must be: a backslash is a legal character in a
+ * filename there, and converting one would rename the file being talked about.
+ */
+void fs_to_one_separator(char *path);
+
+/* Whether `path` names a place without reference to where the process is.
+ *
+ * Not `path[0] == '/'`, which is the same question asked in a way that is only
+ * right on one platform: an absolute path on Windows opens with a drive and a
+ * colon. Nine callers were asking it that way, and every one of them read a
+ * Windows path as relative and joined it onto a root. */
+[[nodiscard]] bool fs_path_is_absolute(const char *path);
+
+/* Resolve `path` to an absolute one with no `.`, `..` or symlink left in it,
+   and false when it cannot be resolved — which for an existing file means only
+   that the buffer was too small. The result uses Molto's separator, for the
+   reason `fs_current_dir` gives.
+
+   POSIX resolves symlinks and requires the file to exist; Windows resolves
+   neither, because it has no `realpath` and the closest call it does have
+   answers lexically. Callers use it to compare two paths or to record one, and
+   both survive the difference; a caller that needed the symlink followed would
+   need a different function and a note saying why. */
+[[nodiscard]] bool fs_real_path(const char *path, char *out, size_t size);
+
+/* A second name for an existing file. False when the system will not make one.
+ *
+ * A symlink on POSIX and a hard link on Windows, and the difference is not
+ * carelessness: a Windows symlink needs a privilege or Developer Mode, and a
+ * build tool that works only for an administrator is not a build tool. A hard
+ * link needs neither and gives what the one caller wants — a second name for
+ * the same bytes.
+ *
+ * The one caller places the two links beside a shared library, and treats a
+ * failure as a warning rather than a failed build. */
+[[nodiscard]] bool fs_link(const char *target, const char *path);
+
+[[nodiscard]] bool fs_lock_take(const char *path, fs_lock *out);
+
+/* Let go of a lock. Safe on one that was never taken. */
+void fs_lock_release(fs_lock *lock);
+
 /* Return true if `target` must be rebuilt from `source`: true when `target`
    is missing or `source` has a newer modification time (nanosecond precision,
    so two edits within the same second are still told apart). */

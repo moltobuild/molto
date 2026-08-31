@@ -313,6 +313,60 @@ And `tests/` is not in either figure. The test binary links every object under
 `src/`, so nothing under `tests/` is compiled until `src/` does, and a step
 that tried anyway just re-reported the source errors and doubled the total.
 
+### `src/` compiles and links for Windows
+
+**`build/molto.exe: PE32+ executable (console) x86-64, for MS Windows`**, from
+the cross toolchain, with no errors and no unresolved symbols. What that took,
+and what it taught:
+
+- **The compile errors were the smaller half.** Fixing all fourteen left eleven
+  *link* errors behind them — `realpath` seven times, plus `symlink`,
+  `strsignal`, `lstat` and `fmemopen` — because GCC 10 reports an implicit
+  declaration as a warning where GCC 16 makes it an error. The cross job's
+  fourteen was itself an undercount, for the same reason MSYS2's thirty-one
+  was: **an older compiler is a more permissive one**, and a port measured on
+  the permissive end reads as closer to done than it is.
+- **A missing header hides everything behind it.** `process_service.c`
+  reported `poll.h` and said nothing about the `fork`, `pipe`, `dup2` and
+  `waitpid` under it — the largest piece of the whole port, invisible until the
+  header was answered.
+- **`<threads.h>` is not there**, in either runtime. Molto now carries
+  `util/thread.h`: one pointer per handle, C11 underneath on POSIX and Win32
+  primitives on Windows, and no `<windows.h>` in any header a caller includes.
+- **The sweep missed four**, not one. `fnmatch` was named above; `strsignal`,
+  `fmemopen` and `st_mtim` joined it. `st_mtim` is the instructive one — a
+  struct field, which no grep for function calls could ever have found.
+- **Two callers held platform knowledge that a service should have.**
+  `login_command.c` spelled `termios` directly, which is the `commands/` rule
+  broken; `viewport.c` and `wsdb.c` each spelled their own. All three now ask.
+
+The symlink question this document owed has an answer, and it is smaller than
+expected: `fs_link` makes a **hard link** on Windows. A symlink there needs a
+privilege or Developer Mode, and a build tool that works only for an
+administrator is not a build tool; a hard link needs neither and gives the one
+caller exactly what it wants, a second name for the same bytes. That the caller
+already treated a failure as a warning rather than a failed build is what made
+the choice cheap. **What naming a shared library on Windows should mean at all
+— `.dll`, an import library, and nothing resembling a soname — is still open,
+and is a separate question from placing the links.**
+
+### The suite is the next tranche, and it is not mechanical
+
+Thirty-five files under `tests/` still carry POSIX of their own: `mkdtemp` at
+thirty-one sites, `open_memstream` twice, and one each of `symlink`,
+`realpath`, `readlink` and `fork`. The `mkdtemp` sites are the easy majority —
+`moltest_temp_dir` has been in the vendored harness since the sync and nothing
+adopted it — and `open_memstream` is answered by the buffer sink the JSON
+writer just grew. Two are not mechanical at all:
+
+- **`fork` in `test_registry_service.c`**, which starts a fake server in a
+  child. There is no fork to port; the test has to be rewritten around
+  something both platforms have.
+- **`readlink` in `test_build_service.c`**, which asserts what the link beside
+  a shared library points at. A hard link has no target to read, so the
+  assertion is not portable — and rewriting it means deciding what the test is
+  really for, which is the open naming question above.
+
 What the measurement got right: the platform lives in the services, and
 `fs_service` and `process_service` carried nearly all of it. What it got wrong,
 in both directions:

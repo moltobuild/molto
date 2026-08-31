@@ -156,12 +156,8 @@ bool frontend_candidates(const char *root, frontend_choice *out, size_t capacity
    it the candidate so it does not have to go looking. */
 static bool compose_request(const frontend_choice *choice, const char *root, char *out,
                             size_t size) {
-    FILE *stream = fmemopen(out, size, "w");
-    if(stream == NULL)
-        return false;
-
     json_writer writer;
-    json_writer_init(&writer, stream);
+    json_writer_init_buffer(&writer, out, size);
     json_object_open(&writer, NULL);
     json_write_raw(&writer, "schema", "1");
     json_write_field(&writer, "request", FRONTEND_REQUEST_KIND);
@@ -170,9 +166,7 @@ static bool compose_request(const frontend_choice *choice, const char *root, cha
     json_object_close(&writer);
     json_writer_finish(&writer);
 
-    const bool ok = ferror(stream) == 0;
-    (void)fclose(stream);
-    return ok;
+    return !json_writer_overflowed(&writer);
 }
 
 /* --- asking one --- */
@@ -332,9 +326,9 @@ frontend_result frontend_run(const char *root, const char *profile, ir_document 
        every caller, because a caller that forgot would fail in a way that reads
        like the plugin's fault. */
     char absolute[FRONTEND_PATH_MAX];
-    char *real = realpath(root, NULL);
-    const int written = snprintf(absolute, sizeof absolute, "%s", real != NULL ? real : root);
-    free(real);
+    char resolved[FRONTEND_PATH_MAX];
+    const bool got = fs_real_path(root, resolved, sizeof resolved);
+    const int written = snprintf(absolute, sizeof absolute, "%s", got ? resolved : root);
     if(written < 0 || (size_t)written >= sizeof absolute) {
         FRONTEND_ERR(err, err_size, "the directory to describe does not fit in a path");
         return frontend_failed;

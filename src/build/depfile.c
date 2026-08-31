@@ -14,6 +14,10 @@ static bool flush_token(str_list *out, char *token, size_t *length) {
         return true;
     token[*length] = '\0';
     *length = 0;
+    /* The compiler wrote this path, not Molto, so it is spelled the way that
+       compiler spells one. Everything downstream compares it against paths
+       Molto composed. */
+    fs_to_one_separator(token);
     return str_list_push(out, token);
 }
 
@@ -25,8 +29,32 @@ static bool append_char(char *token, size_t *length, char c) {
     return true;
 }
 
+/*
+ * Whether this colon belongs to a drive letter rather than separating the
+ * target from its prerequisites.
+ *
+ * `D:/build/debug/obj/main.c.o: D:/src/main.c` has three colons and only the
+ * second one divides it. Splitting on the first hands back a prerequisite list
+ * beginning `/build/debug/obj/main.c.o`, which is a path to nothing — so every
+ * prerequisite fails to stat and the whole unit is recorded as unrecordable.
+ * The build still works; it just stops being incremental, quietly.
+ *
+ * The question goes to the path service so the rule is stated once. On POSIX
+ * `fs_path_is_absolute("d:/")` is false, so this is always false and the
+ * parsing is exactly what it was — which matters, because a one-letter target
+ * called `a` is legal there and its colon is the separator.
+ */
+static bool colon_belongs_to_a_drive(const char *text, const char *colon) {
+    if(colon != text + 1)
+        return false;
+    const char probe[] = {text[0], ':', '/', '\0'};
+    return fs_path_is_absolute(probe);
+}
+
 bool depfile_parse(const char *text, str_list *out) {
     const char *colon = strchr(text, ':');
+    while(colon != NULL && colon_belongs_to_a_drive(text, colon))
+        colon = strchr(colon + 1, ':');
     if(colon == NULL)
         return false;
 

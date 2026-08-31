@@ -1,16 +1,17 @@
 #include <molto/commands/init_command.h>
 
+#include <molto/services/fs_service.h>
+
 #include <molto/exit_code.h>
 #include <molto/services/scaffold_service.h>
 
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 int init_command_run(void) {
     char cwd[PATH_MAX];
-    if(getcwd(cwd, sizeof cwd) == NULL) {
+    if(!fs_current_dir(cwd, sizeof cwd)) {
         fprintf(stderr, "molto: could not read current directory\n");
         return exit_build_failure;
     }

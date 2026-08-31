@@ -99,8 +99,8 @@ bool compile_db_add(compile_db *db, const char *file, const char *output,
    Absolute, because a tool reads this file from wherever it happens to be
    running; `root` itself is only absolute when the caller made it so. */
 static void resolve_directory(const char *root, char *out, size_t out_size) {
-    char resolved[PATH_MAX];
-    const char *directory = realpath(root, resolved) != NULL ? resolved : root;
+    char resolved[COMPILE_DB_PATH_SIZE];
+    const char *directory = fs_real_path(root, resolved, sizeof resolved) ? resolved : root;
     snprintf(out, out_size, "%s", directory);
 }
 

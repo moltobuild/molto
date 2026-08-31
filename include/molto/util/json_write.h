@@ -30,8 +30,24 @@
 /* As deep as a document may nest. The same limit the reader uses. */
 #define JSON_WRITE_MAX_DEPTH 64
 
+/* Where a writer's bytes go: a stream, or a buffer the caller supplied.
+ *
+ * The buffer exists because one caller has no file to write to — the request
+ * handed to a frontend plugin is composed in memory — and reached for
+ * `fmemopen` to get a stream over one. That is POSIX, and Windows has no way
+ * at all to make a FILE* over memory, so the destination moved in here instead
+ * (RFC-0017). A buffer that fills stops taking bytes and says so afterwards,
+ * rather than writing past its end or truncating in silence. */
 typedef struct {
-    FILE *stream;
+    FILE *stream; /* NULL when writing into `buffer` */
+    char *buffer;
+    size_t size;
+    size_t used;
+    bool overflow;
+} json_sink;
+
+typedef struct {
+    json_sink sink;
     int depth;
     /* Whether a comma has to precede whatever is written next. */
     bool pending_comma;
@@ -40,6 +56,14 @@ typedef struct {
 } json_writer;
 
 void json_writer_init(json_writer *writer, FILE *stream);
+
+/* The same, writing into `buffer` instead. The result is NUL-terminated at
+   every point, so a caller can read it as soon as it stops writing. */
+void json_writer_init_buffer(json_writer *writer, char *buffer, size_t size);
+
+/* True if anything written did not fit. Always false for a stream writer,
+   which has nowhere to overflow. */
+[[nodiscard]] bool json_writer_overflowed(const json_writer *writer);
 
 /* The newline that ends the document. Separate from closing the root object,
    because whether a file ends in one is a property of the file and not of the

@@ -1,5 +1,7 @@
 #include <molto/services/ir_service.h>
 
+#include <molto/services/fs_service.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +61,7 @@ static bool normalise(const char *path, char *out, size_t size) {
     if(path == NULL || path[0] == '\0' || size < 2)
         return false;
 
-    const bool absolute = path[0] == '/';
+    const bool absolute = fs_path_is_absolute(path);
     const char *start[IR_MAX_SEGMENTS];
     size_t length[IR_MAX_SEGMENTS];
     size_t count = 0;
@@ -133,7 +135,7 @@ static bool inside(const char *path, const char *root) {
 static bool anchor(const char *path, const char *base, char *out, size_t size) {
     if(path == NULL || path[0] == '\0')
         return false;
-    if(path[0] == '/')
+    if(fs_path_is_absolute(path))
         return normalise(path, out, size);
 
     char joined[IR_PATH_MAX];
@@ -177,13 +179,9 @@ typedef struct {
    not exist — a bound that is not there yet still bounds what may be written
    under it. */
 static bool resolve_links(const char *path, char *out, size_t size) {
-    char *real = realpath(path, NULL);
-    if(real == NULL) {
-        const int written = snprintf(out, size, "%s", path);
-        return written >= 0 && (size_t)written < size;
-    }
-    const int written = snprintf(out, size, "%s", real);
-    free(real);
+    if(fs_real_path(path, out, size))
+        return true;
+    const int written = snprintf(out, size, "%s", path);
     return written >= 0 && (size_t)written < size;
 }
 
@@ -245,15 +243,14 @@ static bool within_bounds(const char *resolved, const bounds_state *bounds) {
 /* The symlink half. A path that does not exist has nothing to follow, and its
    lexical answer is the whole answer. */
 static bool within_bounds_through_links(const char *resolved, const bounds_state *bounds) {
-    char *real = realpath(resolved, NULL);
-    if(real == NULL)
+    char real[IR_PATH_MAX];
+    if(!fs_real_path(resolved, real, sizeof real))
         return true;
 
     bool ok = inside(real, bounds->real_workspace) || inside(real, bounds->real_build_dir) ||
               (bounds->has_cache && inside(real, bounds->real_cache));
     for(size_t i = 0; !ok && i < bounds->root_count; i++)
         ok = inside(real, bounds->roots[i].real);
-    free(real);
     return ok;
 }
 
