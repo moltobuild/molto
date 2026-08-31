@@ -191,6 +191,20 @@ bool fs_format_path(char *out, size_t size, const char *format, ...) {
     return written >= 0 && (size_t)written < size;
 }
 
+/* A prefix there is nothing to create for, because it is where the filesystem
+   starts. On POSIX that is `/`, which the loop below never produces; on Windows
+   it is `D:`, which it produces for every absolute path and which `mkdir`
+   refuses and `stat` will not reliably confirm — "D:" names the current
+   directory on that drive, not the drive. */
+static bool is_a_root(const char *prefix) {
+    const size_t length = strlen(prefix);
+#ifdef _WIN32
+    if(length == 2 && prefix[1] == ':')
+        return true;
+#endif
+    return length == 1 && prefix[0] == '/';
+}
+
 bool fs_make_dirs(const char *path) {
     char buffer[4096];
     size_t length = strlen(path);
@@ -202,7 +216,7 @@ bool fs_make_dirs(const char *path) {
         if(buffer[i] != '/')
             continue;
         buffer[i] = '\0';
-        if(!fs_make_dir(buffer))
+        if(!is_a_root(buffer) && !fs_make_dir(buffer))
             return false;
         buffer[i] = '/';
     }

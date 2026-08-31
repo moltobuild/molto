@@ -719,6 +719,10 @@ wsdb *wsdb_open(const char *root) {
 
     char bindir[WSDB_PATH];
     if(!fs_format_path(bindir, sizeof bindir, "%s/" DIR_BIN, root) || !fs_make_dirs(bindir)) {
+        /* Named, because the caller's message says "locked?" and this is the
+           one way in which it is not: the directory the lock lives in could
+           not be made, which is a different thing to look at. */
+        fprintf(stderr, "molto: could not create '%s'\n", bindir);
         str_map_destroy(db->entries);
         free(db);
         return NULL;
