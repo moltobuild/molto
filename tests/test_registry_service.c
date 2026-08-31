@@ -68,8 +68,8 @@ static bool wait_for_server(void) {
 }
 
 MOLTEST(registry_get_reads_a_body_and_its_status) {
-    char directory[] = "/tmp/molto_registry_XXXXXX";
-    ASSERT_NOT_NULL(mkdtemp(directory));
+    char directory[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_registry", directory, sizeof directory));
 
     /* The path is a real directory tree, so the coordinate in the URL is the
        coordinate on disk. */

@@ -19,8 +19,7 @@ typedef struct {
 } built_workspace;
 
 static bool built_workspace_setup(built_workspace *workspace) {
-    snprintf(workspace->root, sizeof workspace->root, "%s", "/tmp/molto_clean_XXXXXX");
-    if (mkdtemp(workspace->root) == NULL)
+    if (!moltest_temp_dir("molto_clean", workspace->root, sizeof workspace->root))
         return false;
 
     char path[256];
@@ -94,8 +93,8 @@ MOLTEST(clean_on_an_already_clean_workspace_succeeds) {
 }
 
 MOLTEST(clean_outside_a_workspace_is_a_manifest_error) {
-    char root[] = "/tmp/molto_noclean_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_noclean", root, sizeof root));
     char previous[4096];
     ASSERT_TRUE(getcwd(previous, sizeof previous) != NULL);
     ASSERT_TRUE(chdir(root) == 0);

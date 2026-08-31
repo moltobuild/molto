@@ -19,11 +19,8 @@
 
 /* A file whose contents an excerpt can be taken from. */
 static bool write_source(char *path, size_t path_size, const char *content) {
-    snprintf(path, path_size, "/tmp/molto_view_XXXXXX");
-    int fd = mkstemp(path);
-    if(fd < 0)
+    if(!moltest_temp_file("molto_view", path, path_size))
         return false;
-    (void)close(fd);
     return fs_write_file(path, content);
 }
 

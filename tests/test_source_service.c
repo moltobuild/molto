@@ -27,8 +27,7 @@ typedef struct {
 } sandbox;
 
 static bool sandbox_open(sandbox *at) {
-    snprintf(at->root, sizeof at->root, "%s", "/tmp/molto_source_XXXXXX");
-    if (mkdtemp(at->root) == NULL)
+    if (!moltest_temp_dir("molto_source", at->root, sizeof at->root))
         return false;
     snprintf(at->cache, sizeof at->cache, "%s/cache", at->root);
     return setenv("MOLTO_CACHE", at->cache, 1) == 0;

@@ -31,8 +31,7 @@ typedef struct {
 } sandbox;
 
 static bool sandbox_setup(sandbox *box) {
-    snprintf(box->root, sizeof box->root, "%s", "/tmp/molto_frontend_XXXXXX");
-    if(mkdtemp(box->root) == NULL)
+    if(!moltest_temp_dir("molto_frontend", box->root, sizeof box->root))
         return false;
 
     snprintf(box->home, sizeof box->home, "%s/home", box->root);

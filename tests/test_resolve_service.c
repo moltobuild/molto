@@ -250,8 +250,8 @@ MOLTEST(a_release_is_remembered_for_a_coordinate_nothing_fetched) {
     /* The whole point of the releases tree: a metadata walk learns what a
        version depends on without downloading it, and must be able to keep
        that. */
-    char root[64] = "/tmp/molto_release_XXXXXX";
-    ASSERT_NOT_NULL(mkdtemp(root));
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_release", root, sizeof root));
     char cache[128] = "";
     snprintf(cache, sizeof cache, "%s/cache", root);
     ASSERT_EQ(0, setenv("MOLTO_CACHE", cache, 1));

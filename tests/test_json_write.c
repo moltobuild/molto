@@ -14,19 +14,26 @@
  * what the test author imagined, and a writer tested against a parser proves
  * it wrote a document. */
 
-/* Run `write` against an in-memory stream and hand back the text. Caller
-   frees. */
+/* Run `write` into a buffer and hand back the text. Caller frees.
+
+   Through the writer's own buffer destination rather than `open_memstream`,
+   which is POSIX and does not exist on Windows. It also means the tests
+   exercise the destination the frontend request uses, which is the one with
+   the overflow rule nothing else would cover. */
+#define WRITTEN_MAX 8192
+
 static char *written_by(void (*write)(json_writer *)) {
-    char *text = NULL;
-    size_t size = 0;
-    FILE *stream = open_memstream(&text, &size);
-    if (stream == NULL)
+    char *text = malloc(WRITTEN_MAX);
+    if (text == NULL)
         return NULL;
 
     json_writer writer;
-    json_writer_init(&writer, stream);
+    json_writer_init_buffer(&writer, text, WRITTEN_MAX);
     write(&writer);
-    fclose(stream);
+    if (json_writer_overflowed(&writer)) {
+        free(text);
+        return NULL;
+    }
     return text;
 }
 

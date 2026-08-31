@@ -15,8 +15,7 @@
    the shape a test framework imposes. The runner lives outside src/, which is
    the other half of what [test] has to make possible. */
 static bool framework_project(char *root, size_t root_size, const char *manifest) {
-    snprintf(root, root_size, "%s", "/tmp/molto_modes_XXXXXX");
-    if (mkdtemp(root) == NULL)
+    if (!moltest_temp_dir("molto_modes", root, root_size))
         return false;
 
     char path[512];

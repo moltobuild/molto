@@ -31,8 +31,8 @@ static json_document *read_database(const char *root) {
 }
 
 MOLTEST(compile_db) {
-    char root[] = "/tmp/molto_cdb_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_cdb", root, sizeof root));
 
     compile_db *db = compile_db_create();
     ASSERT_NOT_NULL(db);
@@ -84,7 +84,7 @@ MOLTEST(compile_db) {
     /* Compared against the resolved root: `directory` is absolute and symlink
        free, because a tool reads this file from wherever it is running. */
     char resolved[PATH_MAX];
-    EXPECT_NOT_NULL(realpath(root, resolved));
+    EXPECT_TRUE(fs_real_path(root, resolved, sizeof resolved));
     EXPECT_STREQ(resolved, json_string(json_get(first, "directory")));
 
     /* The arguments are what was executed, verbatim — escaping is undone by the

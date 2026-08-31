@@ -26,8 +26,7 @@ typedef struct {
 } sandbox;
 
 static bool sandbox_open(sandbox *at) {
-    snprintf(at->root, sizeof at->root, "%s", "/tmp/molto_lock_XXXXXX");
-    return mkdtemp(at->root) != NULL;
+    return moltest_temp_dir("molto_lock", at->root, sizeof at->root);
 }
 
 static void sandbox_close(const sandbox *at) { (void)fs_remove_tree(at->root); }

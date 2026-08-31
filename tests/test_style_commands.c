@@ -22,8 +22,7 @@ typedef struct {
 static bool workspace_enter(workspace *ws, bool with_manifest) {
     if (getcwd(ws->previous, sizeof ws->previous) == NULL)
         return false;
-    snprintf(ws->root, sizeof ws->root, "%s", "/tmp/molto_style_cmd_XXXXXX");
-    if (mkdtemp(ws->root) == NULL)
+    if (!moltest_temp_dir("molto_style_cmd", ws->root, sizeof ws->root))
         return false;
 
     if (with_manifest) {
