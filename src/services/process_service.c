@@ -3,6 +3,7 @@
 #include <molto/services/process_service.h>
 #include <molto/util/thread.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
@@ -301,8 +302,15 @@ static char *build_environment(const process_env_var *env, size_t env_count) {
         memcpy(block + at, entry, length);
         at += length;
     }
-    for(size_t i = 0; i < env_count; i++)
-        at += (size_t)sprintf(block + at, "%s=%s", env[i].name, env[i].value) + 1;
+    for(size_t i = 0; i < env_count; i++) {
+        const int written = snprintf(block + at, size - at, "%s=%s", env[i].name, env[i].value);
+        if(written < 0 || (size_t)written >= size - at) {
+            free(block);
+            (void)FreeEnvironmentStringsA(inherited);
+            return NULL;
+        }
+        at += (size_t)written + 1;
+    }
     block[at] = '\0';
 
     (void)FreeEnvironmentStringsA(inherited);
