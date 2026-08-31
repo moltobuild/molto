@@ -53,8 +53,7 @@ MOLTEST(source_discovery) {
     str_list_free(&found);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
@@ -88,8 +87,7 @@ MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
 
     str_list_free(&sources);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(source_discovery_returns_a_stable_order) {
@@ -120,8 +118,7 @@ MOLTEST(source_discovery_returns_a_stable_order) {
 
     str_list_free(&sources);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* --- what the tests are built from --- */
@@ -146,8 +143,7 @@ static bool plant(const char *root, const char *const *files, size_t count) {
 
 static void wipe(const char *root) {
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(source_discovery_collects_the_tests_directory_and_the_extra_entries) {

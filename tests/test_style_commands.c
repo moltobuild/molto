@@ -37,8 +37,7 @@ static bool workspace_enter(workspace *ws, bool with_manifest) {
 static void workspace_leave(workspace *ws) {
     (void)chdir(ws->previous);
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", ws->root);
-    (void)system(cmd);
+    (void)fs_remove_tree(ws->root);
 }
 
 MOLTEST(lint_outside_a_workspace_is_a_manifest_error) {

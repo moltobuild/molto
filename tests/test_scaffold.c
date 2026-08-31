@@ -44,8 +44,7 @@ MOLTEST(scaffold) {
     free(kept);
 
     char cmd[700];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
@@ -64,8 +63,7 @@ MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
     EXPECT_TRUE(fs_is_dir(path));
 
     char cmd[700];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(scaffold_ignores_the_directories_molto_owns) {
@@ -92,8 +90,7 @@ MOLTEST(scaffold_ignores_the_directories_molto_owns) {
     free(ignore);
 
     char cmd[700];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(scaffold_keeps_an_existing_gitignore) {
@@ -118,6 +115,5 @@ MOLTEST(scaffold_keeps_an_existing_gitignore) {
     free(ignore);
 
     char cmd[700];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }

@@ -129,8 +129,8 @@ static void fixture_teardown(lint_fixture *fixture) {
     restore_env("MOLTO_CLANG_TIDY", fixture->saved_tidy, fixture->had_tidy);
     restore_env("MOLTO_PICKUP", fixture->saved_pickup, fixture->had_pickup);
     char cmd[256];
-    snprintf(cmd, sizeof cmd, "rm -rf %s %s", fixture->root, fixture->tools);
-    (void)system(cmd);
+    (void)fs_remove_tree(fixture->root);
+    (void)fs_remove_tree(fixture->tools);
 }
 
 static int run_lint(const lint_fixture *fixture, diagnostic_list *out) {

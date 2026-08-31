@@ -87,8 +87,7 @@ static void stub_teardown(pickup_stub *stub) {
     restore_env("C_COMPILER", stub->saved_cc, stub->had_cc);
     restore_env("CPP_COMPILER", stub->saved_cxx, stub->had_cxx);
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", stub->root);
-    (void)system(cmd);
+    (void)fs_remove_tree(stub->root);
 }
 
 static int stub_calls(const pickup_stub *stub) {
@@ -109,8 +108,7 @@ static bool workspace_setup(char *root, size_t root_size) {
 
 static void workspace_teardown(const char *root) {
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* An answer naming a program that certainly exists, since the resolved

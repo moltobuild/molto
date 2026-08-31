@@ -58,8 +58,7 @@ MOLTEST(test_command) {
     EXPECT_TRUE(chdir(previous) == 0);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
@@ -105,8 +104,7 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
     EXPECT_NULL(getenv("MOLTO_TEST_GREETING"));
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(test_build_prunes_a_deleted_test) {
@@ -159,6 +157,5 @@ MOLTEST(test_build_prunes_a_deleted_test) {
     EXPECT_TRUE(fs_path_exists(keep_binary));
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }

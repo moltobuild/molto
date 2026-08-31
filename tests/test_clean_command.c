@@ -44,8 +44,7 @@ static bool built_workspace_setup(built_workspace *workspace) {
 static void built_workspace_teardown(built_workspace *workspace) {
     (void)chdir(workspace->previous);
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", workspace->root);
-    (void)system(cmd);
+    (void)fs_remove_tree(workspace->root);
 }
 
 MOLTEST(clean_removes_build_output_but_keeps_the_incremental_state) {
@@ -103,6 +102,5 @@ MOLTEST(clean_outside_a_workspace_is_a_manifest_error) {
 
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }

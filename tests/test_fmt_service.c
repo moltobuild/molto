@@ -102,8 +102,8 @@ static void fixture_teardown(fmt_fixture *fixture) {
     else
         (void)unsetenv("MOLTO_CLANG_FORMAT");
     char cmd[256];
-    snprintf(cmd, sizeof cmd, "rm -rf %s %s", fixture->root, fixture->tools);
-    (void)system(cmd);
+    (void)fs_remove_tree(fixture->root);
+    (void)fs_remove_tree(fixture->tools);
 }
 
 static char *read_source(const char *root, const char *relative) {

@@ -141,6 +141,5 @@ MOLTEST(compile_db) {
     compile_db_destroy(NULL);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }

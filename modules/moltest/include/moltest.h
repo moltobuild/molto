@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /*
  * What the platform does not provide, provided here once.
@@ -43,6 +44,43 @@ static inline int unsetenv(const char *name) {
  * "/tmp/molto_x_XXXXXX"`, which is a buffer that fits nothing else. */
 #define MOLTEST_PATH 256
 
+/*
+ * Where the platform keeps temporary files, in one separator.
+ *
+ * Windows hands back `C:\users\someone\Temp` and the helpers below then join
+ * a name onto it with a slash, which produces a path spelled two ways at once.
+ * That is not cosmetic here: a suite writes these paths into files it then asks
+ * the code under test to read, and in a TOML string a backslash begins an
+ * escape — `"C:\users\..."` is a manifest no parser will take, and the failure
+ * arrives as "the manifest is invalid" with nothing pointing at the path.
+ *
+ * Converted here because this is the boundary the path comes in through.
+ * Windows accepts a forward slash everywhere it accepts a backslash. POSIX
+ * converts nothing, and must not: a backslash is a legal character in a name.
+ */
+static inline void moltest_temp_base(char *out, size_t size, const char *prefix) {
+#ifdef _WIN32
+    const char *base = getenv("TEMP");
+    if (base == NULL)
+        base = getenv("TMP");
+    if (base == NULL)
+        base = ".";
+#else
+    const char *base = "/tmp";
+#endif
+    const int written = snprintf(out, size, "%s/%s_XXXXXX", base, prefix);
+    if (written < 0 || (size_t)written >= size) {
+        out[0] = '\0';
+        return;
+    }
+#ifdef _WIN32
+    for (char *c = out; *c != '\0'; c++) {
+        if (*c == '\\')
+            *c = '/';
+    }
+#endif
+}
+
 /* A temporary file of one's own, created empty and named.
  *
  * The companion of moltest_temp_dir, and here for the same reason: a suite that
@@ -63,21 +101,12 @@ static inline int unsetenv(const char *name) {
  */
 
 [[nodiscard]] static inline bool moltest_temp_dir(const char *prefix, char *out, size_t size) {
-#ifdef _WIN32
-    const char *base = getenv("TEMP");
-    if (base == NULL)
-        base = getenv("TMP");
-    if (base == NULL)
-        base = ".";
-#else
-    const char *base = "/tmp";
-#endif
-    const int written = snprintf(out, size, "%s/%s_XXXXXX", base, prefix);
-    if (written < 0 || (size_t)written >= size)
+    moltest_temp_base(out, size, prefix);
+    if (out[0] == '\0')
         return false;
 #ifdef _WIN32
     /* `_mktemp_s` only picks the name; the directory is still ours to make. */
-    if (_mktemp_s(out, (size_t)written + 1) != 0)
+    if (_mktemp_s(out, strlen(out) + 1) != 0)
         return false;
     return _mkdir(out) == 0;
 #else
@@ -86,20 +115,11 @@ static inline int unsetenv(const char *name) {
 }
 
 static inline bool moltest_temp_file(const char *prefix, char *out, size_t size) {
-#ifdef _WIN32
-    const char *base = getenv("TEMP");
-    if (base == NULL)
-        base = getenv("TMP");
-    if (base == NULL)
-        base = ".";
-#else
-    const char *base = "/tmp";
-#endif
-    const int written = snprintf(out, size, "%s/%s_XXXXXX", base, prefix);
-    if (written < 0 || (size_t)written >= size)
+    moltest_temp_base(out, size, prefix);
+    if (out[0] == '\0')
         return false;
 #ifdef _WIN32
-    if (_mktemp_s(out, (size_t)written + 1) != 0)
+    if (_mktemp_s(out, strlen(out) + 1) != 0)
         return false;
     FILE *file = fopen(out, "wb");
     if (file == NULL)

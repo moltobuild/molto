@@ -49,8 +49,7 @@ static bool sandbox_setup(sandbox *box) {
 static void sandbox_teardown(sandbox *box) {
     (void)setenv("HOME", box->old_home, 1);
     char command[128];
-    snprintf(command, sizeof command, "rm -rf %s", box->root);
-    (void)system(command);
+    (void)fs_remove_tree(box->root);
 }
 
 /* Install a plugin: the executable, and the recipe beside it that says what it

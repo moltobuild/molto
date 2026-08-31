@@ -38,8 +38,7 @@ static void home_teardown(home *box) {
     (void)setenv("HOME", box->old_home, 1);
     (void)setenv("PATH", box->old_path, 1);
     char command[128];
-    snprintf(command, sizeof command, "rm -rf %s", box->root);
-    (void)system(command);
+    (void)fs_remove_tree(box->root);
 }
 
 static bool install(const home *box, const char *name) {
