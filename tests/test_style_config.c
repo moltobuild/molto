@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include <molto/services/fs_service.h>
+
 #include <molto/project/style_config.h>
 
 #include <stdio.h>
@@ -14,8 +16,7 @@ static bool workspace_setup(char *root, size_t root_size) {
 
 static void workspace_teardown(const char *root) {
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(style_config_uses_the_defaults_when_the_file_is_absent) {

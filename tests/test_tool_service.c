@@ -69,8 +69,7 @@ static void stub_teardown(pickup_stub *stub) {
     else
         (void)unsetenv("MOLTO_PICKUP");
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", stub->root);
-    (void)system(cmd);
+    (void)fs_remove_tree(stub->root);
 }
 
 static int stub_calls(const pickup_stub *stub) {
@@ -90,8 +89,7 @@ static bool workspace_setup(char *root, size_t root_size) {
 
 static void workspace_teardown(const char *root) {
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(tool_resolve_reads_the_answer_of_pickup_tools) {

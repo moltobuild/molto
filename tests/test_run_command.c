@@ -47,6 +47,5 @@ MOLTEST(run_command) {
     EXPECT_TRUE(chdir(previous) == 0);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }

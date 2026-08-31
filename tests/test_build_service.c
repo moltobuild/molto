@@ -82,15 +82,13 @@ MOLTEST(build_service) {
     snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
     EXPECT_TRUE(system(cmd) == 0);
 
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 
     /* A directory without Project.toml is an invalid-manifest error. */
     char empty[MOLTEST_PATH];
     EXPECT_TRUE(moltest_temp_dir("molto_empty", empty, sizeof empty));
     EXPECT_TRUE(build_project(empty, profile_debug, NULL, false, 0, NULL, 0) == exit_invalid_manifest);
-    snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
-    (void)system(cmd);
+    (void)fs_remove_tree(empty);
 
     /* [target] std + link libraries are applied: this program calls sqrt() from
        libm, so it only links when `link = ["m"]` adds -lm. */
@@ -107,8 +105,7 @@ MOLTEST(build_service) {
         "#include <math.h>\n"
         "int main(void) { return (int)sqrt(4.0) - 2; }\n"));
     EXPECT_TRUE(build_project(lib_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
-    snprintf(cmd, sizeof cmd, "rm -rf %s", lib_root);
-    (void)system(cmd);
+    (void)fs_remove_tree(lib_root);
 
     /* Changing a profile setting recompiles even when the source is unchanged
        (command fingerprint). */
@@ -129,8 +126,7 @@ MOLTEST(build_service) {
         "[package]\nname = \"fp\"\n[profile.debug]\nopt_level = 2\ndebug_info = true\n"));
     EXPECT_TRUE(build_project(fp_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(fp_obj) > compiled_at); /* recompiled due to changed opt_level */
-    snprintf(cmd, sizeof cmd, "rm -rf %s", fp_root);
-    (void)system(cmd);
+    (void)fs_remove_tree(fp_root);
 
     /* [target].defines reach the compiler: main uses ANSWER, so it only
        compiles when -DANSWER=42 is passed. */
@@ -144,8 +140,7 @@ MOLTEST(build_service) {
     snprintf(path, sizeof path, "%s/src/main.c", def_root);
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return ANSWER - 42; }\n"));
     EXPECT_TRUE(build_project(def_root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
-    snprintf(cmd, sizeof cmd, "rm -rf %s", def_root);
-    (void)system(cmd);
+    (void)fs_remove_tree(def_root);
 }
 
 MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
@@ -188,8 +183,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
     EXPECT_TRUE(mtime_of(good_object) == compiled_at); /* still untouched */
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* What the reader is left with when a unit does not compile.
@@ -235,8 +229,7 @@ MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
     build_report_destroy(report);
     (void)fclose(said);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* A build that succeeds still has to hand over what the compiler said about
@@ -273,8 +266,7 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
     build_report_destroy(report);
     (void)fclose(said);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* A source under `~/.molto/cache/sources/…` is eighty columns saying no more
@@ -336,8 +328,7 @@ MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     build_report_destroy(report);
     (void)fclose(said);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
@@ -373,8 +364,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
     EXPECT_TRUE(system(cmd) == 0);
 
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(build_honours_the_release_profile) {
@@ -406,8 +396,7 @@ MOLTEST(build_honours_the_release_profile) {
     EXPECT_TRUE(fs_path_exists(release_binary));
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(build_anchors_relative_includes_at_the_project_root) {
@@ -443,8 +432,7 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
 
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* Put C_COMPILER back the way it was found. The test below points it at a
@@ -527,8 +515,8 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
 
     restore_env("C_COMPILER", saved_cc, had_cc);
     char cmd[512];
-    snprintf(cmd, sizeof cmd, "rm -rf %s %s", root, tools);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
+    (void)fs_remove_tree(tools);
 }
 
 /* The whole point of scoping flags, checked by the compiler rather than by
@@ -595,8 +583,7 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
@@ -637,8 +624,7 @@ MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
     EXPECT_EQ(exit_build_failure, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read) {
@@ -680,8 +666,7 @@ MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read
     EXPECT_EQ(exit_ok, build_project(app, profile_debug, NULL, false, 0, NULL, 0));
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* A library written against an older standard is compiled against it, in a
@@ -731,8 +716,7 @@ MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(build_recompiles_when_the_env_changes) {
@@ -781,8 +765,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
     EXPECT_TRUE(mtime_of(binary) != linked_at);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
@@ -816,8 +799,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
     EXPECT_TRUE(mtime_of(object) == compiled_at);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(project_env_to_vars_maps_the_table_it_is_given) {
@@ -991,8 +973,7 @@ MOLTEST(build_writes_the_compilation_database) {
     json_free(doc);
 
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* --- libraries (RFC-0007) --- */
@@ -1016,8 +997,7 @@ static bool library_project(char *root, const char *artifact, const char *versio
 
 static void remove_tree(const char *root) {
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 /* The eight bytes every `ar` archive starts with. Checked rather than trusting

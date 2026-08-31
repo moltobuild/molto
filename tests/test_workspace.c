@@ -40,6 +40,6 @@ MOLTEST(workspace) {
 
     EXPECT_TRUE(chdir(previous) == 0);
     char cmd[4200];
-    snprintf(cmd, sizeof cmd, "rm -rf %s %s", root, bare);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
+    (void)fs_remove_tree(bare);
 }

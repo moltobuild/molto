@@ -76,8 +76,7 @@ static bool framework_project(char *root, size_t root_size, const char *manifest
 
 static void cleanup(const char *root) {
     char cmd[600];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", root);
-    (void)system(cmd);
+    (void)fs_remove_tree(root);
 }
 
 MOLTEST(tests_link_into_one_binary_in_single_mode) {

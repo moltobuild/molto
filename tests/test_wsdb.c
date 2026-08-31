@@ -55,8 +55,7 @@ static bool fixture_setup(workspace_fixture *fixture) {
 static void fixture_teardown(workspace_fixture *fixture) {
     str_list_free(&fixture->prereqs);
     char cmd[128];
-    snprintf(cmd, sizeof cmd, "rm -rf %s", fixture->root);
-    (void)system(cmd);
+    (void)fs_remove_tree(fixture->root);
 }
 
 MOLTEST(wsdb_records_and_queries_an_object) {
