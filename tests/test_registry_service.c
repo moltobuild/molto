@@ -1,12 +1,13 @@
 #include <moltest.h>
 
+#include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/registry_service.h>
+#include <molto/util/thread.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 /* The read half of the registry client.
  *
@@ -36,23 +37,22 @@ MOLTEST(registry_get_reports_a_registry_it_cannot_reach) {
 
 /* A real HTTP server, because file:// gives curl an http_code of 000 and the
    client correctly refuses that as "the registry did not answer with a
-   status". Returns the child's pid, or -1 when python3 is not installed. */
-static long serve_fixture(const char *directory) {
+   status". False when python3 is not installed, which is a skip and not a
+   failure.
+
+   Through the process service rather than fork and exec directly: a child that
+   outlives the call starting it is what `process_start` is for, and it takes
+   the streams to the platform's null device, which is what the two `freopen`
+   calls here used to do by naming a POSIX device. */
+static bool serve_fixture(const char *directory, process_handle *out) {
     const char *check[] = { "python3", "--version", NULL };
     char version[64] = "";
     if (process_capture(check, version, sizeof version) != 0)
-        return -1;
+        return false;
 
-    const long pid = (long)fork();
-    if (pid != 0)
-        return pid;
-
-    /* The child: serve quietly and never return. */
-    (void)freopen("/dev/null", "w", stdout);
-    (void)freopen("/dev/null", "w", stderr);
-    execlp("python3", "python3", "-m", "http.server", PORT, "--directory", directory,
-           "--bind", "127.0.0.1", (char *)NULL);
-    _exit(127);
+    const char *argv[] = { "python3", "-m",       "http.server", PORT, "--directory",
+                           directory, "--bind",   "127.0.0.1",   NULL };
+    return process_start(argv, out);
 }
 
 /* Waits for the server to answer, so the test does not race its startup. */
@@ -62,7 +62,7 @@ static bool wait_for_server(void) {
         char err[256] = "";
         if (registry_get(BASE_URL, "/", &response, err, sizeof err))
             return true;
-        usleep(100000);
+        thread_sleep_ms(100);
     }
     return false;
 }
@@ -87,11 +87,9 @@ MOLTEST(registry_get_reads_a_body_and_its_status) {
     fputs(RELEASE_JSON, file);
     ASSERT_EQ(0, fclose(file));
 
-    const long pid = serve_fixture(directory);
-    if (pid < 0) {
+    process_handle server;
+    if (!serve_fixture(directory, &server))
         SKIP("python3 is not installed, so there is no server to read from");
-        return;
-    }
 
     if (wait_for_server()) {
         registry_response response;
@@ -107,13 +105,6 @@ MOLTEST(registry_get_reads_a_body_and_its_status) {
         EXPECT_EQ(404L, response.status);
     }
 
-    char kill_command[64];
-    snprintf(kill_command, sizeof kill_command, "kill %ld", pid);
-    const char *kill_argv[] = { "sh", "-c", kill_command, NULL };
-    (void)process_run(kill_argv);
-
-    char clean[512];
-    snprintf(clean, sizeof clean, "rm -rf '%s'", directory);
-    const char *clean_argv[] = { "sh", "-c", clean, NULL };
-    (void)process_run(clean_argv);
+    process_kill(&server);
+    (void)fs_remove_tree(directory);
 }

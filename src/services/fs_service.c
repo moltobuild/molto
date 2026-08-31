@@ -403,6 +403,21 @@ bool fs_real_path(const char *path, char *out, size_t size) {
 #endif
 }
 
+bool fs_link_target(const char *path, char *out, size_t size) {
+#ifdef _WIN32
+    (void)path;
+    (void)out;
+    (void)size;
+    return false;
+#else
+    const ssize_t length = readlink(path, out, size - 1);
+    if(length <= 0)
+        return false;
+    out[length] = '\0';
+    return true;
+#endif
+}
+
 bool fs_link(const char *target, const char *path) {
 #ifdef _WIN32
     return CreateHardLinkA(path, target, NULL) != 0;
