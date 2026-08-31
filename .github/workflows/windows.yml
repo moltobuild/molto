@@ -146,7 +146,7 @@ jobs:
             exit 1
           fi
           total=$(awk '{ sum += $1 } END { print sum + 0 }' tally.count)
-          echo "$total errors between here and a Windows binary"
+          echo "$total between here and a supported platform"
           test "$total" -eq 0
 
   # Half two: does the binary do molto's job?
@@ -223,14 +223,36 @@ jobs:
           [ $status -eq 0 ] || echo 1 >> "$here/tally.count"
           exit $status
 
-      # Watched, not gated, while the port is in progress — and the distinction
-      # is deliberate. Reported rather than skipped: skipping edits the tests to
-      # hide them, while this leaves every failure printed and counted, so the
-      # tally is a number to watch move. The step above stays a hard gate, so a
-      # regression in building or running a project still turns this red.
+      # Reported rather than skipped: skipping edits the tests to hide them,
+      # while this leaves every failure printed and counted, so the tally is a
+      # number to watch move.
+      #
+      # It counts toward the verdict, and that is a change from when this file
+      # was a private measurement. The README now carries the badge, and a
+      # green badge is a claim that Windows is supported — which RFC-0017
+      # defines as the suite passing, not as the tree compiling. The first run
+      # that ever reached this step reported 680 passed and 163 failed, and
+      # every gate above it was green: without this, the badge would have gone
+      # green over that.
       - name: Run the suite (watched, not yet a gate)
         continue-on-error: true
-        run: make test CC=gcc
+        run: |
+          set +e
+          make test CC=gcc 2>&1 | tee suite.log
+          status=${PIPESTATUS[0]}
+          failed=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) failed.*/\1/p' suite.log | tail -1)
+          if [ -n "$failed" ] && [ "$failed" -gt 0 ]; then
+            echo "$failed" >> tally.count
+            echo "### The suite on Windows" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "$failed tests still fail." >> "$GITHUB_STEP_SUMMARY"
+          elif [ $status -ne 0 ]; then
+            # It failed without reporting a tally: the binary did not run, or
+            # it died partway. Counted as one so the verdict cannot read that
+            # as nothing wrong.
+            echo 1 >> tally.count
+          fi
+          exit $status
 
       # The job ends the way the port stands, and `continue-on-error` on the
       # job is what keeps that from blocking anyone. That flag exists for
@@ -243,5 +265,5 @@ jobs:
             exit 1
           fi
           total=$(awk '{ sum += $1 } END { print sum + 0 }' tally.count)
-          echo "$total errors between here and a Windows binary"
+          echo "$total between here and a supported platform"
           test "$total" -eq 0
