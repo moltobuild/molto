@@ -76,10 +76,7 @@ MOLTEST(registry_get_reads_a_body_and_its_status) {
     char nested[256];
     char fixture[320];
     snprintf(nested, sizeof nested, "%s/v1/packages/sqlite", directory);
-    char command[512];
-    snprintf(command, sizeof command, "mkdir -p '%s'", nested);
-    const char *mkdir_argv[] = { "sh", "-c", command, NULL };
-    ASSERT_EQ(0, process_run(mkdir_argv));
+    ASSERT_TRUE(fs_make_dirs(nested));
 
     snprintf(fixture, sizeof fixture, "%s/3.53.4", nested);
     FILE *file = fopen(fixture, "w");

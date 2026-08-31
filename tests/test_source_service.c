@@ -510,10 +510,7 @@ MOLTEST(source_believes_the_recipe_over_the_extension) {
     /* Same bytes, a name that lies about them. */
     char lying[PATH_MAX_LEN];
     ASSERT_TRUE(fs_format_path(lying, sizeof lying, "%s/pkg-1.0.zip", at.root));
-    char command[PATH_MAX_LEN * 3];
-    ASSERT_TRUE(fs_format_path(command, sizeof command, "cp '%s' '%s'", tarball, lying));
-    const char *copy_argv[] = { "sh", "-c", command, NULL };
-    ASSERT_EQ(0, process_run(copy_argv));
+    ASSERT_TRUE(fs_copy_file(tarball, lying));
 
     char digest[80];
     ASSERT_TRUE(digest_of(lying, digest, sizeof digest));
