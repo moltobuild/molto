@@ -107,9 +107,21 @@ typedef struct {
 /* Take the lock at `path`, creating the file if it is not there. Returns false
    without waiting when someone else holds it: a second molto in the same
    workspace is told so, never queued behind the first. */
+/* The directory this process is in, in Molto's separator. False if it does not
+   fit or cannot be read.
+
+   A service rather than a `getcwd` at each caller, and not only for the
+   spelling: what Windows hands back is separated by backslashes, and Molto has
+   one separator everywhere else (RFC-0017 refuses a second path model). The
+   conversion belongs at the boundary the path comes in through, which is
+   here — a caller that received one already converted can compare it against
+   anything else Molto composed. */
+[[nodiscard]] bool fs_current_dir(char *out, size_t size);
+
 /* Resolve `path` to an absolute one with no `.`, `..` or symlink left in it,
    and false when it cannot be resolved — which for an existing file means only
-   that the buffer was too small.
+   that the buffer was too small. The result uses Molto's separator, for the
+   reason `fs_current_dir` gives.
 
    POSIX resolves symlinks and requires the file to exist; Windows resolves
    neither, because it has no `realpath` and the closest call it does have

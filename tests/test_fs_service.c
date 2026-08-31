@@ -124,3 +124,23 @@ MOLTEST(no_buffer_is_not_a_place_to_put_a_line) {
     EXPECT_FALSE(fs_read_line("/etc/hostname", 1, NULL, 8));
     EXPECT_FALSE(fs_read_line("/etc/hostname", 1, line, 0));
 }
+
+MOLTEST(fs_reports_the_directory_it_is_in) {
+    char here[4096] = "";
+    ASSERT_TRUE(fs_current_dir(here, sizeof here));
+    EXPECT_TRUE(here[0] != '\0');
+    EXPECT_TRUE(fs_is_dir(here));
+
+    /* Absolute, because every caller joins something onto it and then compares
+       the result against a root that came from the same place. What "absolute"
+       looks like differs — a leading slash here, a drive letter on Windows —
+       so the assertion is the one thing both share: it resolves to itself. */
+    char resolved[4096] = "";
+    ASSERT_TRUE(fs_real_path(here, resolved, sizeof resolved));
+    EXPECT_STREQ(here, resolved);
+}
+
+MOLTEST(a_buffer_too_small_for_the_directory_is_refused) {
+    char cramped[2] = "";
+    EXPECT_FALSE(fs_current_dir(cramped, sizeof cramped));
+}

@@ -336,10 +336,51 @@ void fs_lock_release(fs_lock *lock) {
     lock->held = false;
 }
 
+/*
+ * Windows answers with backslashes; Molto composes with forward slashes.
+ *
+ * Converting here rather than at every comparison is the whole of RFC-0017's
+ * rule about not growing a second path model. It is not cosmetic: the
+ * workspace root arrives from the system and a source path is composed by
+ * `fs_format_path`, and a build that mixes the two produces
+ * `D:\ws\project/src/main.c` — which every "is this inside the workspace"
+ * check reads as outside, because the character after the root is not the
+ * separator it was looking for. Windows accepts a forward slash everywhere it
+ * accepts a backslash, so nothing is lost by choosing one.
+ *
+ * POSIX does not convert anything, and must not: a backslash is a perfectly
+ * legal character in a filename there.
+ */
+static void to_one_separator(char *path) {
+#ifdef _WIN32
+    for(char *c = path; *c != '\0'; c++) {
+        if(*c == '\\')
+            *c = '/';
+    }
+#else
+    (void)path;
+#endif
+}
+
+bool fs_current_dir(char *out, size_t size) {
+#ifdef _WIN32
+    if(_getcwd(out, (int)size) == NULL)
+        return false;
+#else
+    if(getcwd(out, size) == NULL)
+        return false;
+#endif
+    to_one_separator(out);
+    return true;
+}
+
 bool fs_real_path(const char *path, char *out, size_t size) {
 #ifdef _WIN32
     const DWORD written = GetFullPathNameA(path, (DWORD)size, out, NULL);
-    return written > 0 && written < size;
+    if(written == 0 || written >= size)
+        return false;
+    to_one_separator(out);
+    return true;
 #else
     char resolved[PATH_MAX];
     if(realpath(path, resolved) == NULL)

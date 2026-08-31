@@ -8,7 +8,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #define IR_COMMAND_PATH_MAX 4096
 #define DEFAULT_PROFILE "debug"
@@ -23,7 +22,7 @@
 static bool locate(char *out, size_t size) {
     if(workspace_find_root(out, size))
         return true;
-    return getcwd(out, size) != NULL;
+    return fs_current_dir(out, size);
 }
 
 /* Where the document goes. A file is written whole or not at all: a half-written
