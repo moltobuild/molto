@@ -9,8 +9,7 @@
 
 /* A workspace to put configuration files in. */
 static bool workspace_setup(char *root, size_t root_size) {
-    snprintf(root, root_size, "%s", "/tmp/molto_style_XXXXXX");
-    return mkdtemp(root) != NULL;
+    return moltest_temp_dir("molto_style", root, root_size);
 }
 
 static void workspace_teardown(const char *root) {

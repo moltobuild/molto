@@ -65,8 +65,7 @@ static bool stub_write(const pickup_stub *stub, const char *answer, int exit_cod
 }
 
 static bool stub_setup(pickup_stub *stub, const char *answer, int exit_code) {
-    snprintf(stub->root, sizeof stub->root, "%s", "/tmp/molto_pickup_XXXXXX");
-    if (mkdtemp(stub->root) == NULL)
+    if (!moltest_temp_dir("molto_pickup", stub->root, sizeof stub->root))
         return false;
     snprintf(stub->program, sizeof stub->program, "%s/pickup", stub->root);
     snprintf(stub->log, sizeof stub->log, "%s/calls", stub->root);
@@ -105,8 +104,7 @@ static int stub_calls(const pickup_stub *stub) {
 
 /* A workspace to hold the database the answer is cached in. */
 static bool workspace_setup(char *root, size_t root_size) {
-    snprintf(root, root_size, "%s", "/tmp/molto_tc_ws_XXXXXX");
-    return mkdtemp(root) != NULL;
+    return moltest_temp_dir("molto_tc_ws", root, root_size);
 }
 
 static void workspace_teardown(const char *root) {

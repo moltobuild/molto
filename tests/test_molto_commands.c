@@ -69,10 +69,8 @@ MOLTEST(molto_metadata_writes_a_bill_of_materials) {
      * reaches no network — and an empty graph is the case an emitter is most
      * likely to turn into a broken array, which is why it is worth running end
      * to end and not only in test_sbom_cyclonedx.c. */
-    char path[] = "/tmp/molto_bom_XXXXXX";
-    const int fd = mkstemp(path);
-    ASSERT_TRUE(fd >= 0);
-    close(fd);
+    char path[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_file("molto_bom", path, sizeof path));
 
     EXPECT_EQ(exit_ok, metadata_command_run(path, false));
 

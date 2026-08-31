@@ -17,11 +17,8 @@
 
 /* A temporary file holding `content`. The path is written into `path`. */
 static bool write_temp(char *path, size_t path_size, const char *content) {
-    snprintf(path, path_size, "/tmp/molto_fs_XXXXXX");
-    int fd = mkstemp(path);
-    if(fd < 0)
+    if(!moltest_temp_file("molto_fs", path, path_size))
         return false;
-    (void)close(fd);
     return fs_write_file(path, content);
 }
 

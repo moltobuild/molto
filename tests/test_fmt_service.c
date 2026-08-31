@@ -70,9 +70,7 @@ static bool write_source(const char *root, const char *relative, const char *bod
 }
 
 static bool fixture_setup(fmt_fixture *fixture) {
-    snprintf(fixture->tools, sizeof fixture->tools, "%s", "/tmp/molto_fmt_bin_XXXXXX");
-    snprintf(fixture->root, sizeof fixture->root, "%s", "/tmp/molto_fmt_ws_XXXXXX");
-    if (mkdtemp(fixture->tools) == NULL || mkdtemp(fixture->root) == NULL)
+    if (!moltest_temp_dir("molto_fmt_bin", fixture->tools, sizeof fixture->tools) || !moltest_temp_dir("molto_fmt_ws", fixture->root, sizeof fixture->root))
         return false;
 
     snprintf(fixture->program, sizeof fixture->program, "%s/clang-format", fixture->tools);

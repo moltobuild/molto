@@ -18,8 +18,7 @@ typedef struct {
 } stub;
 
 static bool stub_open(stub *at, const char *script) {
-    snprintf(at->dir, sizeof at->dir, "%s", "/tmp/molto_host_XXXXXX");
-    if (mkdtemp(at->dir) == NULL)
+    if (!moltest_temp_dir("molto_host", at->dir, sizeof at->dir))
         return false;
     snprintf(at->tool, sizeof at->tool, "%s/pkg-config", at->dir);
 

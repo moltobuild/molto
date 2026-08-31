@@ -34,6 +34,21 @@ static inline int unsetenv(const char *name) {
 }
 #endif
 
+/* Room for a path this harness hands back.
+ *
+ * A caller needs a buffer before it can be given a directory, and the size is
+ * the harness's to know: what goes in it is a temporary root whose length
+ * depends on where the platform keeps them. Generous rather than exact — the
+ * old declarations sized themselves to the template they held, `char root[] =
+ * "/tmp/molto_x_XXXXXX"`, which is a buffer that fits nothing else. */
+#define MOLTEST_PATH 256
+
+/* A temporary file of one's own, created empty and named.
+ *
+ * The companion of moltest_temp_dir, and here for the same reason: a suite that
+ * spells `/tmp` itself is a suite that only runs on one platform. */
+[[nodiscard]] static inline bool moltest_temp_file(const char *prefix, char *out, size_t size);
+
 /*
  * A temporary directory of one's own, created and named.
  *
@@ -46,11 +61,6 @@ static inline int unsetenv(const char *name) {
  * False when the directory could not be made, which a caller should treat as
  * a failed fixture rather than as a test result.
  */
-/* A temporary file of one's own, created empty and named.
- *
- * The companion of moltest_temp_dir, and here for the same reason: a suite that
- * spells `/tmp` itself is a suite that only runs on one platform. */
-[[nodiscard]] static inline bool moltest_temp_file(const char *prefix, char *out, size_t size);
 
 [[nodiscard]] static inline bool moltest_temp_dir(const char *prefix, char *out, size_t size) {
 #ifdef _WIN32

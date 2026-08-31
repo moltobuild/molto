@@ -40,8 +40,7 @@ typedef struct {
     "source = \"pickup\"\n"
 
 static bool stub_setup(pickup_stub *stub, const char *answer) {
-    snprintf(stub->root, sizeof stub->root, "%s", "/tmp/molto_tools_XXXXXX");
-    if (mkdtemp(stub->root) == NULL)
+    if (!moltest_temp_dir("molto_tools", stub->root, sizeof stub->root))
         return false;
     snprintf(stub->program, sizeof stub->program, "%s/pickup", stub->root);
     snprintf(stub->log, sizeof stub->log, "%s/calls", stub->root);
@@ -86,8 +85,7 @@ static int stub_calls(const pickup_stub *stub) {
 }
 
 static bool workspace_setup(char *root, size_t root_size) {
-    snprintf(root, root_size, "%s", "/tmp/molto_tools_ws_XXXXXX");
-    return mkdtemp(root) != NULL;
+    return moltest_temp_dir("molto_tools_ws", root, root_size);
 }
 
 static void workspace_teardown(const char *root) {

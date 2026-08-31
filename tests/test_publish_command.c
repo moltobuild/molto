@@ -23,8 +23,7 @@ typedef struct {
 } fixture;
 
 static bool write_recipe(fixture *at, const char *text) {
-    snprintf(at->dir, sizeof at->dir, "%s", "/tmp/molto_publish_XXXXXX");
-    if (mkdtemp(at->dir) == NULL)
+    if (!moltest_temp_dir("molto_publish", at->dir, sizeof at->dir))
         return false;
     snprintf(at->recipe, sizeof at->recipe, "%s/recipe.toml", at->dir);
 

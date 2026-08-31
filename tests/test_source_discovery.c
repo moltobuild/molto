@@ -27,8 +27,8 @@ MOLTEST(source_discovery) {
     EXPECT_TRUE(!source_is_cpp("x.c"));
     EXPECT_TRUE(!source_is_cpp("x.h"));
 
-    char root[] = "/tmp/molto_disc_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_disc", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/sub", root);
@@ -58,8 +58,8 @@ MOLTEST(source_discovery) {
 }
 
 MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
-    char root[] = "/tmp/molto_symlink_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_symlink", root, sizeof root));
 
     char nested[512];
     snprintf(nested, sizeof nested, "%s/src/inner", root);
@@ -87,8 +87,8 @@ MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
 }
 
 MOLTEST(source_discovery_returns_a_stable_order) {
-    char root[] = "/tmp/molto_order_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_order", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -148,8 +148,8 @@ MOLTEST(source_discovery_collects_the_tests_directory_and_the_extra_entries) {
     /* A listed directory is walked and a listed file is taken as it is: that is
        how a framework living outside tests/ — with the main() the tests do not
        have — gets compiled in. */
-    char root[] = "/tmp/molto_tests_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_tests", root, sizeof root));
 
     static const char *files[] = {"tests/test_a.c", "tests/deep/test_b.cpp",
                                   "vendor/moltest/moltest.c", "extra/helper.c",
@@ -182,8 +182,8 @@ MOLTEST(source_discovery_collects_the_tests_directory_and_the_extra_entries) {
 MOLTEST(source_discovery_treats_a_missing_tests_directory_as_nothing) {
     /* Not an error: a project without tests is a project, and `molto new`
        leaves an empty tests/ behind. */
-    char root[] = "/tmp/molto_notests_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_notests", root, sizeof root));
 
     str_list found;
     str_list_init(&found);
@@ -200,8 +200,8 @@ MOLTEST(source_discovery_refuses_an_extra_entry_that_is_not_there) {
     /* A `[test].sources` entry naming nothing is a manifest describing a build
        that cannot happen, and the message has to name the entry — the point of
        reporting it is that the author can find it. */
-    char root[] = "/tmp/molto_missing_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_missing", root, sizeof root));
 
     str_list extra;
     str_list_init(&extra);
@@ -221,8 +221,8 @@ MOLTEST(source_discovery_refuses_an_extra_entry_that_is_not_there) {
 MOLTEST(source_discovery_anchors_a_relative_entry_at_the_project_root) {
     /* And uses an absolute one as written — the rule every relative path in a
        manifest obeys, which is why a build works the same from a subdirectory. */
-    char root[] = "/tmp/molto_anchor_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_anchor", root, sizeof root));
 
     static const char *files[] = {"vendor/framework.c"};
     ASSERT_TRUE(plant(root, files, 1));

@@ -31,8 +31,8 @@ static json_document *read_database(const char *root) {
 }
 
 MOLTEST(compile_db) {
-    char root[] = "/tmp/molto_cdb_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_cdb", root, sizeof root));
 
     compile_db *db = compile_db_create();
     ASSERT_NOT_NULL(db);

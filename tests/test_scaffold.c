@@ -9,8 +9,8 @@
 #include <string.h>
 
 MOLTEST(scaffold) {
-    char root[] = "/tmp/molto_scaffold_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_scaffold", root, sizeof root));
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
@@ -49,8 +49,8 @@ MOLTEST(scaffold) {
 }
 
 MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
-    char root[] = "/tmp/molto_include_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_include", root, sizeof root));
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
@@ -69,8 +69,8 @@ MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
 }
 
 MOLTEST(scaffold_ignores_the_directories_molto_owns) {
-    char root[] = "/tmp/molto_ignore_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_ignore", root, sizeof root));
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
@@ -97,8 +97,8 @@ MOLTEST(scaffold_ignores_the_directories_molto_owns) {
 }
 
 MOLTEST(scaffold_keeps_an_existing_gitignore) {
-    char root[] = "/tmp/molto_keepignore_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_keepignore", root, sizeof root));
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);

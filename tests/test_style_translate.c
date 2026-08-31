@@ -308,8 +308,7 @@ MOLTEST(translate_refuses_a_rule_it_cannot_express) {
 
 MOLTEST(translate_writes_the_config_under_bin_and_not_in_the_tree) {
     char root[64];
-    snprintf(root, sizeof root, "%s", "/tmp/molto_translate_XXXXXX");
-    ASSERT_NOT_NULL(mkdtemp(root));
+    ASSERT_TRUE(moltest_temp_dir("molto_translate", root, sizeof root));
 
     style_config config;
     style_config_defaults(&config);

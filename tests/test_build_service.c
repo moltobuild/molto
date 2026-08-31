@@ -23,8 +23,8 @@ static int64_t mtime_of(const char *path) {
 }
 
 MOLTEST(build_service) {
-    char root[] = "/tmp/molto_build_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_build", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -86,16 +86,16 @@ MOLTEST(build_service) {
     (void)system(cmd);
 
     /* A directory without Project.toml is an invalid-manifest error. */
-    char empty[] = "/tmp/molto_empty_XXXXXX";
-    EXPECT_TRUE(mkdtemp(empty) != NULL);
+    char empty[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_empty", empty, sizeof empty));
     EXPECT_TRUE(build_project(empty, profile_debug, NULL, false, 0, NULL, 0) == exit_invalid_manifest);
     snprintf(cmd, sizeof cmd, "rm -rf %s", empty);
     (void)system(cmd);
 
     /* [target] std + link libraries are applied: this program calls sqrt() from
        libm, so it only links when `link = ["m"]` adds -lm. */
-    char lib_root[] = "/tmp/molto_target_XXXXXX";
-    EXPECT_TRUE(mkdtemp(lib_root) != NULL);
+    char lib_root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_target", lib_root, sizeof lib_root));
     snprintf(path, sizeof path, "%s/src", lib_root);
     EXPECT_TRUE(fs_make_dirs(path));
     snprintf(path, sizeof path, "%s/Project.toml", lib_root);
@@ -112,8 +112,8 @@ MOLTEST(build_service) {
 
     /* Changing a profile setting recompiles even when the source is unchanged
        (command fingerprint). */
-    char fp_root[] = "/tmp/molto_fp_XXXXXX";
-    EXPECT_TRUE(mkdtemp(fp_root) != NULL);
+    char fp_root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_fp", fp_root, sizeof fp_root));
     snprintf(path, sizeof path, "%s/src", fp_root);
     EXPECT_TRUE(fs_make_dirs(path));
     snprintf(path, sizeof path, "%s/src/main.c", fp_root);
@@ -134,8 +134,8 @@ MOLTEST(build_service) {
 
     /* [target].defines reach the compiler: main uses ANSWER, so it only
        compiles when -DANSWER=42 is passed. */
-    char def_root[] = "/tmp/molto_def_XXXXXX";
-    EXPECT_TRUE(mkdtemp(def_root) != NULL);
+    char def_root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_def", def_root, sizeof def_root));
     snprintf(path, sizeof path, "%s/src", def_root);
     EXPECT_TRUE(fs_make_dirs(path));
     snprintf(path, sizeof path, "%s/Project.toml", def_root);
@@ -149,8 +149,8 @@ MOLTEST(build_service) {
 }
 
 MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
-    char root[] = "/tmp/molto_partial_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_partial", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -199,8 +199,8 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
  * puts it there. That makes the two cases below the whole contract: a unit that
  * failed says so, and a unit that merely warned says that instead. */
 MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
-    char root[] = "/tmp/molto_framed_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_framed", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -243,8 +243,8 @@ MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
    it. Capturing the output and printing it only on failure would make every
    warning in every green build disappear. */
 MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
-    char root[] = "/tmp/molto_warned_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_warned", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -282,8 +282,8 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
    dependency inside the project is the opposite: it is somewhere the reader
    can go and look, and it is named the way they would type it. */
 MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
-    char root[] = "/tmp/molto_depframe_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_depframe", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/modules/database/src", root);
@@ -341,8 +341,8 @@ MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
 }
 
 MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
-    char root[] = "/tmp/molto_cpp_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_cpp", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -378,8 +378,8 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
 }
 
 MOLTEST(build_honours_the_release_profile) {
-    char root[] = "/tmp/molto_release_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_release", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -411,8 +411,8 @@ MOLTEST(build_honours_the_release_profile) {
 }
 
 MOLTEST(build_anchors_relative_includes_at_the_project_root) {
-    char root[] = "/tmp/molto_incl_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_incl", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -466,10 +466,10 @@ static void restore_env(const char *name, const char *saved, bool had) {
 }
 
 MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
-    char root[] = "/tmp/molto_build_race_XXXXXX";
-    ASSERT_NOT_NULL(mkdtemp(root));
-    char tools[] = "/tmp/molto_build_cc_XXXXXX";
-    ASSERT_NOT_NULL(mkdtemp(tools));
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_build_race", root, sizeof root));
+    char tools[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_build_cc", tools, sizeof tools));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -536,8 +536,8 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
    a translation unit it had no business reaching. Before the scopes existed,
    this project failed to build on two of them. */
 MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
-    char root[] = "/tmp/molto_scope_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_scope", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -604,8 +604,8 @@ MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
        on the consumer's own compile line. Nothing checked where it pointed
        until the document was held to RFC-0013's path rule — so this is the
        whole reason a native document is validated at all. */
-    char root[] = "/tmp/molto_bounds_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_bounds", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -646,8 +646,8 @@ MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read
        rather than a stricter three: a sibling checkout is outside the
        workspace, outside the build directory and outside the cache, and the
        manifest named it on purpose. */
-    char root[] = "/tmp/molto_sibling_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_sibling", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/app/src", root);
@@ -688,8 +688,8 @@ MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read
    project that asked for a newer one. Both halves are checked by the
    preprocessor, so the test fails whichever way the standard leaks. */
 MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
-    char root[] = "/tmp/molto_std_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_std", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -740,8 +740,8 @@ MOLTEST(build_recompiles_when_the_env_changes) {
        object and a binary were built from. It used to reach neither
        fingerprint, which left the build mixing objects from two environments
        and no way to notice. */
-    char root[] = "/tmp/molto_env_stamp_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_env_stamp", root, sizeof root));
 
     char manifest[512];
     char path[512];
@@ -789,8 +789,8 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
     /* The order two variables were written in is not something the build ran
        differently, and a rebuild over it would also split the shared object
        cache between two projects declaring the same thing. */
-    char root[] = "/tmp/molto_env_order_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_env_order", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -883,8 +883,8 @@ MOLTEST(env_fingerprint_separates_two_environments) {
 /* A build describes what it compiled, for the tools that parse this code
    without being the build (RFC-0007). */
 MOLTEST(build_writes_the_compilation_database) {
-    char root[] = "/tmp/molto_cdb_build_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_cdb_build", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -1055,8 +1055,8 @@ static bool archive_has_member(const char *path, const char *member) {
 }
 
 MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
-    char root[] = "/tmp/molto_static_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_static", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
 
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
@@ -1080,8 +1080,8 @@ MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
  * The archive is removed before it is written for exactly this.
  */
 MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
-    char root[] = "/tmp/molto_stale_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_stale", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
 
     char extra[512];
@@ -1109,8 +1109,8 @@ MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
  * 1.9.0 under a program that never relinks.
  */
 MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
-    char root[] = "/tmp/molto_shared_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_shared", root, sizeof root));
     ASSERT_TRUE(library_project(root, "shared", "1.2.3"));
 
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
@@ -1142,8 +1142,8 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
 /* A guess would put the wrong number in a soname, which is the one place a
    wrong number is a promise about ABI — so the build stops instead. */
 MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
-    char root[] = "/tmp/molto_noversion_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_noversion", root, sizeof root));
     ASSERT_TRUE(library_project(root, "shared", "nightly"));
 
     EXPECT_NE(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
@@ -1154,8 +1154,8 @@ MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
 /* Nothing changed, so nothing is archived again: remaking it would hand every
    consumer a new mtime to react to. */
 MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
-    char root[] = "/tmp/molto_fresh_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_fresh", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
 
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
@@ -1180,8 +1180,8 @@ MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
  * the output lands rather than whether a cross toolchain exists.
  */
 MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
-    char root[] = "/tmp/molto_target_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_target", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -1224,8 +1224,8 @@ MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
 /* And a build that asks for nothing keeps the path it always had: no project
    that never wanted a target sees one appear. */
 MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
-    char root[] = "/tmp/molto_notarget_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_notarget", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -1253,8 +1253,8 @@ MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
  * which of the two is the problem.
  */
 MOLTEST(a_host_library_cannot_be_resolved_for_another_platform) {
-    char root[] = "/tmp/molto_hostcross_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_hostcross", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);

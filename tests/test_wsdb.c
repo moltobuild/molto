@@ -35,8 +35,7 @@ static void write_at(const char *root, const char *rel, const char *content) {
 }
 
 static bool fixture_setup(workspace_fixture *fixture) {
-    snprintf(fixture->root, sizeof fixture->root, "%s", "/tmp/molto_wsdb_XXXXXX");
-    if (mkdtemp(fixture->root) == NULL)
+    if (!moltest_temp_dir("molto_wsdb", fixture->root, sizeof fixture->root))
         return false;
 
     write_at(fixture->root, "src/main.c", "#include \"util.h\"\nint main(void){return 0;}\n");

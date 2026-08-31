@@ -21,8 +21,7 @@ typedef struct {
 } home;
 
 static bool home_setup(home *box) {
-    snprintf(box->root, sizeof box->root, "%s", "/tmp/molto_plugin_cmd_XXXXXX");
-    if(mkdtemp(box->root) == NULL)
+    if(!moltest_temp_dir("molto_plugin_cmd", box->root, sizeof box->root))
         return false;
     snprintf(box->bin, sizeof box->bin, "%s/.molto/plugins/bin", box->root);
 

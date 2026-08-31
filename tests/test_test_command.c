@@ -12,8 +12,8 @@
 #include <unistd.h>
 
 MOLTEST(test_command) {
-    char root[] = "/tmp/molto_test_cmd_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_test_cmd", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -66,8 +66,8 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
     /* The manifest exports [env] to the compiler and to `molto run`; a test
        binary is a program the project asked to be run too, and used to be the
        one place the table did not reach. */
-    char root[] = "/tmp/molto_test_env_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_test_env", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);
@@ -110,8 +110,8 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
 }
 
 MOLTEST(test_build_prunes_a_deleted_test) {
-    char root[] = "/tmp/molto_test_prune_XXXXXX";
-    ASSERT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_test_prune", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);

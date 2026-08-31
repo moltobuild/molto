@@ -22,8 +22,7 @@ typedef struct {
 } sandbox;
 
 static bool sandbox_open(sandbox *at, const char *manifest) {
-    snprintf(at->root, sizeof at->root, "%s", "/tmp/molto_edit_XXXXXX");
-    return mkdtemp(at->root) != NULL &&
+    return moltest_temp_dir("molto_edit", at->root, sizeof at->root) &&
            fs_format_path(at->path, sizeof at->path, "%s/Project.toml", at->root) &&
            fs_write_file(at->path, manifest);
 }

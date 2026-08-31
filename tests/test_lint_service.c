@@ -83,9 +83,7 @@ static void restore_env(const char *name, const char *saved, bool had) {
 
 static bool fixture_setup(lint_fixture *fixture, const char *compiler_says,
                           int compiler_exit, const char *linter_says) {
-    snprintf(fixture->tools, sizeof fixture->tools, "%s", "/tmp/molto_lint_bin_XXXXXX");
-    snprintf(fixture->root, sizeof fixture->root, "%s", "/tmp/molto_lint_ws_XXXXXX");
-    if (mkdtemp(fixture->tools) == NULL || mkdtemp(fixture->root) == NULL)
+    if (!moltest_temp_dir("molto_lint_bin", fixture->tools, sizeof fixture->tools) || !moltest_temp_dir("molto_lint_ws", fixture->root, sizeof fixture->root))
         return false;
 
     snprintf(fixture->compiler, sizeof fixture->compiler, "%s/cc", fixture->tools);

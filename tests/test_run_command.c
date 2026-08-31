@@ -9,8 +9,8 @@
 #include <unistd.h>
 
 MOLTEST(run_command) {
-    char root[] = "/tmp/molto_run_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_run", root, sizeof root));
 
     char path[512];
     snprintf(path, sizeof path, "%s/src", root);

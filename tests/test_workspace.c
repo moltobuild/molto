@@ -13,8 +13,8 @@ MOLTEST(workspace) {
     EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
 
     /* A project with a nested subdirectory. */
-    char root[] = "/tmp/molto_ws_XXXXXX";
-    EXPECT_TRUE(mkdtemp(root) != NULL);
+    char root[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_ws", root, sizeof root));
     char path[4200];
     snprintf(path, sizeof path, "%s/Project.toml", root);
     EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"ws\"\n"));
@@ -33,8 +33,8 @@ MOLTEST(workspace) {
     EXPECT_TRUE(strcmp(found, root) == 0);
 
     /* A directory with no Project.toml anywhere above -> not a workspace. */
-    char bare[] = "/tmp/molto_bare_XXXXXX";
-    EXPECT_TRUE(mkdtemp(bare) != NULL);
+    char bare[MOLTEST_PATH];
+    EXPECT_TRUE(moltest_temp_dir("molto_bare", bare, sizeof bare));
     EXPECT_TRUE(chdir(bare) == 0);
     EXPECT_TRUE(!workspace_find_root(found, sizeof found));
 
