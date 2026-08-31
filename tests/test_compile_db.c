@@ -84,7 +84,7 @@ MOLTEST(compile_db) {
     /* Compared against the resolved root: `directory` is absolute and symlink
        free, because a tool reads this file from wherever it is running. */
     char resolved[PATH_MAX];
-    EXPECT_NOT_NULL(realpath(root, resolved));
+    EXPECT_TRUE(fs_real_path(root, resolved, sizeof resolved));
     EXPECT_STREQ(resolved, json_string(json_get(first, "directory")));
 
     /* The arguments are what was executed, verbatim — escaping is undone by the

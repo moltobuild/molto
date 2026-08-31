@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include <molto/services/fs_service.h>
+
 #include <molto/build/sbom_cyclonedx.h>
 #include <molto/services/sbom_service.h>
 #include <molto/util/json.h>
@@ -73,15 +75,24 @@ static void build_document(sbom_document *out, str_list *png_edges, str_list *zl
     out->count = 2;
 }
 
-/* Emit into memory. Caller frees. */
+/* Emit, and hand back what was written. Caller frees.
+
+   Through a real file rather than `open_memstream`, which is POSIX and absent
+   on Windows — and it is what `molto metadata -o` does, so the test now takes
+   the same route the command does. */
 static char *emit(const sbom_document *document) {
-    char *text = NULL;
-    size_t size = 0;
-    FILE *stream = open_memstream(&text, &size);
+    char path[MOLTEST_PATH];
+    if (!moltest_temp_file("molto_sbom", path, sizeof path))
+        return NULL;
+
+    FILE *stream = fopen(path, "w");
     if (stream == NULL)
         return NULL;
     sbom_write_cyclonedx(stream, document, "9.9.9");
-    fclose(stream);
+    (void)fclose(stream);
+
+    char *text = fs_read_file(path);
+    (void)remove(path);
     return text;
 }
 

@@ -73,7 +73,13 @@ MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
     snprintf(loop, sizeof loop, "%s/src/inner/loop", root);
     char target[512];
     snprintf(target, sizeof target, "%s/src", root);
-    ASSERT_TRUE(symlink(target, loop) == 0);
+    /* Skipped rather than failed where the system will not make one. This is
+       the only test in the suite that needs a link to a *directory*, and
+       `fs_link` gives a hard link on Windows, which cannot point at one. The
+       guard being tested is real either way; what cannot be arranged there is
+       the loop that triggers it. */
+    if(!fs_link(target, loop))
+        SKIP("this system will not make a link that points at a directory");
 
     str_list sources;
     str_list_init(&sources);
