@@ -583,7 +583,7 @@ static bool provided_path(const char *root, const char *root_real, const char *r
                           size_t out_size, char *err, size_t err_size) {
     if(relative[0] == '\0')
         return fail_fmt(err, err_size, "[[provide]] #%zu names an empty '%s'", index + 1, which);
-    if(relative[0] == '/')
+    if(fs_path_is_absolute(relative))
         return fail_fmt(err, err_size, "[[provide]] #%zu names an absolute '%s'", index + 1, which);
     if(climbs_out(relative))
         return fail_fmt(err, err_size,

@@ -662,7 +662,7 @@ static const char *shown_source(const build_unit_label *label, const char *root)
     /* Already relative, which is how a path dependency is kept: the manifest
        named it the way the reader would type it, and there is nothing to
        shorten. */
-    if(label->source[0] != '/')
+    if(!fs_path_is_absolute(label->source))
         return label->source;
     const char *relative = fs_relative_to(label->source, root);
     return relative != label->source ? relative : NULL;

@@ -14,6 +14,10 @@ static bool flush_token(str_list *out, char *token, size_t *length) {
         return true;
     token[*length] = '\0';
     *length = 0;
+    /* The compiler wrote this path, not Molto, so it is spelled the way that
+       compiler spells one. Everything downstream compares it against paths
+       Molto composed. */
+    fs_to_one_separator(token);
     return str_list_push(out, token);
 }
 

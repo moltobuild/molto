@@ -61,7 +61,7 @@ static bool normalise(const char *path, char *out, size_t size) {
     if(path == NULL || path[0] == '\0' || size < 2)
         return false;
 
-    const bool absolute = path[0] == '/';
+    const bool absolute = fs_path_is_absolute(path);
     const char *start[IR_MAX_SEGMENTS];
     size_t length[IR_MAX_SEGMENTS];
     size_t count = 0;
@@ -135,7 +135,7 @@ static bool inside(const char *path, const char *root) {
 static bool anchor(const char *path, const char *base, char *out, size_t size) {
     if(path == NULL || path[0] == '\0')
         return false;
-    if(path[0] == '/')
+    if(fs_path_is_absolute(path))
         return normalise(path, out, size);
 
     char joined[IR_PATH_MAX];

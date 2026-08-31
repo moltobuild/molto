@@ -365,7 +365,7 @@ void fs_lock_release(fs_lock *lock) {
  * POSIX does not convert anything, and must not: a backslash is a perfectly
  * legal character in a filename there.
  */
-static void to_one_separator(char *path) {
+void fs_to_one_separator(char *path) {
 #ifdef _WIN32
     for(char *c = path; *c != '\0'; c++) {
         if(*c == '\\')
@@ -384,7 +384,7 @@ bool fs_current_dir(char *out, size_t size) {
     if(getcwd(out, size) == NULL)
         return false;
 #endif
-    to_one_separator(out);
+    fs_to_one_separator(out);
     return true;
 }
 
@@ -393,7 +393,7 @@ bool fs_real_path(const char *path, char *out, size_t size) {
     const DWORD written = GetFullPathNameA(path, (DWORD)size, out, NULL);
     if(written == 0 || written >= size)
         return false;
-    to_one_separator(out);
+    fs_to_one_separator(out);
     return true;
 #else
     char resolved[PATH_MAX];
@@ -409,4 +409,19 @@ bool fs_link(const char *target, const char *path) {
 #else
     return symlink(target, path) == 0;
 #endif
+}
+
+bool fs_path_is_absolute(const char *path) {
+    if(path == NULL || path[0] == '\0')
+        return false;
+#ifdef _WIN32
+    /* `D:/x` names a place; `D:x` does not — it is relative to whatever
+       directory that drive is currently on, which is per-process state and not
+       a location. A leading slash is absolute on the current drive, which is
+       enough for every caller here: they all compare against or join onto a
+       root from the same machine. */
+    if(((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':')
+        return path[2] == '/';
+#endif
+    return path[0] == '/';
 }

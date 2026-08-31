@@ -118,7 +118,7 @@ static void entry_set_command(wsdb_entry *e, const char *command) {
 }
 
 [[nodiscard]] static bool make_full(const char *root, const char *rel, char *out, size_t out_size) {
-    if(rel[0] == '/')
+    if(fs_path_is_absolute(rel))
         return fs_format_path(out, out_size, "%s", rel);
     return fs_format_path(out, out_size, "%s/%s", root, rel);
 }

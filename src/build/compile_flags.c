@@ -32,7 +32,7 @@ bool compile_flags_push_include(str_list *argv, const char *root, const char *di
        for an option value and not for a path. */
     char flag[FLAG_PATH_SIZE];
     bool composed =
-        directory[0] == '/'
+        fs_path_is_absolute(directory)
             ? fs_format_path(flag, sizeof flag, INCLUDE_FLAG_PREFIX "%s", directory)
             : fs_format_path(flag, sizeof flag, INCLUDE_FLAG_PREFIX "%s/%s", root, directory);
     if(!composed)

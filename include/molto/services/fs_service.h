@@ -118,6 +118,23 @@ typedef struct {
    anything else Molto composed. */
 [[nodiscard]] bool fs_current_dir(char *out, size_t size);
 
+/* Rewrite `path` in place to use Molto's separator.
+ *
+ * For a path that came from outside — a compiler wrote it into a depfile, a
+ * person typed it — rather than one Molto composed, which already uses it. A
+ * no-op on POSIX, and it must be: a backslash is a legal character in a
+ * filename there, and converting one would rename the file being talked about.
+ */
+void fs_to_one_separator(char *path);
+
+/* Whether `path` names a place without reference to where the process is.
+ *
+ * Not `path[0] == '/'`, which is the same question asked in a way that is only
+ * right on one platform: an absolute path on Windows opens with a drive and a
+ * colon. Nine callers were asking it that way, and every one of them read a
+ * Windows path as relative and joined it onto a root. */
+[[nodiscard]] bool fs_path_is_absolute(const char *path);
+
 /* Resolve `path` to an absolute one with no `.`, `..` or symlink left in it,
    and false when it cannot be resolved — which for an existing file means only
    that the buffer was too small. The result uses Molto's separator, for the

@@ -369,7 +369,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
  * An empty root means the caller parsed a manifest without a directory, and
  * then a relative path means the working directory, exactly as before. */
 static bool anchor_path(source_spec *spec, const char *root, char *err, size_t err_size) {
-    if(spec->origin != source_origin_path || spec->location[0] == '/' || root[0] == '\0')
+    if(spec->origin != source_origin_path || fs_path_is_absolute(spec->location) || root[0] == '\0')
         return true;
     char absolute[sizeof spec->location];
     if((size_t)snprintf(absolute, sizeof absolute, "%s/%s", root, spec->location) >=
