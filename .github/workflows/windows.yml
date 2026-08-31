@@ -223,6 +223,28 @@ jobs:
           [ $status -eq 0 ] || echo 1 >> "$here/tally.count"
           exit $status
 
+      # The claim this job exists to check, and the one nobody was checking.
+      #
+      # Everything above builds molto with the bootstrap Makefile, which is not
+      # how molto is built — `ci.yml` has a `self-host` job for that, and it
+      # runs on Ubuntu only. So "molto builds molto" and "molto runs on
+      # Windows" were both true and had never met.
+      #
+      # `C_COMPILER` for the same reason the smoke test uses it: pickup on
+      # Windows is its own port with its own tally, and a red here has to be
+      # attributable to molto.
+      - name: And molto builds molto with molto
+        continue-on-error: true
+        env:
+          C_COMPILER: gcc
+          CPP_COMPILER: g++
+        run: |
+          set +e
+          ./build/molto build
+          status=$?
+          [ $status -eq 0 ] || echo 1 >> tally.count
+          exit $status
+
       # Reported rather than skipped: skipping edits the tests to hide them,
       # while this leaves every failure printed and counted, so the tally is a
       # number to watch move.
