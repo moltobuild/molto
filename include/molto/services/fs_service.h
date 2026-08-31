@@ -157,6 +157,13 @@ void fs_to_one_separator(char *path);
  *
  * The one caller places the two links beside a shared library, and treats a
  * failure as a warning rather than a failed build. */
+/* Copy `from` to `to`, byte for byte, creating or truncating the destination.
+ *
+ * Byte for byte and not through `fs_read_file`, which NUL-terminates what it
+ * returns and so cannot describe an archive: the first zero in a tarball would
+ * end the copy. */
+[[nodiscard]] bool fs_copy_file(const char *from, const char *to);
+
 [[nodiscard]] bool fs_link(const char *target, const char *path);
 
 /* What `path` points at, when it is the kind of link that points at something.

@@ -440,3 +440,30 @@ bool fs_path_is_absolute(const char *path) {
 #endif
     return path[0] == '/';
 }
+
+bool fs_copy_file(const char *from, const char *to) {
+    FILE *in = fopen(from, "rb");
+    if(in == NULL)
+        return false;
+    FILE *out = fopen(to, "wb");
+    if(out == NULL) {
+        (void)fclose(in);
+        return false;
+    }
+
+    char chunk[8192];
+    bool ok = true;
+    for(;;) {
+        const size_t got = fread(chunk, 1, sizeof chunk, in);
+        if(got == 0)
+            break;
+        if(fwrite(chunk, 1, got, out) != got) {
+            ok = false;
+            break;
+        }
+    }
+    if(ferror(in))
+        ok = false;
+    (void)fclose(in);
+    return fclose(out) == 0 && ok;
+}

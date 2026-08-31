@@ -6,8 +6,10 @@
 #include <time.h>
 
 #ifdef _WIN32
+#include <process.h>
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -517,7 +519,310 @@ static void print_usage(void) {
     printf("    -h, --help       Show this help\n");
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Fabricated programs                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A fake is a copy of this binary with a spec beside it. See moltest.h for why
+ * that rather than a shell script, and for the directives.
+ */
+
+/* Where this process was started from, kept so a fake can be made out of it. */
+static const char *moltest_self;
+
+#ifdef _WIN32
+#define MOLTEST_EXE_SUFFIX ".exe"
+#else
+#define MOLTEST_EXE_SUFFIX ""
+#endif
+
+#define MOLTEST_SPEC_SUFFIX ".spec"
+#define MOLTEST_LINE_MAX 1024
+
+static bool moltest_copy_file(const char *from, const char *to) {
+    FILE *in = fopen(from, "rb");
+    if (in == NULL)
+        return false;
+    FILE *out = fopen(to, "wb");
+    if (out == NULL) {
+        (void)fclose(in);
+        return false;
+    }
+    char buffer[8192];
+    size_t got;
+    bool ok = true;
+    while (ok && (got = fread(buffer, 1, sizeof buffer, in)) > 0)
+        ok = fwrite(buffer, 1, got, out) == got;
+    ok = fclose(out) == 0 && ok;
+    (void)fclose(in);
+#ifndef _WIN32
+    /* On Windows the suffix carries this; here it is a mode. */
+    if (ok && chmod(to, 0755) != 0)
+        ok = false;
+#endif
+    return ok;
+}
+
+static bool moltest_write_text(const char *path, const char *text) {
+    FILE *file = fopen(path, "wb");
+    if (file == NULL)
+        return false;
+    const size_t length = strlen(text);
+    const bool ok = length == 0 || fwrite(text, 1, length, file) == length;
+    return fclose(file) == 0 && ok;
+}
+
+/* `<program><suffix>`, for the spec beside a program. */
+static bool moltest_beside(const char *path, const char *suffix, char *out, size_t size) {
+    const int written = snprintf(out, size, "%s%s", path, suffix);
+    return written > 0 && (size_t)written < size;
+}
+
+bool moltest_fake_program(const char *path, const char *spec, char *made, size_t size) {
+    if (moltest_self == NULL)
+        return false;
+
+    /* Not appended twice. A caller may already hold a path the platform made
+       runnable — a temporary program is one — and `foo.exe.exe` is a file
+       nothing will start, beside the empty `foo.exe` the caller meant. */
+    const size_t suffix = sizeof MOLTEST_EXE_SUFFIX - 1;
+    const size_t length = strlen(path);
+    const bool already =
+        suffix > 0 && length >= suffix && strcmp(path + length - suffix, MOLTEST_EXE_SUFFIX) == 0;
+
+    char program[MOLTEST_LINE_MAX];
+    if (!moltest_beside(path, already ? "" : MOLTEST_EXE_SUFFIX, program, sizeof program))
+        return false;
+
+    char spec_path[MOLTEST_LINE_MAX];
+    if (!moltest_beside(program, MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
+        return false;
+
+    /* The spec first: a program that exists without one would run the suite
+       again, and a suite that spawns itself is a fork bomb with a progress
+       bar. */
+    if (!moltest_write_text(spec_path, spec != NULL ? spec : "exit 0\n"))
+        return false;
+    if (!moltest_copy_file(moltest_self, program)) {
+        (void)remove(spec_path);
+        return false;
+    }
+    if (made != NULL && !moltest_beside(program, "", made, size))
+        return false;
+    return true;
+}
+
+/* Behaviours a spec can name, registered before main() runs. */
+#define MOLTEST_MAX_FAKES 32
+
+static struct {
+    const char *name;
+    moltest_fake_fn body;
+} moltest_fakes[MOLTEST_MAX_FAKES];
+static size_t moltest_fake_count;
+
+void moltest_register_fake(const char *name, moltest_fake_fn body) {
+    if (moltest_fake_count < MOLTEST_MAX_FAKES) {
+        moltest_fakes[moltest_fake_count].name = name;
+        moltest_fakes[moltest_fake_count].body = body;
+        moltest_fake_count++;
+    }
+}
+
+static moltest_fake_fn moltest_find_fake(const char *name) {
+    for (size_t i = 0; i < moltest_fake_count; i++) {
+        if (strcmp(moltest_fakes[i].name, name) == 0)
+            return moltest_fakes[i].body;
+    }
+    return NULL;
+}
+
+/*
+ * Become `program`, with the arguments this process was given.
+ *
+ * For a fake that has to be a real compiler rather than imitate one. The
+ * child inherits this process's streams, so the source waiting on stdin is
+ * still there for it to read.
+ */
+static int moltest_hand_over(const char *program, int argc, char **argv) {
+    const char **child = calloc((size_t)argc + 1, sizeof *child);
+    if (child == NULL)
+        return 127;
+    child[0] = program;
+    for (int i = 1; i < argc; i++)
+        child[i] = argv[i];
+    child[argc] = NULL;
+
+#ifdef _WIN32
+    /* Waits and reports, where POSIX replaces this process outright. */
+    const intptr_t status = _spawnvp(_P_WAIT, program, (const char *const *)child);
+    free(child);
+    return status < 0 ? 127 : (int)status;
+#else
+    execvp(program, (char *const *)child);
+    free(child); /* only reached when exec failed */
+    return 127;
+#endif
+}
+
+/* What the fake was fed on stdin, for a behaviour that decides by it. */
+#define MOLTEST_INPUT_MAX 8192
+static char moltest_input[MOLTEST_INPUT_MAX];
+
+const char *moltest_fake_input(void) {
+    return moltest_input;
+}
+
+/* Settings a spec handed to the behaviour it names. */
+#define MOLTEST_MAX_SETTINGS 16
+#define MOLTEST_SETTING_MAX 256
+
+static struct {
+    char key[64];
+    char value[MOLTEST_SETTING_MAX];
+} moltest_settings[MOLTEST_MAX_SETTINGS];
+static size_t moltest_setting_count;
+
+const char *moltest_fake_setting(const char *key) {
+    for (size_t i = 0; i < moltest_setting_count; i++) {
+        if (strcmp(moltest_settings[i].key, key) == 0)
+            return moltest_settings[i].value;
+    }
+    return NULL;
+}
+
+static void moltest_remember_setting(const char *line) {
+    const char *space = strchr(line, ' ');
+    if (space == NULL || moltest_setting_count >= MOLTEST_MAX_SETTINGS)
+        return;
+    const size_t width = (size_t)(space - line);
+    if (width == 0 || width >= sizeof moltest_settings[0].key)
+        return;
+    memcpy(moltest_settings[moltest_setting_count].key, line, width);
+    moltest_settings[moltest_setting_count].key[width] = '\0';
+    snprintf(moltest_settings[moltest_setting_count].value, MOLTEST_SETTING_MAX, "%s", space + 1);
+    moltest_setting_count++;
+}
+
+/* The `-o <path>` a driver was asked to write to, or NULL. */
+static const char *moltest_output_argument(int argc, char **argv) {
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0)
+            return argv[i + 1];
+    }
+    return NULL;
+}
+
+/* Act on one directive. Returns false only for `exit`, which ends the walk. */
+static bool moltest_obey(const char *line, int argc, char **argv, int *status) {
+    if (strncmp(line, "out ", 4) == 0) {
+        printf("%s\n", line + 4);
+        (void)fflush(stdout);
+    } else if (strncmp(line, "err ", 4) == 0) {
+        fprintf(stderr, "%s\n", line + 4);
+        (void)fflush(stderr);
+    } else if (strcmp(line, "link") == 0) {
+        const char *output = moltest_output_argument(argc, argv);
+        /* Nothing asked for means nothing written: a driver given
+           -fsyntax-only produces no file, and the probe relies on that. */
+        if (output != NULL)
+            (void)moltest_fake_program(output, "exit 0\n", NULL, 0);
+    } else if (strncmp(line, "set ", 4) == 0) {
+        moltest_remember_setting(line + 4);
+    } else if (strncmp(line, "behave ", 7) == 0) {
+        const moltest_fake_fn body = moltest_find_fake(line + 7);
+        /* A spec naming a behaviour nobody registered is a test that would
+           otherwise pass for the wrong reason. */
+        *status = body != NULL ? body(argc, argv) : 127;
+        return false;
+    } else if (strncmp(line, "exit ", 5) == 0) {
+        *status = atoi(line + 5);
+        return false;
+    }
+    return true;
+}
+
+/*
+ * True when this process was started as a fabricated program rather than as a
+ * suite, in which case it has already done what it was told and `status` says
+ * with what.
+ *
+ * Decided by the spec file being there, and nothing else: a copy of this binary
+ * with no spec beside it is this binary, and running the whole suite because
+ * somebody copied it would be a surprise nobody could debug.
+ */
+static bool moltest_ran_as_fake(int argc, char **argv, int *status) {
+    if (argc < 1 || argv[0] == NULL)
+        return false;
+
+    char spec_path[MOLTEST_LINE_MAX];
+    if (!moltest_beside(argv[0], MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
+        return false;
+    FILE *spec = fopen(spec_path, "rb");
+    if (spec == NULL)
+        return false;
+
+    /* `exec` is answered before stdin is touched: what it hands over to is a
+       real program that will want to read the source itself, and a spec that
+       drained it first would give it an empty file. */
+    {
+        char line[MOLTEST_LINE_MAX];
+        rewind(spec);
+        while (fgets(line, sizeof line, spec) != NULL) {
+            size_t length = strlen(line);
+            while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r'))
+                line[--length] = '\0';
+            if (strncmp(line, "exec ", 5) != 0)
+                continue;
+            (void)fclose(spec);
+            *status = moltest_hand_over(line + 5, argc, argv);
+            return true;
+        }
+        rewind(spec);
+    }
+
+    /* Read before anything else, and kept rather than discarded. A fake stands
+       in for a program handed a source file on stdin, and one that exits
+       without reading leaves the parent writing into a pipe nobody holds —
+       which on POSIX is a signal that kills the suite rather than an error it
+       can report. A driver that decides by what it was asked to compile needs
+       the text as well. */
+    size_t filled = 0;
+    for (;;) {
+        const size_t room = sizeof moltest_input - 1 - filled;
+        if (room == 0)
+            break;
+        const size_t got = fread(moltest_input + filled, 1, room, stdin);
+        if (got == 0)
+            break;
+        filled += got;
+    }
+    moltest_input[filled] = '\0';
+
+    *status = 0;
+    char line[MOLTEST_LINE_MAX];
+    while (fgets(line, sizeof line, spec) != NULL) {
+        size_t length = strlen(line);
+        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r'))
+            line[--length] = '\0';
+        if (length > 0 && !moltest_obey(line, argc, argv, status))
+            break;
+    }
+    (void)fclose(spec);
+    return true;
+}
+
 int moltest_run(int argc, char **argv) {
+    moltest_self = argc > 0 ? argv[0] : NULL;
+
+    /* Before anything else, including argument parsing: a fabricated program
+       is not a suite and must not be read as one. */
+    int fake_status = 0;
+    if (moltest_ran_as_fake(argc, argv, &fake_status))
+        return fake_status;
+
     const char *filter = NULL;
     bool verbose = false;
     bool list_only = false;
