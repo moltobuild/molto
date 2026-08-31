@@ -3,10 +3,21 @@ name: Windows
 # Deliberately not part of `ci.yml`.
 #
 # This file measures how far molto's Windows port has got; `ci.yml` is what has
-# to be green. Both jobs below fail today and are marked `continue-on-error`
-# for that reason — a red gate nobody can fix teaches people to ignore red
-# gates. When they pass, the flag comes off and they move into `ci.yml`. That
-# move is the definition of "supported" in RFC-0017.
+# to be green. When this one is green too it moves into `ci.yml`, and that move
+# is the definition of "supported" in RFC-0017.
+#
+# It is not a gate. Nothing requires it, and a pull request merges with it red
+# — which is the whole reason it can afford to be red. What it is instead is a
+# progress report, and the README carries its badge, so the state of the port
+# is a thing anyone can see without opening a run.
+#
+# That badge is why the jobs no longer carry `continue-on-error` themselves.
+# A run whose every job is excused reports success, and a green badge over a
+# tree that does not compile for Windows is worse than no badge: it is the
+# `Compiles for Windows` tick this file was built to stop anyone from
+# believing. The flag stays on the individual steps, which is what lets each
+# one measure rather than stop at the first failure, and `Where the port
+# stands` ends each job the way the port really is.
 #
 # Pickup went through this same file first, and what it learnt shapes this one:
 # compiling proves almost nothing. Its port failed at link (mingw declares
@@ -69,7 +80,6 @@ jobs:
     name: Compiles for Windows
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -147,7 +157,6 @@ jobs:
     name: Runs on Windows
     runs-on: windows-2022
     timeout-minutes: 25
-    continue-on-error: true
     defaults:
       run:
         shell: msys2 {0}
