@@ -1124,16 +1124,25 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
         char path[512];
         snprintf(path, sizeof path, "%s/build/debug/%s", root, links[i]);
 
-        /* A link and not a copy, and relative: both sit beside their target, and
-           an absolute link would write this machine's build directory inside an
-           artifact whose purpose is to be copied elsewhere. */
+        /* Both names really are there, whichever kind of link the system
+           makes. This is the portable half, and the one a consumer depends
+           on. */
+        EXPECT_TRUE(fs_path_exists(path));
+
+        /* And where there is a target to read, it is relative: both links sit
+           beside the file they name, and an absolute one would write this
+           machine's build directory inside an artifact whose purpose is to be
+           copied elsewhere.
+
+           A hard link has nothing to read back — it is a second name for the
+           bytes rather than a note saying where they are — so the assertion
+           applies where links carry targets and is silent where they do not.
+           None of this is settled for Windows anyway: what a shared library
+           should be *called* there is open in RFC-0017, and `libgreet.so.1.2.3`
+           is not the answer. */
         char target[256] = "";
-        const ssize_t length = readlink(path, target, sizeof target - 1);
-        EXPECT_TRUE(length > 0);
-        if(length > 0) {
-            target[length] = '\0';
+        if(fs_link_target(path, target, sizeof target))
             EXPECT_STREQ("libgreet.so.1.2.3", target);
-        }
     }
 
     remove_tree(root);

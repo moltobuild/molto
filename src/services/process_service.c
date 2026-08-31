@@ -131,6 +131,13 @@ static long end_write(pipe_end end, const char *from, size_t count) {
 #endif
 }
 
+/* The platform's bin for output nobody reads, opened so a child inherits it.
+ *
+ * Both systems have one and neither calls it the same thing. Wired through the
+ * same field a capture's pipe uses, so `spawn_child` needs to know nothing
+ * about it: to that code it is a write end like any other. */
+static pipe_end open_null_sink(void);
+
 /* One pipe, and which of the child's streams are wired to it. */
 typedef struct {
     pipe_end write_end; /* PIPE_NONE when nothing is captured */
@@ -349,6 +356,17 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
     return started.hProcess;
 }
 
+static pipe_end open_null_sink(void) {
+    SECURITY_ATTRIBUTES inheritable = {
+        .nLength = sizeof(SECURITY_ATTRIBUTES),
+        .bInheritHandle = TRUE,
+        .lpSecurityDescriptor = NULL,
+    };
+    HANDLE sink = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              &inheritable, OPEN_EXISTING, 0, NULL);
+    return sink == INVALID_HANDLE_VALUE ? PIPE_NONE : sink;
+}
+
 static bool child_started(child_handle child) { return child != CHILD_NONE; }
 
 static int child_wait(child_handle child) {
@@ -441,6 +459,8 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
     execvp(argv[0], (char *const *)argv);
     _exit(EXIT_COMMAND_NOT_RUNNABLE);
 }
+
+static pipe_end open_null_sink(void) { return open("/dev/null", O_WRONLY); }
 
 static bool child_started(child_handle child) { return child >= 0; }
 
@@ -593,6 +613,62 @@ int process_capture_all(const char *const argv[], const process_env_var *env, si
     if(truncated != NULL)
         *truncated = spec.truncated;
     return code;
+}
+
+bool process_start(const char *const argv[], process_handle *out) {
+    if(out == NULL || argv == NULL || argv[0] == NULL)
+        return false;
+    out->running = false;
+
+    pipe_end sink = open_null_sink();
+    if(!end_open(sink))
+        return false;
+
+    const child_pipe wiring = {
+        .write_end = sink,
+        .read_end = PIPE_NONE,
+        .stdout_captured = true,
+        .stderr_captured = true,
+        .stdin_read_end = PIPE_NONE,
+        .stdin_write_end = PIPE_NONE,
+    };
+    const child_handle child = spawn_child(argv, NULL, 0, &wiring);
+    /* The parent's copy goes either way: the child has its own now, and
+       holding this one open keeps a handle on the null device for no reason. */
+    end_close(&sink);
+    if(!child_started(child))
+        return false;
+
+#ifdef _WIN32
+    out->process = child;
+#else
+    out->pid = child;
+#endif
+    out->running = true;
+    return true;
+}
+
+/* The handle a started child carries, in the shape the platform half takes. */
+static child_handle handle_of(const process_handle *handle) {
+#ifdef _WIN32
+    return handle->process;
+#else
+    return handle->pid;
+#endif
+}
+
+int process_wait(process_handle *handle) {
+    if(handle == NULL || !handle->running)
+        return -1;
+    handle->running = false;
+    return child_wait(handle_of(handle));
+}
+
+void process_kill(process_handle *handle) {
+    if(handle == NULL || !handle->running)
+        return;
+    handle->running = false;
+    child_kill(handle_of(handle));
 }
 
 const char **process_argv_from_list(const str_list *list) {

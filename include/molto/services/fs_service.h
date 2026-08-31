@@ -159,6 +159,19 @@ void fs_to_one_separator(char *path);
  * failure as a warning rather than a failed build. */
 [[nodiscard]] bool fs_link(const char *target, const char *path);
 
+/* What `path` points at, when it is the kind of link that points at something.
+ *
+ * False on a Windows link, and that is the whole of the difference: `fs_link`
+ * makes a hard link there, which is a second name for the bytes rather than a
+ * note saying where they are. Nothing is being read back because there is
+ * nothing written down.
+ *
+ * The answer is verbatim — a relative target comes back relative, which is the
+ * property worth checking about the links beside a shared library: an absolute
+ * one would write this machine's build directory into an artifact meant to be
+ * copied elsewhere. */
+[[nodiscard]] bool fs_link_target(const char *path, char *out, size_t size);
+
 [[nodiscard]] bool fs_lock_take(const char *path, fs_lock *out);
 
 /* Let go of a lock. Safe on one that was never taken. */

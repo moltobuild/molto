@@ -83,6 +83,45 @@ typedef struct {
                                       size_t env_count, char *out, size_t out_size,
                                       bool *truncated);
 
+/* --- a child that outlives the call that started it --- */
+
+/* A child still running.
+ *
+ * What identifies it is the one thing in this header a platform decides: a pid
+ * on POSIX, an object handle on Windows, and the two are not the same size or
+ * the same kind of thing. No caller reads the field — they hand the whole
+ * struct back — so the `#ifdef` stays here and never reaches the code that
+ * starts anything (RFC-0017). */
+typedef struct {
+#ifdef _WIN32
+    void *process; /* HANDLE, opaque so callers need no windows.h */
+#else
+    int pid;
+#endif
+    bool running;
+} process_handle;
+
+/* Start `argv` and return without waiting for it. False if it could not be
+   started.
+ *
+ * Both output streams go to the platform's null device rather than being
+ * inherited: what this exists for is a service a test needs running in the
+ * background, and a server logging every request into the middle of a test
+ * report helps nobody. Nothing reads its output, which is the difference
+ * between this and every capture above.
+ *
+ * Every started handle must reach `process_wait` or `process_kill`, or the
+ * child is left behind — a zombie on POSIX, an open handle on Windows. */
+[[nodiscard]] bool process_start(const char *const argv[], process_handle *out);
+
+/* Wait for a started child and report how it went, in the same codes
+   process_execute returns. */
+int process_wait(process_handle *handle);
+
+/* End a started child and reap it. Safe on one that never started, and on one
+   that has already exited. */
+void process_kill(process_handle *handle);
+
 /* --- exchanging a document with a child process (RFC-0014) --- */
 
 /* How an exchange ended. The child's own exit code is a separate field, because
