@@ -55,3 +55,26 @@ MOLTEST(depfile) {
     EXPECT_TRUE(str_list_count(&bare) == 0);
     str_list_free(&bare);
 }
+
+MOLTEST(a_drive_letter_does_not_divide_a_depfile) {
+    /* What gcc writes on Windows. Three colons, and only the middle one is the
+       separator; splitting on the first leaves a prerequisite list that starts
+       with half of the target. */
+    const char *text = "D:/ws/build/debug/obj/main.c.o: D:/ws/src/main.c D:/ws/include/a.h\n";
+
+    str_list prereqs;
+    str_list_init(&prereqs);
+    ASSERT_TRUE(depfile_parse(text, &prereqs));
+
+#ifdef _WIN32
+    ASSERT_EQ(2, (int)str_list_count(&prereqs));
+    EXPECT_STREQ("D:/ws/src/main.c", str_list_get(&prereqs, 0));
+    EXPECT_STREQ("D:/ws/include/a.h", str_list_get(&prereqs, 1));
+#else
+    /* Here `D` is an ordinary one-letter target and its colon really is the
+       separator. Asserted rather than skipped, because the POSIX reading is
+       the one that must not change. */
+    EXPECT_STREQ("/ws/build/debug/obj/main.c.o:", str_list_get(&prereqs, 0));
+#endif
+    str_list_free(&prereqs);
+}
