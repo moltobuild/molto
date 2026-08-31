@@ -89,6 +89,7 @@ jobs:
       # what lets the next one run. Job-level `continue-on-error` does not do
       # that — it spares the workflow, not the steps after a red one.
       - name: Compile molto for Windows
+        id: sources
         continue-on-error: true
         run: |
           set +e
@@ -101,7 +102,16 @@ jobs:
       # Running them is half two's job. Building them is still worth doing
       # here, because the suite has POSIX of its own, and a port whose tests
       # cannot be compiled is a port that cannot be proven.
+      #
+      # Only once `src/` compiles, though, and that `if` is not caution. The
+      # test binary links every object under `src/`, so this step rebuilds them
+      # all before it reaches a single file under `tests/` — which meant it
+      # re-reported the same fourteen errors, the verdict added them to the
+      # fourteen it already had, and the job announced 28 errors that did not
+      # exist. A measurement that counts the same thing twice is worse than no
+      # measurement, because it looks like data.
       - name: Compile its suite for Windows
+        if: steps.sources.outcome == 'success'
         continue-on-error: true
         run: |
           set +e
@@ -111,6 +121,7 @@ jobs:
           exit $status
 
       - name: And it really is a Windows binary
+        if: steps.sources.outcome == 'success'
         continue-on-error: true
         run: file build/molto* | grep -q 'PE32+ executable'
 
