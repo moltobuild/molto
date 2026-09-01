@@ -51,17 +51,46 @@ typedef struct {
     bool had_cxx;
 } pickup_stub;
 
-static bool stub_write(const pickup_stub *stub, const char *answer, int exit_code) {
-    char script[2048];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "echo called >> %s\n"
-             "cat <<'ANSWER'\n%s\nANSWER\n"
-             "exit %d\n",
-             stub->log, answer, exit_code);
-    if (!fs_write_file(stub->program, script))
+/* The pickup molto asks for a compiler: it records the call, prints the answer
+   it was given, and leaves with the status it was told to. A real program --
+   the `#!/bin/sh` this used to write is a file Windows cannot start, and the
+   tests that installed it were the ones reporting `could not run pickup`. */
+MOLTEST_FAKE(fake_pickup_toolchain) {
+    (void)argc;
+    (void)argv;
+    const char *log = moltest_fake_setting("log");
+    FILE *file;
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        fprintf(file, "called\n");
+        (void)fclose(file);
+    }
+    const char *answer = moltest_fake_setting("answer");
+    if (answer != NULL) {
+        char *text = fs_read_file(answer);
+        if (text != NULL) {
+            printf("%s\n", text);
+            free(text);
+        }
+    }
+    const char *code = moltest_fake_setting("exit");
+    return code != NULL ? atoi(code) : 0;
+}
+
+static bool stub_write(pickup_stub *stub, const char *answer, int exit_code) {
+    char answer_path[MOLTEST_PATH];
+    if (snprintf(answer_path, sizeof answer_path, "%s.answer", stub->program)
+        >= (int)sizeof answer_path)
         return false;
-    return chmod(stub->program, 0755) == 0;
+    if (!fs_write_file(answer_path, answer))
+        return false;
+
+    char spec[2048];
+    if (snprintf(spec, sizeof spec,
+                 "set log %s\nset answer %s\nset exit %d\nbehave fake_pickup_toolchain\n",
+                 stub->log, answer_path, exit_code)
+        >= (int)sizeof spec)
+        return false;
+    return moltest_fake_program(stub->program, spec, stub->program, sizeof stub->program);
 }
 
 static bool stub_setup(pickup_stub *stub, const char *answer, int exit_code) {

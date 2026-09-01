@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/services/frontend_service.h>
+#include <molto/util/thread.h>
 #include <molto/services/fs_service.h>
 
 #include <stdio.h>
@@ -52,14 +53,80 @@ static void sandbox_teardown(sandbox *box) {
     (void)fs_remove_tree(box->root);
 }
 
+/*
+ * The plugin a frontend test installs: it drains its request the way the
+ * contract asks, prints the document it was given, and leaves with the status
+ * it was told to.
+ *
+ * A real program rather than a `#!/bin/sh` file. A shebang is honoured by the
+ * kernel and means nothing to CreateProcess, so every script here was a plugin
+ * Windows could not start -- and a frontend that cannot start is indomitable
+ * from a frontend that answered wrongly, which is what these tests are for.
+ */
+MOLTEST_FAKE(fake_frontend) {
+    /* Read to EOF first, which is what the contract asks of a real one: the
+       caller is writing a request and blocks until somebody takes it. */
+    (void)moltest_fake_input();
+
+    const char *log = moltest_fake_setting("log");
+    if(log != NULL) {
+        FILE *file = fopen(log, "wb");
+        if(file != NULL) {
+            fprintf(file, "argv1=%s\n", argc > 1 ? argv[1] : "");
+            fputs(moltest_fake_input(), file);
+            (void)fclose(file);
+        }
+    }
+
+    const char *hang = moltest_fake_setting("sleep_ms");
+    if(hang != NULL)
+        thread_sleep_ms((unsigned)atoi(hang));
+
+    const char *document = moltest_fake_setting("document");
+    if(document != NULL) {
+        char *text = fs_read_file(document);
+        if(text != NULL) {
+            printf("%s", text);
+            free(text);
+        }
+    }
+
+    const char *code = moltest_fake_setting("exit");
+    return code != NULL ? atoi(code) : 0;
+}
+
+/* Compose what that stub should do. The document travels in a file because a
+   spec line is one line and a document is many. */
+static bool frontend_spec(const sandbox *box, const char *document, int code, unsigned sleep_ms,
+                          const char *log, char *out, size_t size) {
+    static unsigned nth = 0;
+    char document_path[320] = "";
+    if(document != NULL) {
+        snprintf(document_path, sizeof document_path, "%s/document-%u", box->root, nth++);
+        if(!fs_write_file(document_path, document))
+            return false;
+    }
+
+    int written = snprintf(out, size, "set exit %d\n", code);
+    if(document != NULL)
+        written += snprintf(out + written, size - (size_t)written, "set document %s\n",
+                            document_path);
+    if(sleep_ms > 0)
+        written += snprintf(out + written, size - (size_t)written, "set sleep_ms %u\n", sleep_ms);
+    if(log != NULL)
+        written += snprintf(out + written, size - (size_t)written, "set log %s\n", log);
+    written += snprintf(out + written, size - (size_t)written, "behave fake_frontend\n");
+    return written > 0 && (size_t)written < size;
+}
+
 /* Install a plugin: the executable, and the recipe beside it that says what it
    may do. Both are needed — a binary with no recipe is not a candidate, because
    nothing recorded what it asked for. */
-static bool install(const sandbox *box, const char *name, const char *script,
+static bool install(const sandbox *box, const char *name, const char *spec,
                     const char *recipe) {
     char path[320];
     snprintf(path, sizeof path, "%s/molto-%s", box->installed, name);
-    if(!fs_write_file(path, script) || chmod(path, 0755) != 0)
+    if(!moltest_fake_program(path, spec, NULL, 0))
         return false;
 
     char recipe_path[320];
@@ -92,14 +159,10 @@ static void frontend_recipe(char *out, size_t size, const char *name, const char
    request to EOF first, which is what the contract asks of a real one. */
 static void answering_script(char *out, size_t size, const char *origin) {
     snprintf(out, size,
-             "#!/bin/sh\n"
-             "cat > /dev/null\n"
-             "cat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{"
              "\"name\":\"app\",\"version\":\"0.1.0\",\"root\":\"%%ROOT%%\","
              "\"origin\":\"%s\",\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
-             "\"sources\":[{\"path\":\"src/main.c\",\"language\":\"c\"}]}]}]}\n"
-             "DOC\n",
+             "\"sources\":[{\"path\":\"src/main.c\",\"language\":\"c\"}]}]}]}\n",
              origin);
 }
 
@@ -118,9 +181,13 @@ static bool install_answering(const sandbox *box, const char *name, const char *
     snprintf(patched, sizeof patched, "%.*s%s%s", (int)(at - script), script, box->project,
              at + strlen("%ROOT%"));
 
+    char spec[1024];
+    if(!frontend_spec(box, patched, 0, 0, NULL, spec, sizeof spec))
+        return false;
+
     char recipe[1024];
     frontend_recipe(recipe, sizeof recipe, name, extension, IR_SCHEMA, "0.1.0");
-    return install(box, name, patched, recipe);
+    return install(box, name, spec, recipe);
 }
 
 /* Put the file that makes a plugin a candidate into the project directory. */
@@ -178,7 +245,7 @@ MOLTEST(frontend_candidates_skips_a_plugin_that_is_not_a_frontend) {
     char *at = strstr(recipe, "\"frontend\"");
     ASSERT_NOT_NULL(at);
     memcpy(at, "\"packager\"", strlen("\"packager\""));
-    ASSERT_TRUE(install(&box, "deb", "#!/bin/sh\nexit 0\n", recipe));
+    ASSERT_TRUE(install(&box, "deb", "exit 0\n", recipe));
     ASSERT_TRUE(touch_entry(&box, "meson.build"));
 
     frontend_choice found[FRONTEND_MAX_CANDIDATES];
@@ -262,6 +329,25 @@ MOLTEST(frontend_reads_the_document_a_plugin_returns) {
 }
 
 /* Install a plugin whose script is given outright, and ask it. */
+/* Three shapes used inline, each returning a spec that lives long enough for
+   the call it is handed to. */
+static const char *spec_exiting(const sandbox *box, int code) {
+    static char spec[512];
+    return frontend_spec(box, NULL, code, 0, NULL, spec, sizeof spec) ? spec : "exit 1\n";
+}
+
+static const char *spec_printing(const sandbox *box, const char *text) {
+    static char spec[512];
+    return frontend_spec(box, text, 0, 0, NULL, spec, sizeof spec) ? spec : "exit 1\n";
+}
+
+/* Longer than the one-second timeout ask_script allows, so the caller has to be
+   what stops it. */
+static const char *spec_hanging(const sandbox *box) {
+    static char spec[512];
+    return frontend_spec(box, NULL, 0, 60000u, NULL, spec, sizeof spec) ? spec : "exit 1\n";
+}
+
 static frontend_result ask_script(sandbox *box, const char *script, ir_document *out, char *err,
                                   size_t err_size) {
     char recipe[1024];
@@ -292,7 +378,7 @@ MOLTEST(frontend_treats_exit_three_as_declining) {
     ir_document doc;
     char err[1024] = "";
     EXPECT_EQ(frontend_none,
-              ask_script(&box, "#!/bin/sh\ncat > /dev/null\nexit 3\n", &doc, err, sizeof err));
+              ask_script(&box, spec_exiting(&box, 3), &doc, err, sizeof err));
 
     ir_document_free(&doc);
     sandbox_teardown(&box);
@@ -305,7 +391,7 @@ MOLTEST(frontend_fails_on_any_other_exit) {
     ir_document doc;
     char err[1024] = "";
     EXPECT_EQ(frontend_failed,
-              ask_script(&box, "#!/bin/sh\ncat > /dev/null\nexit 1\n", &doc, err, sizeof err));
+              ask_script(&box, spec_exiting(&box, 1), &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "exited 1"));
 
     ir_document_free(&doc);
@@ -323,9 +409,7 @@ MOLTEST(frontend_refuses_a_banner_on_standard_output) {
     char err[1024] = "";
     EXPECT_EQ(frontend_failed,
               ask_script(&box,
-                         "#!/bin/sh\ncat > /dev/null\n"
-                         "echo 'molto-meson 0.1.0'\n"
-                         "echo '{\"schema\":3}'\n",
+                         spec_printing(&box, "molto-meson 0.1.0\n{\"schema\":3}\n"),
                          &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "JSON"));
 
@@ -370,15 +454,16 @@ MOLTEST(frontend_refuses_a_document_reporting_no_files_read) {
 
     char script[2048];
     snprintf(script, sizeof script,
-             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[],\"projects\":[{\"name\":\"app\","
-             "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\"}]}\n"
-             "DOC\n",
-             box.project);
+             "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\"}]}\n",
+                      box.project);
+
+    char spec[2048];
+    ASSERT_TRUE(frontend_spec(&box, script, 0, 0, NULL, spec, sizeof spec));
 
     ir_document doc;
     char err[1024] = "";
-    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_EQ(frontend_failed, ask_script(&box, spec, &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "files read"));
 
     ir_document_free(&doc);
@@ -393,17 +478,18 @@ MOLTEST(frontend_validates_before_it_hands_a_document_back) {
 
     char script[2048];
     snprintf(script, sizeof script,
-             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
-             "\"sources\":[{\"path\":\"../../etc/shadow\",\"language\":\"c\"}]}]}]}\n"
-             "DOC\n",
-             box.project);
+             "\"sources\":[{\"path\":\"../../etc/shadow\",\"language\":\"c\"}]}]}]}\n",
+                      box.project);
+
+    char spec[2048];
+    ASSERT_TRUE(frontend_spec(&box, script, 0, 0, NULL, spec, sizeof spec));
 
     ir_document doc;
     char err[1024] = "";
-    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_EQ(frontend_failed, ask_script(&box, spec, &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "outside the workspace"));
 
     ir_document_free(&doc);
@@ -420,17 +506,18 @@ MOLTEST(frontend_refuses_a_plugin_that_names_a_dependency) {
 
     char script[2048];
     snprintf(script, sizeof script,
-             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\",\"targets\":[],"
              "\"dependencies\":[{\"name\":\"z\",\"version\":\"1.0.0\",\"origin\":\"registry\","
-             "\"scope\":\"runtime\",\"root\":\"%s\"}]}]}\n"
-             "DOC\n",
+             "\"scope\":\"runtime\",\"root\":\"%s\"}]}]}\n",
              box.project, box.project);
+
+    char spec[2048];
+    ASSERT_TRUE(frontend_spec(&box, script, 0, 0, NULL, spec, sizeof spec));
 
     ir_document doc;
     char err[1024] = "";
-    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_EQ(frontend_failed, ask_script(&box, spec, &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "not its graph"));
     /* Singular, because one dependency is one dependency. */
     EXPECT_NOT_NULL(strstr(err, "naming 1 dependency"));
@@ -447,17 +534,18 @@ MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
 
     char script[2048];
     snprintf(script, sizeof script,
-             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
              "\"targets\":[{\"name\":\"app\",\"kind\":\"executable\","
-             "\"options\":[{\"value\":\"-fplugin=/tmp/x.so\",\"scope\":\"target\"}]}]}]}\n"
-             "DOC\n",
-             box.project);
+             "\"options\":[{\"value\":\"-fplugin=/tmp/x.so\",\"scope\":\"target\"}]}]}]}\n",
+                      box.project);
+
+    char spec[2048];
+    ASSERT_TRUE(frontend_spec(&box, script, 0, 0, NULL, spec, sizeof spec));
 
     ir_document doc;
     char err[1024] = "";
-    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_EQ(frontend_failed, ask_script(&box, spec, &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "a plugin may not"));
 
     ir_document_free(&doc);
@@ -473,16 +561,17 @@ MOLTEST(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
 
     char script[2048];
     snprintf(script, sizeof script,
-             "#!/bin/sh\ncat > /dev/null\ncat <<'DOC'\n"
              "{\"schema\":3,\"files_read\":[\"meson.build\"],\"projects\":[{\"name\":\"app\","
              "\"version\":\"0.1.0\",\"root\":\"%s\",\"origin\":\"meson\","
-             "\"steps\":[{\"name\":\"gen\",\"program\":\"sh\",\"args\":[\"-c\",\"rm -rf ~\"]}]}]}\n"
-             "DOC\n",
-             box.project);
+             "\"steps\":[{\"name\":\"gen\",\"program\":\"sh\",\"args\":[\"-c\",\"rm -rf ~\"]}]}]}\n",
+                      box.project);
+
+    char spec[2048];
+    ASSERT_TRUE(frontend_spec(&box, script, 0, 0, NULL, spec, sizeof spec));
 
     ir_document doc;
     char err[1024] = "";
-    EXPECT_EQ(frontend_failed, ask_script(&box, script, &doc, err, sizeof err));
+    EXPECT_EQ(frontend_failed, ask_script(&box, spec, &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "BuildStep"));
 
     ir_document_free(&doc);
@@ -498,7 +587,7 @@ MOLTEST(frontend_stops_a_plugin_that_never_answers) {
     ir_document doc;
     char err[1024] = "";
     EXPECT_EQ(frontend_failed,
-              ask_script(&box, "#!/bin/sh\nsleep 60\n", &doc, err, sizeof err));
+              ask_script(&box, spec_hanging(&box), &doc, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "was stopped"));
 
     ir_document_free(&doc);
@@ -516,9 +605,8 @@ MOLTEST(frontend_tells_the_plugin_which_directory_and_which_file) {
     char log[320];
     snprintf(log, sizeof log, "%s/request", box.root);
 
-    char script[1024];
-    snprintf(script, sizeof script, "#!/bin/sh\necho \"argv1=$1\" > %s\ncat >> %s\nexit 3\n", log,
-             log);
+    static char script[1024];
+    ASSERT_TRUE(frontend_spec(&box, NULL, 3, 0, log, script, sizeof script));
 
     ir_document doc;
     char err[1024] = "";

@@ -29,27 +29,83 @@ typedef struct {
     bool had_pickup;
 } lint_fixture;
 
-/* A stub that logs its argv, echoes a canned transcript, and — like a real
-   compiler — honours -MF by writing a dependency list. The cache reads that
-   list to learn which headers a file included (RFC-0006); without it there is
-   nothing to watch and nothing is ever recorded. */
+/* True if `text` ends with `suffix`. */
+static bool ends_with(const char *text, const char *suffix) {
+    const size_t length = strlen(text), tail = strlen(suffix);
+    return length >= tail && strcmp(text + length - tail, suffix) == 0;
+}
+
+/*
+ * A stub that logs its argv, echoes a canned transcript, and — like a real
+ * compiler — honours -MF by writing a dependency list. The cache reads that
+ * list to learn which headers a file included (RFC-0006); without it there is
+ * nothing to watch and nothing is ever recorded.
+ *
+ * The transcript travels in a file rather than in a setting: a setting is one
+ * line and a compiler's output is many.
+ */
+MOLTEST_FAKE(fake_lint_compiler) {
+    const char *log = moltest_fake_setting("log");
+    FILE *file;
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        for (int i = 1; i < argc; i++)
+            fprintf(file, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
+        (void)fclose(file);
+    }
+
+    const char *src = NULL, *dep = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-MF") == 0 && i + 1 < argc)
+            dep = argv[++i];
+        else if (ends_with(argv[i], ".c"))
+            src = argv[i];
+    }
+    if (dep != NULL && src != NULL && (file = fopen(dep, "wb")) != NULL) {
+        fprintf(file, "out.o: %s\n", src);
+        (void)fclose(file);
+    }
+
+    /* The edit an editor makes while the compiler is still running. */
+    const char *edit = moltest_fake_setting("edit");
+    if (edit != NULL && src != NULL && (file = fopen(src, "ab")) != NULL) {
+        fprintf(file, "%s\n", edit);
+        (void)fclose(file);
+    }
+
+    const char *transcript = moltest_fake_setting("transcript");
+    const char *stream = moltest_fake_setting("stream");
+    if (transcript != NULL) {
+        char *text = fs_read_file(transcript);
+        if (text != NULL) {
+            fprintf(stream != NULL && strcmp(stream, "2") == 0 ? stderr : stdout, "%s\n", text);
+            free(text);
+        }
+    }
+
+    const char *code = moltest_fake_setting("exit");
+    return code != NULL ? atoi(code) : 0;
+}
+
 static bool write_stub(const char *path, const char *log, const char *transcript,
                        const char *stream, int exit_code) {
-    char script[2048];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "echo \"$@\" >> %s\n"
-             "src=''; dep=''; prev=''\n"
-             "for a in \"$@\"; do\n"
-             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
-             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
-             "  prev=\"$a\"\n"
-             "done\n"
-             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"out.o: $src\" > \"$dep\"\n"
-             "cat >&%s <<'TRANSCRIPT'\n%s\nTRANSCRIPT\n"
-             "exit %d\n",
-             log, stream, transcript, exit_code);
-    return fs_write_file(path, script) && chmod(path, 0755) == 0;
+    char transcript_path[MOLTEST_PATH];
+    if (snprintf(transcript_path, sizeof transcript_path, "%s.transcript", path)
+        >= (int)sizeof transcript_path)
+        return false;
+    if (!fs_write_file(transcript_path, transcript))
+        return false;
+
+    char spec[2048];
+    if (snprintf(spec, sizeof spec,
+                 "set log %s\n"
+                 "set transcript %s\n"
+                 "set stream %s\n"
+                 "set exit %d\n"
+                 "behave fake_lint_compiler\n",
+                 log, transcript_path, stream, exit_code)
+        >= (int)sizeof spec)
+        return false;
+    return moltest_fake_program(path, spec, NULL, 0);
 }
 
 static bool write_file(const char *root, const char *relative, const char *body) {
@@ -266,16 +322,20 @@ MOLTEST(lint_analyses_against_what_the_dependencies_export) {
 /* A pkg-config that answers for one made-up toolkit, so these tests do not
    depend on what this machine has installed. It volunteers options that are not
    include or link flags, because dropping those is part of the contract. */
+MOLTEST_FAKE(fake_pkg_config) {
+    if (argc < 2)
+        return 0;
+    if (strcmp(argv[1], "--exists") == 0)
+        return argc > 2 && strcmp(argv[2], "toykit") == 0 ? 0 : 1;
+    if (strcmp(argv[1], "--modversion") == 0)
+        printf("1.2.3\n");
+    else if (strcmp(argv[1], "--cflags") == 0)
+        printf("-I/opt/toykit/include -pthread -D_REENTRANT\n");
+    return 0;
+}
+
 static bool write_resolver(const char *path) {
-    static const char *const script =
-        "#!/bin/sh\n"
-        "case \"$1\" in\n"
-        "  --exists) [ \"$2\" = \"toykit\" ] && exit 0 || exit 1 ;;\n"
-        "  --modversion) echo 1.2.3 ;;\n"
-        "  --cflags) echo '-I/opt/toykit/include -pthread -D_REENTRANT' ;;\n"
-        "esac\n"
-        "exit 0\n";
-    return fs_write_file(path, script) && chmod(path, 0755) == 0;
+    return moltest_fake_program(path, "behave fake_pkg_config\n", NULL, 0);
 }
 
 MOLTEST(lint_analyses_against_what_the_host_provides) {
@@ -624,22 +684,21 @@ MOLTEST(lint_does_not_record_a_result_for_content_that_is_already_gone) {
 
     /* A compiler slow enough for the file to be edited while it runs, which is
        what an editor saving during a lint does. */
-    char script[1024];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "echo \"$@\" >> %s\n"
-             "src=''; dep=''; prev=''\n"
-             "for a in \"$@\"; do\n"
-             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
-             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
-             "  prev=\"$a\"\n"
-             "done\n"
-             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"out.o: $src\" > \"$dep\"\n"
-             "echo 'int changed_while_running(void);' >> \"$src\"\n"
-             "echo '%s' >&2\n",
-             fixture.log, "src/main.c:1:16: warning: unused variable 'x' [-Wunused-variable]");
-    ASSERT_TRUE(fs_write_file(fixture.compiler, script));
-    ASSERT_TRUE(chmod(fixture.compiler, 0755) == 0);
+    char transcript_path[MOLTEST_PATH];
+    snprintf(transcript_path, sizeof transcript_path, "%s.transcript", fixture.compiler);
+    ASSERT_TRUE(fs_write_file(
+        transcript_path, "src/main.c:1:16: warning: unused variable 'x' [-Wunused-variable]"));
+
+    char spec[1024];
+    snprintf(spec, sizeof spec,
+             "set log %s\n"
+             "set transcript %s\n"
+             "set stream 2\n"
+             "set exit 0\n"
+             "set edit int changed_while_running(void);\n"
+             "behave fake_lint_compiler\n",
+             fixture.log, transcript_path);
+    ASSERT_TRUE(moltest_fake_program(fixture.compiler, spec, NULL, 0));
 
     diagnostic_list first;
     ASSERT_EQ(exit_ok, run_lint(&fixture, &first));

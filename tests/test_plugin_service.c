@@ -61,17 +61,34 @@ static void sandbox_teardown(sandbox *box) {
 /* Write an executable `molto-<name>` into `dir` that records how it was called
    and exits with `code`. Output goes to the log rather than to the terminal,
    so a passing suite stays quiet. */
+/* A plugin that records the directory it was found in and the arguments it was
+   handed, then leaves with the status it was told to. A real program: a
+   `#!/bin/sh` file is not something CreateProcess can start. */
+MOLTEST_FAKE(fake_plugin) {
+    const char *log = moltest_fake_setting("log");
+    const char *dir = moltest_fake_setting("dir");
+    FILE *file;
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        fprintf(file, "%s", dir != NULL ? dir : "");
+        for (int i = 1; i < argc; i++)
+            fprintf(file, " %s", argv[i]);
+        fprintf(file, "\n");
+        (void)fclose(file);
+    }
+    const char *code = moltest_fake_setting("exit");
+    return code != NULL ? atoi(code) : 0;
+}
+
 static bool plant(const sandbox *box, const char *dir, const char *name, int code) {
     char path[320];
     snprintf(path, sizeof path, "%s/molto-%s", dir, name);
 
-    char script[1024];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "echo \"%s $*\" >> %s\n"
-             "exit %d\n",
-             dir, box->log, code);
-    return fs_write_file(path, script) && chmod(path, 0755) == 0;
+    char spec[1024];
+    if (snprintf(spec, sizeof spec, "set log %s\nset dir %s\nset exit %d\nbehave fake_plugin\n",
+                 box->log, dir, code)
+        >= (int)sizeof spec)
+        return false;
+    return moltest_fake_program(path, spec, NULL, 0);
 }
 
 /* The single line the stub wrote, or "" when it never ran. */

@@ -44,7 +44,9 @@ static void home_teardown(home *box) {
 static bool install(const home *box, const char *name) {
     char path[320];
     snprintf(path, sizeof path, "%s/molto-%s", box->bin, name);
-    return fs_write_file(path, "#!/bin/sh\nexit 0\n") && chmod(path, 0755) == 0;
+    /* A real program, not a `#!/bin/sh` file: a shebang is honoured by the
+       kernel and ignored by CreateProcess. */
+    return moltest_fake_program(path, "exit 0\n", NULL, 0);
 }
 
 MOLTEST(plugin_command_lists_an_empty_machine_without_failing) {

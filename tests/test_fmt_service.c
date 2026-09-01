@@ -22,37 +22,95 @@ typedef struct {
     bool had_previous;
 } fmt_fixture;
 
-/* Behaves like clang-format: --dry-run reports and exits 1, -i rewrites, and
-   plain invocation prints the formatted file. "Formatting" here is replacing
-   two leading spaces with four, which is enough to be observable. */
-static const char stub_script[] =
-    "#!/bin/sh\n"
-    "echo \"$@\" >> %s\n"
-    "mode=print\n"
-    "file=\n"
-    "for arg in \"$@\"; do\n"
-    "  case \"$arg\" in\n"
-    "    --dry-run) mode=check ;;\n"
-    "    -i) mode=write ;;\n"
-    "    --style=*|--Werror) ;;\n"
-    "    *) file=\"$arg\" ;;\n"
-    "  esac\n"
-    "done\n"
-    /* Two leading spaces become four, and only when they are the whole
-       indentation: formatting an already formatted file has to be a no-op, or
-       nothing that follows means anything. */
-    "formatted=$(sed 's/^  \\([^ ]\\)/    \\1/' \"$file\")\n"
-    "if [ \"$formatted\" = \"$(cat \"$file\")\" ]; then\n"
-    "  [ \"$mode\" = print ] && printf '%%s\\n' \"$formatted\"\n"
-    "  exit 0\n"
-    "fi\n"
-    "case $mode in\n"
-    "  check) echo \"$file:1:3: error: code should be clang-formatted"
-    " [-Wclang-format-violations]\" >&2; exit 1 ;;\n"
-    "  write) printf '%%s\\n' \"$formatted\" > \"$file\" ;;\n"
-    "  print) printf '%%s\\n' \"$formatted\" ;;\n"
-    "esac\n"
-    "exit 0\n";
+/*
+ * Behaves like clang-format: --dry-run reports and exits 1, -i rewrites, and a
+ * plain invocation prints the formatted file. "Formatting" here is replacing
+ * two leading spaces with four, which is enough to be observable.
+ *
+ * Written in C rather than as a `#!/bin/sh` file, because a shebang is a thing
+ * the kernel honours and CreateProcess does not.
+ */
+static bool reindent(const char *text, char *out, size_t size) {
+    size_t written = 0;
+    bool at_line_start = true;
+    for (const char *cursor = text; *cursor != '\0'; cursor++) {
+        /* Two leading spaces become four, and only when they are the whole
+           indentation: formatting an already formatted file has to be a no-op,
+           or nothing that follows means anything. */
+        if (at_line_start && cursor[0] == ' ' && cursor[1] == ' ' && cursor[2] != ' ') {
+            if (written + 4 >= size)
+                return false;
+            memcpy(out + written, "    ", 4);
+            written += 4;
+            cursor++;
+            at_line_start = false;
+            continue;
+        }
+        if (written + 1 >= size)
+            return false;
+        at_line_start = *cursor == '\n';
+        out[written++] = *cursor;
+    }
+    out[written] = '\0';
+    return true;
+}
+
+MOLTEST_FAKE(fake_clang_format) {
+    const char *log = moltest_fake_setting("log");
+    FILE *file;
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        for (int i = 1; i < argc; i++)
+            fprintf(file, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
+        (void)fclose(file);
+    }
+
+    enum { mode_print, mode_check, mode_write } mode = mode_print;
+    const char *path = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--dry-run") == 0)
+            mode = mode_check;
+        else if (strcmp(argv[i], "-i") == 0)
+            mode = mode_write;
+        else if (strncmp(argv[i], "--style=", 8) != 0 && strcmp(argv[i], "--Werror") != 0)
+            path = argv[i];
+    }
+    if (path == NULL)
+        return 0;
+
+    char *text = fs_read_file(path);
+    if (text == NULL)
+        return 0;
+
+    char formatted[16384];
+    const bool ok = reindent(text, formatted, sizeof formatted);
+    const bool unchanged = ok && strcmp(formatted, text) == 0;
+    free(text);
+    if (!ok)
+        return 0;
+
+    if (unchanged) {
+        if (mode == mode_print)
+            printf("%s", formatted);
+        return 0;
+    }
+
+    switch (mode) {
+    case mode_check:
+        fprintf(stderr, "%s:1:3: error: code should be clang-formatted"
+                        " [-Wclang-format-violations]\n", path);
+        return 1;
+    case mode_write:
+        if ((file = fopen(path, "wb")) != NULL) {
+            fputs(formatted, file);
+            (void)fclose(file);
+        }
+        return 0;
+    case mode_print:
+        printf("%s", formatted);
+        return 0;
+    }
+    return 0;
+}
 
 static bool write_source(const char *root, const char *relative, const char *body) {
     char path[256];
@@ -81,11 +139,13 @@ static bool fixture_setup(fmt_fixture *fixture) {
     if (existing != NULL)
         snprintf(fixture->previous, sizeof fixture->previous, "%s", existing);
 
-    char script[4096];
-    snprintf(script, sizeof script, stub_script, fixture->log);
+    char spec[1024];
+    if (snprintf(spec, sizeof spec, "set log %s\nbehave fake_clang_format\n", fixture->log)
+        >= (int)sizeof spec)
+        return false;
 
-    return fs_write_file(fixture->program, script)
-        && chmod(fixture->program, 0755) == 0
+    return moltest_fake_program(fixture->program, spec, fixture->program,
+                                sizeof fixture->program)
         && setenv("MOLTO_CLANG_FORMAT", fixture->program, 1) == 0
         && write_source(fixture->root, "Project.toml",
                         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n")

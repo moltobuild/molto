@@ -435,6 +435,56 @@ MOLTEST(build_anchors_relative_includes_at_the_project_root) {
     (void)fs_remove_tree(root);
 }
 
+/* True if `text` ends with `suffix`. */
+static bool ends_with(const char *text, const char *suffix) {
+    const size_t length = strlen(text), tail = strlen(suffix);
+    return length >= tail && strcmp(text + length - tail, suffix) == 0;
+}
+
+/*
+ * A compiler that edits its own input while it "compiles" it.
+ *
+ * A real program rather than a `#!/bin/sh` file, because a shebang is a thing
+ * the kernel honours and CreateProcess does not: on Windows the script never
+ * ran, the build failed, and the test that installed it returned before
+ * restoring C_COMPILER.
+ *
+ * It writes the object and the dependency list first, so the build itself
+ * succeeds and what is under test is what the build then records.
+ */
+MOLTEST_FAKE(fake_racing_compiler) {
+    const char *out = NULL, *dep = NULL, *src = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc)
+            out = argv[++i];
+        else if (strcmp(argv[i], "-MF") == 0 && i + 1 < argc)
+            dep = argv[++i];
+        else if (ends_with(argv[i], ".c"))
+            src = argv[i];
+    }
+
+    FILE *file;
+    if (out != NULL && (file = fopen(out, "wb")) != NULL)
+        (void)fclose(file);
+    if (dep != NULL && src != NULL && (file = fopen(dep, "wb")) != NULL) {
+        fprintf(file, "o: %s\n", src);
+        (void)fclose(file);
+    }
+    /* The edit that gives this stub its name: the source on disk is no longer
+       what the object was built from. */
+    if (src != NULL && (file = fopen(src, "ab")) != NULL) {
+        fprintf(file, "/* edited mid-build */\n");
+        (void)fclose(file);
+    }
+
+    const char *log = moltest_fake_setting("log");
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        fprintf(file, "x\n");
+        (void)fclose(file);
+    }
+    return 0;
+}
+
 /* Put C_COMPILER back the way it was found. The test below points it at a
    stub compiler, and unsetting it afterwards is not the same as restoring it:
    on a machine that reaches its compiler through C_COMPILER rather than
@@ -470,53 +520,51 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
     /* A compiler that edits its own input, which is what an editor saving
        during a build looks like from here. It produces the object and the
        dependency list first, so the build itself succeeds. */
-    char compiler[512];
-    snprintf(compiler, sizeof compiler, "%s/cc", tools);
-    char script[1536];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "out=''; dep=''; src=''; prev=''; log=%s/calls\n"
-             "for a in \"$@\"; do\n"
-             "  [ \"$prev\" = '-o' ] && out=\"$a\"\n"
-             "  [ \"$prev\" = '-MF' ] && dep=\"$a\"\n"
-             "  case \"$a\" in *.c) src=\"$a\";; esac\n"
-             "  prev=\"$a\"\n"
-             "done\n"
-             "[ -n \"$out\" ] && : > \"$out\"\n"
-             "[ -n \"$dep\" ] && [ -n \"$src\" ] && echo \"o: $src\" > \"$dep\"\n"
-             "[ -n \"$src\" ] && echo '/* edited mid-build */' >> \"$src\"\n"
-             "echo x >> $log\n",
-             tools);
-    ASSERT_TRUE(fs_write_file(compiler, script));
-    ASSERT_TRUE(chmod(compiler, 0755) == 0);
+    char log[512];
+    snprintf(log, sizeof log, "%s/calls", tools);
+    char spec[1024];
+    snprintf(spec, sizeof spec, "set log %s\nbehave fake_racing_compiler\n", log);
+
+    char wanted[512];
+    snprintf(wanted, sizeof wanted, "%s/cc", tools);
+    char compiler[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_fake_program(wanted, spec, compiler, sizeof compiler));
+
     char saved_cc[4096];
     bool had_cc;
     remember_env("C_COMPILER", saved_cc, sizeof saved_cc, &had_cc);
     ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
 
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
-
-    char log[512];
-    snprintf(log, sizeof log, "%s/calls", tools);
+    /* Both builds run before anything is asserted, and the environment goes
+       back before that. An ASSERT returns from the test, so one placed between
+       here and the restore leaves C_COMPILER pointing at this stub for every
+       test that follows -- which is the failure this file's own remember_env
+       comment warns about, and which turned one broken stub on Windows into
+       forty-eight red cases. */
+    const int first_build = build_project(root, profile_debug, NULL, false, 0, NULL, 0);
     char *first = fs_read_file(log);
-    ASSERT_NOT_NULL(first);
-    size_t after_first = strlen(first);
+    const size_t after_first = first != NULL ? strlen(first) : 0;
     free(first);
 
     /* The object holds a compilation of content that is no longer on disk.
        Recording it would leave nothing to rebuild it, and the next link would
        quietly take the stale object — which is how a test suite ends up
        running against code that was already changed. */
-    ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
+    const int second_build = build_project(root, profile_debug, NULL, false, 0, NULL, 0);
     char *second = fs_read_file(log);
-    ASSERT_NOT_NULL(second);
-    EXPECT_TRUE(strlen(second) > after_first);
+    const size_t after_second = second != NULL ? strlen(second) : 0;
+    const bool second_ran = second != NULL;
     free(second);
 
     restore_env("C_COMPILER", saved_cc, had_cc);
-    char cmd[512];
     (void)fs_remove_tree(root);
     (void)fs_remove_tree(tools);
+
+    ASSERT_EQ(exit_ok, first_build);
+    ASSERT_TRUE(after_first > 0);
+    ASSERT_EQ(exit_ok, second_build);
+    ASSERT_TRUE(second_ran);
+    EXPECT_TRUE(after_second > after_first);
 }
 
 /* The whole point of scoping flags, checked by the compiler rather than by
