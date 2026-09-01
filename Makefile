@@ -21,6 +21,11 @@ VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
 # own conforming implementation, and has to be set before <stdio.h> — which a
 # -D does and a #define in one file cannot. Nothing on Linux reads it.
 CFLAGS ?= -std=$(STD) -D_DEFAULT_SOURCE -D__USE_MINGW_ANSI_STDIO=1 -Wall -Wextra -Wpedantic -pthread -Iinclude
+# Every object depends on Project.toml, and so does the test binary, because
+# this define is the one input to a build that no source file mentions. The
+# header dependencies below solve the same problem for headers; without the
+# same treatment here, releasing edits the manifest, nothing looks out of date,
+# and the binary keeps answering with the version it was first compiled at.
 CFLAGS += -DMOLTO_PKG_VERSION='"$(VERSION)"'
 
 # For a caller that wants to add to the build rather than replace it: -Werror,
@@ -59,7 +64,7 @@ $(BIN): $(LIB_OBJ) $(MAIN_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/%.o: %.c
+$(BUILD_DIR)/%.o: %.c Project.toml
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -75,7 +80,7 @@ run: build
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-$(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC)
+$(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(MOLTEST_DIR)/include $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) \
 	    -o $@ $(LDFLAGS)
