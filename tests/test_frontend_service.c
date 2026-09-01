@@ -4,6 +4,7 @@
 #include <molto/util/thread.h>
 #include <molto/services/fs_service.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,6 +96,23 @@ MOLTEST_FAKE(fake_frontend) {
     return code != NULL ? atoi(code) : 0;
 }
 
+/* Append one line to a spec, refusing rather than truncating. */
+[[gnu::format(printf, 4, 5)]]
+static bool spec_append(char *out, size_t size, size_t *used, const char *format, ...) {
+    if(*used >= size)
+        return false;
+
+    va_list args;
+    va_start(args, format);
+    const int written = vsnprintf(out + *used, size - *used, format, args);
+    va_end(args);
+
+    if(written < 0 || (size_t)written >= size - *used)
+        return false;
+    *used += (size_t)written;
+    return true;
+}
+
 /* Compose what that stub should do. The document travels in a file because a
    spec line is one line and a document is many. */
 static bool frontend_spec(const sandbox *box, const char *document, int code, unsigned sleep_ms,
@@ -107,16 +125,23 @@ static bool frontend_spec(const sandbox *box, const char *document, int code, un
             return false;
     }
 
-    int written = snprintf(out, size, "set exit %d\n", code);
-    if(document != NULL)
-        written += snprintf(out + written, size - (size_t)written, "set document %s\n",
-                            document_path);
-    if(sleep_ms > 0)
-        written += snprintf(out + written, size - (size_t)written, "set sleep_ms %u\n", sleep_ms);
-    if(log != NULL)
-        written += snprintf(out + written, size - (size_t)written, "set log %s\n", log);
-    written += snprintf(out + written, size - (size_t)written, "behave fake_frontend\n");
-    return written > 0 && (size_t)written < size;
+    /* Every line is appended through here, and a line that does not fit stops
+       the whole thing. `snprintf` reports what it *would* have written, so
+       adding its return to an offset walks past the end of the buffer the
+       moment one truncates -- and the next call is then handed a pointer
+       outside the array and a length that underflowed to something enormous.
+       Windows found this before Linux did: its temporary paths are long enough
+       to truncate a spec that fits comfortably under /tmp. */
+    size_t used = 0;
+    if(!spec_append(out, size, &used, "set exit %d\n", code))
+        return false;
+    if(document != NULL && !spec_append(out, size, &used, "set document %s\n", document_path))
+        return false;
+    if(sleep_ms > 0 && !spec_append(out, size, &used, "set sleep_ms %u\n", sleep_ms))
+        return false;
+    if(log != NULL && !spec_append(out, size, &used, "set log %s\n", log))
+        return false;
+    return spec_append(out, size, &used, "behave fake_frontend\n");
 }
 
 /* Install a plugin: the executable, and the recipe beside it that says what it
@@ -332,19 +357,19 @@ MOLTEST(frontend_reads_the_document_a_plugin_returns) {
 /* Three shapes used inline, each returning a spec that lives long enough for
    the call it is handed to. */
 static const char *spec_exiting(const sandbox *box, int code) {
-    static char spec[512];
+    static char spec[1024];
     return frontend_spec(box, NULL, code, 0, NULL, spec, sizeof spec) ? spec : "exit 1\n";
 }
 
 static const char *spec_printing(const sandbox *box, const char *text) {
-    static char spec[512];
+    static char spec[1024];
     return frontend_spec(box, text, 0, 0, NULL, spec, sizeof spec) ? spec : "exit 1\n";
 }
 
 /* Longer than the one-second timeout ask_script allows, so the caller has to be
    what stops it. */
 static const char *spec_hanging(const sandbox *box) {
-    static char spec[512];
+    static char spec[1024];
     return frontend_spec(box, NULL, 0, 60000u, NULL, spec, sizeof spec) ? spec : "exit 1\n";
 }
 
