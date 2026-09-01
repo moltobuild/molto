@@ -256,8 +256,19 @@ jobs:
       # that ever reached this step reported 680 passed and 163 failed, and
       # every gate above it was green: without this, the badge would have gone
       # green over that.
+      # `C_COMPILER` for the third time, and for the reason the two steps above
+      # give: pickup on Windows is its own port with its own tally, and a red
+      # here has to be attributable to molto. Without it the suite is the only
+      # step that asks pickup, pickup is not on this runner, and every case
+      # that builds, formats or lints anything fails saying so -- 33 of them on
+      # Linux with pickup taken off the PATH, against 1 with these two set. The
+      # number this step reports was measuring the absence of pickup, not the
+      # state of the port.
       - name: Run the suite (watched, not yet a gate)
         continue-on-error: true
+        env:
+          C_COMPILER: gcc
+          CPP_COMPILER: g++
         run: |
           set +e
           make test CC=gcc 2>&1 | tee suite.log
