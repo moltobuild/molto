@@ -39,6 +39,29 @@ typedef struct {
     "version = \"LLVM version 22.1.8\"\n" \
     "source = \"pickup\"\n"
 
+/* The pickup molto asks for a tool: it records that it was called and prints
+   the answer it was given. A real program, because a shebang means nothing to
+   CreateProcess. */
+MOLTEST_FAKE(fake_pickup_tool) {
+    (void)argc;
+    (void)argv;
+    const char *log = moltest_fake_setting("log");
+    FILE *file;
+    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
+        fprintf(file, "called\n");
+        (void)fclose(file);
+    }
+    const char *answer = moltest_fake_setting("answer");
+    if (answer != NULL) {
+        char *text = fs_read_file(answer);
+        if (text != NULL) {
+            printf("%s\n", text);
+            free(text);
+        }
+    }
+    return 0;
+}
+
 static bool stub_setup(pickup_stub *stub, const char *answer) {
     if (!moltest_temp_dir("molto_tools", stub->root, sizeof stub->root))
         return false;
@@ -50,15 +73,22 @@ static bool stub_setup(pickup_stub *stub, const char *answer) {
     if (existing != NULL)
         snprintf(stub->previous, sizeof stub->previous, "%s", existing);
 
-    char script[2048];
-    snprintf(script, sizeof script,
-             "#!/bin/sh\n"
-             "echo called >> %s\n"
-             "cat <<'ANSWER'\n%s\nANSWER\n",
-             stub->log, answer);
-    return fs_write_file(stub->program, script)
-        && chmod(stub->program, 0755) == 0
-        && setenv("MOLTO_PICKUP", stub->program, 1) == 0
+    char answer_path[MOLTEST_PATH];
+    if (snprintf(answer_path, sizeof answer_path, "%s.answer", stub->program)
+        >= (int)sizeof answer_path)
+        return false;
+    if (!fs_write_file(answer_path, answer))
+        return false;
+
+    char spec[2048];
+    if (snprintf(spec, sizeof spec, "set log %s\nset answer %s\nbehave fake_pickup_tool\n",
+                 stub->log, answer_path)
+        >= (int)sizeof spec)
+        return false;
+    if (!moltest_fake_program(stub->program, spec, stub->program, sizeof stub->program))
+        return false;
+
+    return setenv("MOLTO_PICKUP", stub->program, 1) == 0
         && unsetenv("MOLTO_CLANG_FORMAT") == 0
         && unsetenv("MOLTO_CLANG_TIDY") == 0;
 }

@@ -17,18 +17,16 @@ typedef struct {
     char tool[128];
 } stub;
 
-static bool stub_open(stub *at, const char *script) {
+/* `spec` names a behaviour rather than carrying a script: what pkg-config
+   answers is written in C above, so this stub is a program on both platforms. */
+static bool stub_open(stub *at, const char *spec) {
     if (!moltest_temp_dir("molto_host", at->dir, sizeof at->dir))
         return false;
     snprintf(at->tool, sizeof at->tool, "%s/pkg-config", at->dir);
 
-    FILE *file = fopen(at->tool, "w");
-    if (file == NULL)
+    if (!moltest_fake_program(at->tool, spec, at->tool, sizeof at->tool))
         return false;
-    fputs(script, file);
-    if (fclose(file) != 0)
-        return false;
-    return chmod(at->tool, 0755) == 0 && setenv("MOLTO_PKG_CONFIG", at->tool, 1) == 0;
+    return setenv("MOLTO_PKG_CONFIG", at->tool, 1) == 0;
 }
 
 static void stub_close(const stub *at) {
@@ -39,16 +37,22 @@ static void stub_close(const stub *at) {
 
 /* Answers like pkg-config does for a toolkit: many include directories, a
    handful of libraries, and options that are neither. */
-static const char *const ANSWERS =
-    "#!/bin/sh\n"
-    "case \"$1\" in\n"
-    "  --exists) [ \"$2\" = \"toykit\" ] && exit 0 || exit 1 ;;\n"
-    "  --modversion) echo 3.24.33 ;;\n"
-    "  --cflags) echo '-I/opt/toykit/include -I/opt/toykit/lib/include -pthread -D_REENTRANT'\n"
-    "            echo '-L/opt/toykit/lib -Wl,-rpath,/opt/toykit/lib -Wl,--enable-new-dtags'\n"
-    "            echo '-ltoykit -lm' ;;\n"
-    "esac\n"
-    "exit 0\n";
+MOLTEST_FAKE(fake_host_pkg_config) {
+    if (argc < 2)
+        return 0;
+    if (strcmp(argv[1], "--exists") == 0)
+        return argc > 2 && strcmp(argv[2], "toykit") == 0 ? 0 : 1;
+    if (strcmp(argv[1], "--modversion") == 0) {
+        printf("3.24.33\n");
+    } else if (strcmp(argv[1], "--cflags") == 0) {
+        printf("-I/opt/toykit/include -I/opt/toykit/lib/include -pthread -D_REENTRANT\n");
+        printf("-L/opt/toykit/lib -Wl,-rpath,/opt/toykit/lib -Wl,--enable-new-dtags\n");
+        printf("-ltoykit -lm\n");
+    }
+    return 0;
+}
+
+static const char *const ANSWERS = "behave fake_host_pkg_config\n";
 
 MOLTEST(a_host_capability_answers_with_its_includes_and_links) {
     stub at;
