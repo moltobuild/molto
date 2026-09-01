@@ -260,7 +260,15 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          make test CC=gcc 2>&1 | tee suite.log
+          # -v names each test as it runs. Without it a crash leaves a row of
+          # dots, and working out which case died means counting them against
+          # the order the file registers in -- which is what the last three
+          # rounds cost. The suite already knew the answer.
+          #
+          # It could not be passed until now: with a stub reading a stdin
+          # nobody was writing, -v hung the run outright. That was the child
+          # inheriting the build's own standard input, fixed in #51.
+          make test CC=gcc TEST_ARGS=-v 2>&1 | tee suite.log
           status=${PIPESTATUS[0]}
           failed=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) failed.*/\1/p' suite.log | tail -1)
           if [ -n "$failed" ] && [ "$failed" -gt 0 ]; then
