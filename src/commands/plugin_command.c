@@ -6,6 +6,7 @@
 #include <molto/util/progress.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* --- rendering --- */
@@ -56,9 +57,15 @@ static void print_summary(const plugin_entry *entry) {
 /* --- list --- */
 
 static int run_list(void) {
-    plugin_entry entries[PLUGIN_MAX_LISTED];
+    /* On the heap: sixty-four of these carry two paths each, and a quarter of a
+       megabyte is a quarter of the stack Windows gives a thread. */
+    plugin_entry *entries = malloc(sizeof *entries * PLUGIN_MAX_LISTED);
+    if(entries == NULL)
+        return exit_plugin_failure;
+
     size_t count = 0;
     if(!plugin_list(entries, PLUGIN_MAX_LISTED, &count)) {
+        free(entries);
         fprintf(stderr,
                 "molto: more than %d plugins are installed, which is more than this "
                 "can list\n",
@@ -67,12 +74,14 @@ static int run_list(void) {
     }
 
     if(count == 0) {
+        free(entries);
         printf("No plugins installed.\n");
         return exit_ok;
     }
 
     for(size_t i = 0; i < count; i++)
         print_summary(&entries[i]);
+    free(entries);
     return exit_ok;
 }
 
@@ -80,18 +89,25 @@ static int run_list(void) {
 
 /* Where a plugin is, and how it got there, without reading any recipe. */
 static bool locate(const char *name, plugin_entry *out) {
-    plugin_entry entries[PLUGIN_MAX_LISTED];
-    size_t count = 0;
-    if(!plugin_list(entries, PLUGIN_MAX_LISTED, &count))
+    plugin_entry *entries = malloc(sizeof *entries * PLUGIN_MAX_LISTED);
+    if(entries == NULL)
         return false;
 
-    for(size_t i = 0; i < count; i++) {
+    size_t count = 0;
+    if(!plugin_list(entries, PLUGIN_MAX_LISTED, &count)) {
+        free(entries);
+        return false;
+    }
+
+    bool found = false;
+    for(size_t i = 0; i < count && !found; i++) {
         if(strcmp(entries[i].name, name) == 0) {
             *out = entries[i];
-            return true;
+            found = true;
         }
     }
-    return false;
+    free(entries);
+    return found;
 }
 
 /* What the permissions above actually mean today.

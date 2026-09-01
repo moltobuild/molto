@@ -107,10 +107,21 @@ bool frontend_candidates(const char *root, frontend_choice *out, size_t capacity
         return false;
     *count = 0;
 
-    plugin_entry installed[PLUGIN_MAX_LISTED];
-    size_t total = 0;
-    if(!plugin_list(installed, PLUGIN_MAX_LISTED, &total))
+    /* On the heap, and the size is the reason: a plugin_entry carries two whole
+       paths, so sixty-four of them are a quarter of a megabyte. Linux hands a
+       thread eight megabytes and never noticed; Windows hands it one, and this
+       array plus the frames above it walked off the end. The fault landed on
+       the guard page at 0x200000, which reads as a wild pointer and is nothing
+       of the kind. A limit both platforms have, met on only one of them. */
+    plugin_entry *installed = malloc(sizeof *installed * PLUGIN_MAX_LISTED);
+    if(installed == NULL)
         return false;
+
+    size_t total = 0;
+    if(!plugin_list(installed, PLUGIN_MAX_LISTED, &total)) {
+        free(installed);
+        return false;
+    }
 
     /* plugin_list already sorts by name within each origin, so the order a
        directory's candidates are offered in is the same on every machine. An
@@ -131,8 +142,10 @@ bool frontend_candidates(const char *root, frontend_choice *out, size_t capacity
         if(!entry_present(root, &choice.plugin, choice.entry, sizeof choice.entry))
             continue;
 
-        if(*count >= capacity)
+        if(*count >= capacity) {
+            free(installed);
             return false;
+        }
 
         /* Bounded explicitly rather than left to the destination's size. The
            two buffers are the same width and plugin_list validated the name, so
@@ -146,6 +159,7 @@ bool frontend_candidates(const char *root, frontend_choice *out, size_t capacity
                  installed[i].path);
         out[(*count)++] = choice;
     }
+    free(installed);
     return true;
 }
 
