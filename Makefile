@@ -77,8 +77,13 @@ $(BUILD_DIR)/%.o: %.c Project.toml
 run: build
 	./$(BIN) $(ARGS)
 
+# TEST_ARGS reaches the suite: `make test TEST_ARGS="-k glob"` runs a few cases,
+# which is what debugging one wants and what shelling out to the binary by hand
+# was standing in for.
+TEST_ARGS ?=
+
 test: $(TEST_BIN)
-	./$(TEST_BIN)
+	./$(TEST_BIN) $(TEST_ARGS)
 
 $(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
 	@mkdir -p $(dir $@)
