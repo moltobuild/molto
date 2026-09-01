@@ -54,6 +54,29 @@ static const cli_option add_options[] = {
    --jobs is spelled -j because that is what it is called everywhere a build is
    run, and it is absent by default rather than set to the core count: "as much
    of this machine as there is" is not a number Molto should record. */
+/*
+ * What `run` and `test` take, and `build` takes these plus one.
+ *
+ * They were one table until `--target` arrived, and sharing it meant `molto
+ * test --target x86_64-w64-mingw32` was accepted, ignored, and exited 0 — a
+ * flag that reads as "build the suite for Windows" and quietly builds it for
+ * this machine instead. Two tables is the difference between a refusal and a
+ * lie.
+ *
+ * `build` is the only one that can take it: `run` and `test` finish by starting
+ * a program, and a program built for another platform does not start here.
+ * Building a suite for elsewhere without running it is its own decision, and
+ * it can have its own flag when someone wants it.
+ */
+static const cli_option run_options[] = {
+    {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
+     "debug"},
+    {"--refresh-toolchain", 0, cli_opt_flag, NULL,
+     "Resolve the compiler again instead of reusing the cached one", NULL},
+    {"--jobs", 'j', cli_opt_value, "<n>", "Compile at most n units at once (default: every core)",
+     NULL},
+};
+
 static const cli_option build_options[] = {
     {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
      "debug"},
@@ -335,10 +358,10 @@ static const cli_command commands[] = {
     {"init", "Initialize a project in the current directory", NULL, NULL, 0, handle_init},
     {"build", "Compile the project", NULL, build_options,
      sizeof build_options / sizeof build_options[0], handle_build},
-    {"run", "Build and run the project (args after -- go to the program)", NULL, build_options,
-     sizeof build_options / sizeof build_options[0], handle_run},
-    {"test", "Build and run the project's tests", NULL, build_options,
-     sizeof build_options / sizeof build_options[0], handle_test},
+    {"run", "Build and run the project (args after -- go to the program)", NULL, run_options,
+     sizeof run_options / sizeof run_options[0], handle_run},
+    {"test", "Build and run the project's tests", NULL, run_options,
+     sizeof run_options / sizeof run_options[0], handle_test},
     {"clean", "Remove build output", NULL, clean_options,
      sizeof clean_options / sizeof clean_options[0], handle_clean},
     {"fmt", "Format the project's sources", NULL, fmt_options,

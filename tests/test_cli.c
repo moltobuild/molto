@@ -242,3 +242,26 @@ MOLTEST(cli_without_a_fallback_still_refuses_an_unknown_name) {
     char *argv[] = { "testapp", "deb" };
     EXPECT_EQ(exit_usage_error, run_app(2, argv));
 }
+
+MOLTEST(only_build_takes_a_target) {
+    /* `--target` reads as "build for that platform". `run` and `test` finish by
+       starting what they built, and a binary for another platform does not
+       start here — so taking the flag and ignoring it is worse than refusing
+       it.
+
+       The three shared one option table until this was noticed, and
+       `molto test --target x86_64-w64-mingw32` exited 0 having built for this
+       machine instead. Driven through the real command table rather than the
+       synthetic one above, because what is under test is which table each
+       command was given. */
+    char *refused[] = {"molto", "test", "--target", "x86_64-w64-mingw32", NULL};
+    EXPECT_EQ(exit_usage_error, cli_run(4, refused));
+
+    char *refused_short[] = {"molto", "run", "-t", "x86_64-w64-mingw32", NULL};
+    EXPECT_EQ(exit_usage_error, cli_run(4, refused_short));
+
+    /* And build still has it. `--help` stops before any work is done, so this
+       asks the parser and nothing else. */
+    char *accepted[] = {"molto", "build", "--target", "x86_64-w64-mingw32", "--help", NULL};
+    EXPECT_EQ(exit_ok, cli_run(5, accepted));
+}
