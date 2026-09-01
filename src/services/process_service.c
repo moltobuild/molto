@@ -334,10 +334,25 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
     if(env_count > 0 && environment == NULL)
         return CHILD_NONE;
 
+    /* Nothing to send is an empty stdin, not the parent's — the same rule the
+       POSIX half states, and for the same reason: a tool that reads standard
+       input when nobody is writing blocks for ever and takes the build with
+       it. `NUL` is what /dev/null is called here. */
+    HANDLE nothing = INVALID_HANDLE_VALUE;
+    if(!end_open(wiring->stdin_read_end)) {
+        SECURITY_ATTRIBUTES inheritable = {
+            .nLength = sizeof inheritable,
+            .bInheritHandle = TRUE,
+        };
+        nothing = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable,
+                              OPEN_EXISTING, 0, NULL);
+    }
+
     STARTUPINFOA startup = {.cb = sizeof(STARTUPINFOA)};
     startup.dwFlags = STARTF_USESTDHANDLES;
-    startup.hStdInput =
-        end_open(wiring->stdin_read_end) ? wiring->stdin_read_end : GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdInput = end_open(wiring->stdin_read_end)  ? wiring->stdin_read_end
+                        : nothing != INVALID_HANDLE_VALUE ? nothing
+                                                          : GetStdHandle(STD_INPUT_HANDLE);
     startup.hStdOutput =
         wiring->stdout_captured ? wiring->write_end : GetStdHandle(STD_OUTPUT_HANDLE);
     startup.hStdError =
@@ -347,6 +362,8 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
     const BOOL ok =
         CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, environment, NULL, &startup, &started);
     free(environment);
+    if(nothing != INVALID_HANDLE_VALUE)
+        CloseHandle(nothing); /* the child holds its own copy from here */
     if(!ok)
         return CHILD_NONE;
 
@@ -434,6 +451,19 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
     if(end_open(wiring->stdin_read_end)) {
         dup2(wiring->stdin_read_end, STDIN_FILENO);
         close(wiring->stdin_read_end);
+    } else {
+        /* Nothing to send is an empty stdin, not the parent's.
+           Inheriting it means a tool that reads standard input blocks on a
+           stream nobody is writing, and takes the whole build down with it --
+           `pkg-config` asked about a package is not supposed to read anything,
+           but "not supposed to" is not a guarantee, and a build that hangs
+           gives the person running it nothing to go on. /dev/null answers EOF
+           immediately, which is what a program handed no input should see. */
+        const int nothing = open("/dev/null", O_RDONLY);
+        if(nothing >= 0) {
+            dup2(nothing, STDIN_FILENO);
+            close(nothing);
+        }
     }
     /* dup2 clears close-on-exec on the descriptor it creates, so the streams
        wired here survive the exec even though the pipe they came from does
