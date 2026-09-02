@@ -189,4 +189,30 @@ void fs_lock_release(fs_lock *lock);
    so two edits within the same second are still told apart). */
 [[nodiscard]] bool fs_source_newer(const char *source, const char *target);
 
+/* The name a file would be run by, with whatever the platform appends to an
+   executable taken off.
+
+   On POSIX that is the name itself: any file can carry the execute bit, and
+   nothing is added to its name to say so. On Windows the suffix *is* the
+   permission — a file called `molto-meson` cannot be run and
+   `molto-meson.exe` can — so `.exe` is both required here and stripped, which
+   is the filter `access(X_OK)` provides on POSIX and cannot provide there,
+   since Windows has no execute bit for it to read.
+
+   False when the file cannot be run by name on this platform, or when the
+   answer does not fit.
+
+   Copied from pickup's fs_service rather than invented a second time, the way
+   RFC-0017 asks: the same question was answered there first. */
+[[nodiscard]] bool fs_executable_name(const char *file, char *out, size_t size);
+
+/* The filename a program of this name is stored in: the name itself on POSIX,
+   the name plus `.exe` on Windows.
+
+   The inverse of `fs_executable_name`, and it exists because a plugin is found
+   by composing a name and then looking for the file — `meson` gives
+   `molto-meson`, and looking for a file called `molto-meson` on Windows finds
+   nothing at all. */
+[[nodiscard]] bool fs_executable_file(const char *name, char *out, size_t size);
+
 #endif /* MOLTO_FS_SERVICE_H */
