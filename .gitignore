@@ -12,7 +12,16 @@
 
 # The compilation database every build writes (derived, never edited by hand)
 /compile_commands.json
-build-win/
+
+# The cross build's output, kept apart from /build/ because those objects are
+# ELF and these are PE and Make compares timestamps, not targets
+/build-windows/
+build-win*/
+
+# What the release workflow unpacks to cross-compile with
+/toolchain/
+*.tar.zst
+
 tally.count
 *.log
 graphify-out/
