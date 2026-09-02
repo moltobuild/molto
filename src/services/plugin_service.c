@@ -21,7 +21,9 @@
    mistaken for an unrelated program with the same short name. */
 #define PLUGIN_PREFIX "molto-"
 
-/* `molto-<name>` is composed into a buffer this wide. */
+/* `molto-<name>` is composed into a buffer this wide. The filename it is
+   stored in may be wider by whatever the platform appends, which is why
+   `in_directory` sizes its own. */
 #define PLUGIN_PROGRAM_MAX (sizeof PLUGIN_PREFIX + PLUGIN_NAME_MAX)
 
 /* --- naming --- */
@@ -63,11 +65,21 @@ bool plugin_dir(char *out, size_t size) {
 
 static bool is_executable(const char *path) { return access(path, X_OK) == 0; }
 
-/* Whether `dir` holds an executable `program`, writing its path into `out`. */
+/* Whether `dir` holds an executable `program`, writing its path into `out`.
+
+   `program` is a name and what the directory holds is a filename, and on
+   Windows they differ: a plugin called `meson` is `molto-meson.exe` there, and
+   looking for `molto-meson` finds nothing at all. `fs_executable_file` is the
+   conversion, and it is also the permission — `access(X_OK)` succeeds for any
+   file that exists on Windows, because there is no execute bit for it to read,
+   so requiring the suffix is what filtering there consists of. */
 static bool in_directory(const char *dir, const char *program, char *out, size_t size) {
     if(dir[0] == '\0')
         return false;
-    if(!fs_format_path(out, size, "%s/%s", dir, program))
+    char file[PLUGIN_PROGRAM_MAX + sizeof ".exe"];
+    if(!fs_executable_file(program, file, sizeof file))
+        return false;
+    if(!fs_format_path(out, size, "%s/%s", dir, file))
         return false;
     return is_executable(out);
 }
@@ -241,7 +253,12 @@ static bool name_from_entry(const char *entry, char *out, size_t size) {
     const size_t prefix = sizeof PLUGIN_PREFIX - 1;
     if(strncmp(entry, PLUGIN_PREFIX, prefix) != 0)
         return false;
-    if(!fs_format_path(out, size, "%s", entry + prefix))
+    /* The name, not the filename: `molto-meson.exe` is a plugin called `meson`
+       and not one called `meson.exe`, and everything downstream — the listing,
+       the recipe lookup, the subcommand — reads the name. Refusing a file that
+       carries no suffix is the same filter `in_directory` applies, said for a
+       directory entry instead of a composed path. */
+    if(!fs_executable_name(entry + prefix, out, size))
         return false;
     return plugin_name_valid(out);
 }
@@ -301,8 +318,18 @@ static bool scan_directory(const char *dir, plugin_origin origin, plugin_entry *
         if(!name_from_entry(entry->d_name, name, sizeof name))
             continue;
 
+        /* Back through the name rather than reusing the entry: what readdir
+           hands over is a filename and `in_directory` takes a name, and on
+           Windows the two differ by the suffix `name_from_entry` just took
+           off. Handing the entry straight back would ask for
+           `molto-meson.exe.exe`. The conversion is inverse in both directions,
+           which is what makes the round trip safe. */
+        char program[PLUGIN_PROGRAM_MAX];
+        if(!plugin_program(name, program, sizeof program))
+            continue;
+
         char path[PLUGIN_PATH_MAX];
-        if(!in_directory(dir, entry->d_name, path, sizeof path))
+        if(!in_directory(dir, program, path, sizeof path))
             continue; /* there, and not executable */
 
         room = add_entry(out, capacity, count, dir, name, origin);

@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -466,4 +467,45 @@ bool fs_copy_file(const char *from, const char *to) {
         ok = false;
     (void)fclose(in);
     return fclose(out) == 0 && ok;
+}
+
+/* Case-insensitively, because a filesystem that does not distinguish `GCC.EXE`
+   from `gcc.exe` will hand back either. */
+static bool ends_with_exe(const char *file, size_t length) {
+    static const char suffix[] = ".exe";
+    const size_t width = sizeof suffix - 1;
+    if(length <= width)
+        return false;
+    const char *tail = file + length - width;
+    for(size_t i = 0; i < width; i++) {
+        if(tolower((unsigned char)tail[i]) != suffix[i])
+            return false;
+    }
+    return true;
+}
+
+bool fs_executable_name(const char *file, char *out, size_t size) {
+    const size_t length = strlen(file);
+#ifdef _WIN32
+    if(!ends_with_exe(file, length))
+        return false;
+    const size_t bare = length - (sizeof ".exe" - 1);
+#else
+    (void)ends_with_exe;
+    const size_t bare = length;
+#endif
+    if(bare >= size)
+        return false;
+    memcpy(out, file, bare);
+    out[bare] = '\0';
+    return true;
+}
+
+bool fs_executable_file(const char *name, char *out, size_t size) {
+#ifdef _WIN32
+    const int written = snprintf(out, size, "%s.exe", name);
+#else
+    const int written = snprintf(out, size, "%s", name);
+#endif
+    return written > 0 && (size_t)written < size;
 }

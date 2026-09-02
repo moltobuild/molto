@@ -375,6 +375,14 @@ static const char *spec_hanging(const sandbox *box) {
 
 static frontend_result ask_script(sandbox *box, const char *script, ir_document *out, char *err,
                                   size_t err_size) {
+    /* Before anything that can fail. Every caller frees this afterwards, and
+       three of the returns below are reached without `frontend_ask_with` ever
+       being called — so on those paths the caller was freeing whatever the
+       stack happened to hold. On Linux that was zeroes and the free was a
+       no-op; on Windows it was a pointer, and a failing assertion became a
+       crash that took the rest of the suite with it. */
+    ir_document_init(out);
+
     char recipe[1024];
     frontend_recipe(recipe, sizeof recipe, "meson", "meson.build", IR_SCHEMA, "0.1.0");
     if(!install(box, "meson", script, recipe) || !touch_entry(box, "meson.build"))
