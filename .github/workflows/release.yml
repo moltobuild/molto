@@ -9,8 +9,28 @@ on:
 permissions:
   contents: write
 
+# The toolchain that produces the Windows binary, pinned by version and by
+# digest. It comes from molto's own registry rather than from the distribution:
+# apt's `gcc-mingw-w64-x86-64` links against msvcrt, whose `printf` does not
+# know `%z` — the reason `__USE_MINGW_ANSI_STDIO` exists in the Makefile — and
+# is several major versions behind. This one is UCRT and LLVM 23, and it is the
+# same artifact `pickup install llvm-mingw` hands anyone else, so the binary
+# published here is built by the supply chain this project asks others to use.
+#
+# Pinned by digest and not only by version because a version is a name and a
+# digest is the thing. RFC-0016 makes a registry coordinate immutable, so the
+# two can never disagree — and checking anyway costs one line.
+env:
+  MINGW_VERSION: "23.1.0"
+  MINGW_SHA256: "a6a7812ee736f25345fec3842224b4c12cc795751ea2117f684f8ad59dc7022f"
+
 jobs:
-  release:
+  # Both binaries, and the sums that cover them, are made in one place. The
+  # Windows one is cross-compiled here rather than built on a Windows runner
+  # because a cross build is deterministic, fast, and needs no MSYS2 — and
+  # because what a Windows runner is actually needed for is the next job.
+  build:
+    name: Build what gets published
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -21,7 +41,7 @@ jobs:
       - name: Install GCC 12
         run: |
           sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
+          sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12 zstd
 
       # The tag and the manifest are two claims about the same number, and a
       # binary whose version disagrees with the tag it was published under is
@@ -40,7 +60,7 @@ jobs:
       # dynamic build here needs GLIBC_2.34 and rules out Debian 11, Ubuntu
       # 20.04 and RHEL 8. Molto can afford this because it shells out to curl
       # and never resolves a hostname itself, so no NSS is linked in.
-      - name: Build the static binary
+      - name: Build the static Linux binary
         run: |
           make build LDFLAGS="-static"
           file build/molto
@@ -60,20 +80,52 @@ jobs:
           "$molto" run | tee output
           grep -q "Hello, world!" output
 
-      - name: Name it, hash it, and describe it
+      - name: Fetch the Windows toolchain
+        run: |
+          url=https://registry.moltobuild.dev/v1/toolchains/llvm-mingw/${MINGW_VERSION}/linux-x86_64/download
+          curl -fsSL --retry 3 -o llvm-mingw.tar.zst "$url"
+          echo "${MINGW_SHA256}  llvm-mingw.tar.zst" | sha256sum --check --strict
+          mkdir -p toolchain
+          tar --zstd -xf llvm-mingw.tar.zst -C toolchain
+
+      # A separate BUILD_DIR, because the objects above are ELF and these are
+      # PE and they share every path. Make compares timestamps, not targets,
+      # and one tree would hand the linker a mixture of the two.
+      - name: Cross-compile the static Windows binary
+        run: |
+          driver="$PWD/toolchain/bin/x86_64-w64-mingw32-clang"
+          test -x "$driver"
+          make build BUILD_DIR=build-windows CC="$driver" LDFLAGS="-static"
+          file build-windows/molto.exe
+          file build-windows/molto.exe | grep -q 'PE32+ executable'
+
+      # UCRT ships with Windows 10 and later, so a binary that imports only it
+      # and KERNEL32 needs nothing unpacked beside it. Anything else in this
+      # list — `libwinpthread-1.dll`, `libgcc_s_seh-1.dll`, `libc++.dll` — is a
+      # file the download would have to carry and does not, which makes it a
+      # binary that runs here and not on the machine it was published for.
+      - name: And it needs nothing beside it
+        run: |
+          strings build-windows/molto.exe \
+            | grep -oiE '[A-Za-z0-9_-]+\.dll' | sort -u | tee imports
+          ! grep -viE '^(api-ms-win-crt-[a-z0-9-]+\.dll|KERNEL32\.dll)$' imports
+
+      - name: Name them, hash them, and describe them
         run: |
           mkdir -p dist
-          name="molto-${VERSION}-x86_64-linux"
-          cp build/molto "dist/$name"
+          cp build/molto "dist/molto-${VERSION}-x86_64-linux"
+          cp build-windows/molto.exe "dist/molto-${VERSION}-x86_64-windows.exe"
           ./build/molto metadata -o "dist/molto-${VERSION}.cdx.json"
           cd dist
-          sha256sum "$name" "molto-${VERSION}.cdx.json" > SHA256SUMS
+          sha256sum molto-* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Write the release notes
         run: |
           cat > dist/NOTES.md <<NOTES
-          Static x86-64 Linux binary. No glibc requirement, nothing to unpack.
+          ### Linux
+
+          Static x86-64 binary. No glibc requirement, nothing to unpack.
 
           \`\`\`sh
           base=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}
@@ -84,28 +136,117 @@ jobs:
           sudo install molto-${VERSION}-x86_64-linux /usr/local/bin/molto
           \`\`\`
 
-          **Molto does not choose a compiler**, it asks pickup — which has no
-          release yet. Until it does, name one by hand:
+          ### Windows
+
+          \`molto-${VERSION}-x86_64-windows.exe\`, x86-64, Windows 10 or later.
+          Statically linked against UCRT: there is nothing to put beside it.
+
+          **Windows is not a supported platform yet, and this binary does not
+          claim it is.** RFC-0017 sets four bars for that word and the fourth —
+          the full suite green on a Windows runner — is not met. What is
+          measured to work, in CI, on a Windows runner, every push:
+
+          - \`new\`, \`build\` and \`run\` on a project, which is also asserted
+            against this exact binary before it is published
+          - molto building molto with molto
+
+          What is known not to: molto's own test suite does not finish there.
+          The state of the port is the Windows badge on the README, and it is
+          red on purpose until it isn't.
+
+          ### Choosing a compiler
+
+          **Molto does not choose one**, it asks [pickup][pickup]. Install that
+          and molto finds a toolchain by itself; without it, name one by hand:
 
           \`\`\`sh
           export C_COMPILER=gcc CPP_COMPILER=g++
           \`\`\`
 
-          Without that, \`new\`, \`init\`, \`add\`, \`remove\` and \`metadata\` work, and
+          Without either, \`new\`, \`init\`, \`add\`, \`remove\` and \`metadata\` work, and
           \`build\`, \`test\`, \`fmt\` and \`lint\` report that no compiler was resolved.
 
           \`molto-${VERSION}.cdx.json\` is molto's own CycloneDX bill of materials.
+
+          [pickup]: https://github.com/moltobuild/pickup/releases/latest
           NOTES
           cat dist/NOTES.md
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  # A cross build says the binary is well-formed. It cannot say the binary does
+  # molto's job, and RFC-0017's most expensive lesson is that the gap between
+  # those two is where every real failure of this port has lived: it compiled,
+  # it linked, it started, it found no compiler, it found the wrong one. So the
+  # artifact that is about to be published is run on the platform it is for,
+  # before anyone can download it.
+  windows:
+    name: The Windows binary does molto's job
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+
+      # MSYS2 is here for the compiler it brings, not for the shell: nothing
+      # in this job builds molto, it runs the binary the last one produced.
+      # `C_COMPILER=gcc` skips pickup on purpose — pickup on Windows is its own
+      # release with its own bars, and a red here has to be attributable to
+      # this binary and to nothing standing behind it.
+      - uses: msys2/setup-msys2@v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: The download is the file that was hashed
+        run: sha256sum --check --ignore-missing SHA256SUMS
+
+      - name: It builds and runs a project
+        env:
+          C_COMPILER: gcc
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          molto="$PWD/molto-${version}-x86_64-windows.exe"
+          chmod +x "$molto"
+          test "$("$molto" --version)" = "molto ${version}"
+          cd "$(mktemp -d)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
+  publish:
+    name: Publish
+    needs: [build, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+          path: dist
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version=${GITHUB_REF_NAME#v}
           gh release create "${GITHUB_REF_NAME}" \
-            --title "molto ${VERSION}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "molto ${version}" \
             --notes-file dist/NOTES.md \
             --generate-notes \
-            "dist/molto-${VERSION}-x86_64-linux" \
-            "dist/molto-${VERSION}.cdx.json" \
+            "dist/molto-${version}-x86_64-linux" \
+            "dist/molto-${version}-x86_64-windows.exe" \
+            "dist/molto-${version}.cdx.json" \
             dist/SHA256SUMS
