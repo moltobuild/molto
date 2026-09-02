@@ -1,10 +1,10 @@
 #include <molto/services/fs_service.h>
 
+#include <ctype.h>
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
