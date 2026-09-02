@@ -170,6 +170,30 @@ jobs:
             against this exact binary before it is published
           - molto building molto with molto
 
+          Install it with PowerShell. \`Get-FileHash\` and \`Invoke-WebRequest\`
+          are built in, so there is nothing to install in order to install it:
+
+          \`\`\`powershell
+          \$base = "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          \$exe  = "molto-${VERSION}-x86_64-windows.exe"
+          \$dir  = "\$env:LOCALAPPDATA\\Programs\\molto"
+
+          New-Item -ItemType Directory -Force -Path \$dir | Out-Null
+          Invoke-WebRequest "\$base/\$exe" -OutFile "\$dir\\molto.exe"
+          Invoke-WebRequest "\$base/SHA256SUMS" -OutFile "\$env:TEMP\\SHA256SUMS"
+
+          # The sums file names the file it covers, so check against that line.
+          \$want = (Select-String -Path "\$env:TEMP\\SHA256SUMS" -Pattern \$exe).Line.Split()[0]
+          \$got  = (Get-FileHash "\$dir\\molto.exe" -Algorithm SHA256).Hash.ToLower()
+          if (\$want -ne \$got) { throw "checksum mismatch" }
+
+          # On PATH for this user, for every shell after this one.
+          [Environment]::SetEnvironmentVariable(
+              "Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";\$dir", "User")
+          \`\`\`
+
+          Open a new terminal, then \`molto new hello\` and \`molto run\`.
+
           What is known not to: molto's own test suite does not finish there.
           The state of the port is the Windows badge on the README, and it is
           red on purpose until it isn't.
