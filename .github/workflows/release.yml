@@ -6,6 +6,14 @@ on:
   push:
     tags: ["v*"]
 
+  # A rehearsal. `build` and `windows` run; `publish` does not, because there
+  # is no tag to publish under. It exists because the only other way to find
+  # out whether this file works is to spend a version number on it — and a tag
+  # whose run fails is a tag that is already taken, which is how v0.7.2 was
+  # lost. Everything up to and including running the binary on Windows can be
+  # asked for on demand now, and the answer costs nothing.
+  workflow_dispatch:
+
 permissions:
   contents: write
 
@@ -35,6 +43,8 @@ jobs:
     timeout-minutes: 20
     env:
       DEBIAN_FRONTEND: noninteractive
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -43,18 +53,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12 zstd
 
-      # The tag and the manifest are two claims about the same number, and a
-      # binary whose version disagrees with the tag it was published under is
-      # the one failure nobody notices until much later. Same reasoning as
+      # The manifest is the single source of the number, and every job below
+      # reads it from here rather than from the ref — a rehearsal has a branch
+      # name where a release has a tag, and the filenames must not care which.
+      #
+      # Under a tag the two are checked against each other. A binary whose
+      # version disagrees with the tag it was published under is the one
+      # failure nobody notices until much later. Same reasoning as
       # `cli_reports_the_version_the_manifest_declares`, one level up.
-      - name: The tag and the manifest agree
+      - name: The version, and the tag if there is one
+        id: version
         run: |
           declared=$(sed -n 's/^version = "\(.*\)"/\1/p' Project.toml | head -1)
-          tagged=${GITHUB_REF_NAME#v}
           echo "manifest: $declared"
+          echo "VERSION=$declared" >> "$GITHUB_ENV"
+          echo "version=$declared" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "a rehearsal: no tag for it to agree with"
+            exit 0
+          fi
+          tagged=${GITHUB_REF_NAME#v}
           echo "tag:      $tagged"
           test "$declared" = "$tagged"
-          echo "VERSION=$declared" >> "$GITHUB_ENV"
 
       # Static, so the artifact does not carry the runner's glibc with it. A
       # dynamic build here needs GLIBC_2.34 and rules out Debian 11, Ubuntu
@@ -189,6 +209,8 @@ jobs:
     needs: build
     runs-on: windows-2022
     timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
     defaults:
       run:
         shell: msys2 {0}
@@ -215,21 +237,25 @@ jobs:
         env:
           C_COMPILER: gcc
         run: |
-          version=${GITHUB_REF_NAME#v}
-          molto="$PWD/molto-${version}-x86_64-windows.exe"
+          molto="$PWD/molto-${VERSION}-x86_64-windows.exe"
           chmod +x "$molto"
-          test "$("$molto" --version)" = "molto ${version}"
+          test "$("$molto" --version)" = "molto ${VERSION}"
           cd "$(mktemp -d)"
           "$molto" new smoke_test
           cd smoke_test
           "$molto" run | tee output
           grep -q "Hello, world!" output
 
+  # A tag is what publishes. A rehearsal proves everything above this line and
+  # then stops, which is the whole point of it.
   publish:
     name: Publish
     needs: [build, windows]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -240,13 +266,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=${GITHUB_REF_NAME#v}
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "molto ${version}" \
+            --title "molto ${VERSION}" \
             --notes-file dist/NOTES.md \
             --generate-notes \
-            "dist/molto-${version}-x86_64-linux" \
-            "dist/molto-${version}-x86_64-windows.exe" \
-            "dist/molto-${version}.cdx.json" \
+            "dist/molto-${VERSION}-x86_64-linux" \
+            "dist/molto-${VERSION}-x86_64-windows.exe" \
+            "dist/molto-${VERSION}.cdx.json" \
             dist/SHA256SUMS

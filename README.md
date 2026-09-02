@@ -1,6 +1,7 @@
 # Molto
 
 [![CI](https://github.com/moltobuild/molto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/moltobuild/molto/actions/workflows/ci.yml)
+[![Release](https://github.com/moltobuild/molto/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/moltobuild/molto/actions/workflows/release.yml)
 [![Windows](https://github.com/moltobuild/molto/actions/workflows/windows.yml/badge.svg?branch=master)](https://github.com/moltobuild/molto/actions/workflows/windows.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -10,11 +11,18 @@ A modern packaging ecosystem for C and C++.
 optimisation combinations, sanitizers, a static binary, and the style check. It
 has to be green.
 
+**Release** is what a tag runs: the static Linux binary, the cross-compiled
+Windows one, the sums that cover both, and each of them exercised on the
+platform it is for before any of it is published. Filtered to `event=push`, so
+a rehearsal — the workflow can be asked for on demand, without a tag — never
+reads as the state of a release.
+
 **Windows** is not a gate, and it is red on purpose. It reports how far the
-Windows port has got (RFC-0017): `src/` compiles, links and runs a project
-there, and `tests/` does not compile yet. It turns green when the suite does,
-and that is the point of putting it here — a platform is not supported until
-something says so, and this is the something.
+Windows port has got (RFC-0017): `src/` and `tests/` both compile for Windows,
+molto builds a project and builds itself there, and its own suite does not
+finish. It turns green when the suite does, and that is the point of putting it
+here — a platform is not supported until something says so, and this is the
+something.
 
 - [`docs/Project.md`](docs/Project.md) — how to configure `Project.toml` to
   build a C/C++ project: include paths, link libraries, test layout, profiles,
