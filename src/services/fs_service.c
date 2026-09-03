@@ -36,19 +36,56 @@
 /* Nanoseconds in one second, for composing a timestamp. */
 #define NANOS_PER_SECOND 1000000000LL
 
-/* Modification time of an already stat-ed file, in nanoseconds.
-
-   Windows keeps whole seconds in `st_mtime` and has no `st_mtim`, so the
-   nanoseconds are zero there and the resolution of a freshness check is a
-   second: two writes inside one are simultaneous, and a rebuild nanoseconds
-   would have triggered is not. That is the ceiling of the interface, not a
-   rounding this code chose — and `fs_signature` folds in the size, which is
-   what keeps the common case of an edited file honest. */
-static int64_t stat_mtime_ns(const struct stat *info) {
 #ifdef _WIN32
-    return (int64_t)info->st_mtime * NANOS_PER_SECOND;
+/* 1601 to 1970 in the 100-nanosecond units a FILETIME counts. */
+#define FILETIME_EPOCH_DELTA 116444736000000000LL
+
+static int64_t filetime_to_unix_ns(const FILETIME *time) {
+    const ULARGE_INTEGER since_1601 = {
+        .LowPart = time->dwLowDateTime,
+        .HighPart = time->dwHighDateTime,
+    };
+    return ((int64_t)since_1601.QuadPart - FILETIME_EPOCH_DELTA) * 100;
+}
+#endif
+
+/*
+ * When a file was last written, in nanoseconds, and how big it is.
+ *
+ * Deliberately not `stat` on Windows. `struct stat` there keeps whole seconds
+ * in `st_mtime` and has no `st_mtim` at all, which made the resolution of
+ * every freshness check one second -- so two writes inside the same second
+ * were simultaneous, and a rebuild that nanoseconds would have triggered did
+ * not happen. That is not a rounding anyone chose; it is what `stat` can say.
+ *
+ * It is also not what the platform can say. `GetFileAttributesEx` answers with
+ * a FILETIME, which counts 100-nanosecond units, and hands back the size in
+ * the same call. So the ceiling was the interface, and this is a different
+ * interface.
+ *
+ * What that cost while it stood: `molto build` on Windows did not notice a
+ * source edited within a second of the last build. Not a slow rebuild -- a
+ * skipped one, on a tool whose whole job is deciding what changed.
+ */
+[[nodiscard]] static bool file_written_at(const char *path, int64_t *mtime_ns, uint64_t *size) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA facts;
+    if(!GetFileAttributesExA(path, GetFileExInfoStandard, &facts))
+        return false;
+    if(mtime_ns != NULL)
+        *mtime_ns = filetime_to_unix_ns(&facts.ftLastWriteTime);
+    if(size != NULL)
+        *size = ((uint64_t)facts.nFileSizeHigh << 32) | facts.nFileSizeLow;
+    return true;
 #else
-    return (int64_t)info->st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info->st_mtim.tv_nsec;
+    struct stat info;
+    if(stat(path, &info) != 0)
+        return false;
+    if(mtime_ns != NULL)
+        *mtime_ns = (int64_t)info.st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info.st_mtim.tv_nsec;
+    if(size != NULL)
+        *size = (uint64_t)info.st_size;
+    return true;
 #endif
 }
 
@@ -260,23 +297,10 @@ bool fs_remove_tree(const char *path) {
     return rmdir(path) == 0 && ok;
 }
 
-bool fs_mtime_ns(const char *path, int64_t *out) {
-    struct stat info;
-    if(stat(path, &info) != 0)
-        return false;
-    *out = stat_mtime_ns(&info);
-    return true;
-}
+bool fs_mtime_ns(const char *path, int64_t *out) { return file_written_at(path, out, NULL); }
 
 bool fs_stamp(const char *path, int64_t *mtime_ns, uint64_t *size) {
-    struct stat info;
-    if(stat(path, &info) != 0)
-        return false;
-    if(mtime_ns != NULL)
-        *mtime_ns = stat_mtime_ns(&info);
-    if(size != NULL)
-        *size = (uint64_t)info.st_size;
-    return true;
+    return file_written_at(path, mtime_ns, size);
 }
 
 uint64_t fs_signature(const char *path) {
