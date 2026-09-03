@@ -256,8 +256,23 @@ jobs:
       # that ever reached this step reported 680 passed and 163 failed, and
       # every gate above it was green: without this, the badge would have gone
       # green over that.
+      # The same compiler `ci.yml` hands its own suite, and for the same
+      # reason. Some of these tests do not fake a compiler at all: they write
+      # C++ that uses `<string>`, build it, and run what comes out. Without a
+      # compiler those cannot pass on any platform, and on Linux they do only
+      # because `ci.yml` sets these two at the workflow level.
+      #
+      # This was tried once before and reverted, correctly: at the time the
+      # fakes were `#!/bin/sh` files that Windows cannot start, so the run came
+      # back byte-identical and the variable was hiding nothing and fixing
+      # nothing. The fakes are real programs now, and what is left in
+      # `build_service` says `could not run 'pickup' to resolve the compiler`
+      # in as many words.
       - name: Run the suite (watched, not yet a gate)
         continue-on-error: true
+        env:
+          C_COMPILER: gcc
+          CPP_COMPILER: g++
         run: |
           set +e
           # -v names each test as it runs. Without it a crash leaves a row of
