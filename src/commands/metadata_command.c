@@ -59,7 +59,7 @@ static int write_document(const sbom_document *document, const char *output_path
         return exit_ok;
     }
 
-    FILE *file = fopen(output_path, "w");
+    FILE *file = fopen(output_path, "wb");
     if(file == NULL) {
         fprintf(stderr, "molto: could not write '%s'\n", output_path);
         return exit_build_failure;

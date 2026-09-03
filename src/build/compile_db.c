@@ -142,7 +142,7 @@ bool compile_db_write(const compile_db *db, const char *root) {
     char directory[COMPILE_DB_PATH_SIZE];
     resolve_directory(root, directory, sizeof directory);
 
-    FILE *out = fopen(temp, "w");
+    FILE *out = fopen(temp, "wb");
     if(out == NULL)
         return false;
     const bool written = write_all(out, db, directory);

@@ -68,7 +68,15 @@ bool fs_make_dir(const char *path) {
 }
 
 bool fs_write_file(const char *path, const char *content) {
-    FILE *file = fopen(path, "w");
+    /* Binary, because text mode on Windows turns every `\n` into `\r\n` on the
+       way out while `fs_read_file` opens "rb" and reads them back verbatim.
+       Write, read, write, and a file grows a `\r` per line per round trip.
+
+       Nothing molto writes wants a platform's idea of a line. `Molto.lock` is
+       committed and diffed, and RFC-0017 asks for it to be byte-identical
+       across platforms — a manifest that differed by line ending would make
+       every lock differ by operating system. */
+    FILE *file = fopen(path, "wb");
     if(file == NULL)
         return false;
     size_t length = strlen(content);
