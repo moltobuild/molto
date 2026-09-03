@@ -479,6 +479,106 @@ static size_t collect_files(const char **out_files) {
     return count;
 }
 
+/*
+ * The environment, saved whole and put back whole.
+ *
+ * Whole rather than per-variable because the harness cannot know which ones a
+ * case will touch, and a list it had to be told about would be a list that
+ * goes stale the first time somebody adds a fixture.
+ */
+#define MOLTEST_ENV_NAME_MAX 256
+
+typedef struct {
+    char **entries; /* "NAME=VALUE", NUL-terminated list */
+    size_t count;
+} moltest_env;
+
+#ifdef _WIN32
+#define moltest_environ _environ
+#else
+extern char **environ;
+#define moltest_environ environ
+#endif
+
+static void moltest_env_free(moltest_env *saved) {
+    if (saved == NULL)
+        return;
+    for (size_t i = 0; i < saved->count; i++)
+        free(saved->entries[i]);
+    free(saved->entries);
+    free(saved);
+}
+
+static moltest_env *moltest_env_save(void) {
+    moltest_env *saved = calloc(1, sizeof *saved);
+    if (saved == NULL)
+        return NULL;
+
+    size_t total = 0;
+    while (moltest_environ[total] != NULL)
+        total++;
+
+    saved->entries = calloc(total + 1, sizeof *saved->entries);
+    if (saved->entries == NULL) {
+        free(saved);
+        return NULL;
+    }
+    for (size_t i = 0; i < total; i++) {
+        saved->entries[i] = dup_string(moltest_environ[i]);
+        if (saved->entries[i] == NULL) {
+            saved->count = i;
+            moltest_env_free(saved);
+            return NULL;
+        }
+    }
+    saved->count = total;
+    return saved;
+}
+
+/* The name in "NAME=VALUE", into `out`. False when there is no `=`, which the
+   platform should never produce and which is not ours to guess about. */
+static bool moltest_env_name(const char *entry, char *out, size_t size) {
+    const char *equals = strchr(entry, '=');
+    if (equals == NULL || (size_t)(equals - entry) >= size)
+        return false;
+    memcpy(out, entry, (size_t)(equals - entry));
+    out[equals - entry] = '\0';
+    return true;
+}
+
+static void moltest_env_restore(moltest_env *saved) {
+    if (saved == NULL)
+        return;
+
+    /* Everything the case added or changed goes first. Removing while walking
+       the live environment would step over entries, so the names are collected
+       and then unset. */
+    for (size_t i = 0; moltest_environ[i] != NULL;) {
+        char name[MOLTEST_ENV_NAME_MAX];
+        if (!moltest_env_name(moltest_environ[i], name, sizeof name)) {
+            i++;
+            continue;
+        }
+        (void)unsetenv(name);
+        i = 0; /* the list shifted under us */
+        if (moltest_environ[0] == NULL)
+            break;
+        /* Guard against an implementation that refuses to remove one. */
+        char again[MOLTEST_ENV_NAME_MAX];
+        if (moltest_env_name(moltest_environ[0], again, sizeof again)
+            && strcmp(again, name) == 0)
+            break;
+    }
+
+    for (size_t i = 0; i < saved->count; i++) {
+        char name[MOLTEST_ENV_NAME_MAX];
+        if (!moltest_env_name(saved->entries[i], name, sizeof name))
+            continue;
+        (void)setenv(name, strchr(saved->entries[i], '=') + 1, 1);
+    }
+    moltest_env_free(saved);
+}
+
 static void run_one(size_t index) {
     test_entry *t = &tests[index];
     current_test = index;
@@ -491,11 +591,26 @@ static void run_one(size_t index) {
         return;
     }
 
+    /* The environment is put back however the case leaves. A fixture that sets
+       `C_COMPILER` restores it at the end, and `ASSERT` returns from the case
+       where it stands — so the restore is skipped exactly when it matters,
+       leaving a variable pointing into a temporary directory the teardown
+       never removed either. Every later case that reads it then fails for a
+       reason none of them mentions: one lint fixture failing this way took
+       twenty build cases down with it, twice, on two different days.
+
+       A test that fails must not change the result of the next one. That is a
+       property of the harness, not something each of eight hundred cases can
+       be trusted to remember. */
+    moltest_env *saved = moltest_env_save();
+
     double started = now_seconds();
     capture_start();
     t->fn();
     t->output = capture_finish();
     t->seconds = now_seconds() - started;
+
+    moltest_env_restore(saved);
 
     if (current_failed)
         t->status = moltest_status_failed;
