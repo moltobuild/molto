@@ -532,6 +532,33 @@ static void print_usage(void) {
 /* Where this process was started from, kept so a fake can be made out of it. */
 static const char *moltest_self;
 
+/*
+ * The file this program actually is, which on Windows is not what `argv[0]`
+ * says it is.
+ *
+ * A caller may name a program without `.exe` — `CreateProcess` resolves the
+ * suffix and starts the right file, but `argv[0]` keeps the name it was handed.
+ * Molto does exactly that when it looks for pickup: it composes a name, runs
+ * it, and the fake it started then looked for a spec beside a path that does
+ * not exist, decided it was not a fake, and read `tools` as a command-line
+ * option. One `moltest: unknown option` and every test that shells out to that
+ * fake fails for a reason nothing in it mentions.
+ *
+ * `argv[0]` is the answer on POSIX, where a name and a filename are the same
+ * thing and nothing is appended to run a file.
+ */
+static const char *moltest_own_path(int argc, char **argv, char *out, size_t size) {
+#ifdef _WIN32
+    const DWORD written = GetModuleFileNameA(NULL, out, (DWORD)size);
+    if (written > 0 && (size_t)written < size)
+        return out;
+#else
+    (void)out;
+    (void)size;
+#endif
+    return argc > 0 ? argv[0] : NULL;
+}
+
 #ifdef _WIN32
 #define MOLTEST_EXE_SUFFIX ".exe"
 #else
@@ -754,11 +781,13 @@ static bool moltest_obey(const char *line, int argc, char **argv, int *status) {
  * somebody copied it would be a surprise nobody could debug.
  */
 static bool moltest_ran_as_fake(int argc, char **argv, int *status) {
-    if (argc < 1 || argv[0] == NULL)
+    char own[MOLTEST_LINE_MAX];
+    const char *self = moltest_own_path(argc, argv, own, sizeof own);
+    if (self == NULL)
         return false;
 
     char spec_path[MOLTEST_LINE_MAX];
-    if (!moltest_beside(argv[0], MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
+    if (!moltest_beside(self, MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
         return false;
     FILE *spec = fopen(spec_path, "rb");
     if (spec == NULL)
@@ -815,7 +844,11 @@ static bool moltest_ran_as_fake(int argc, char **argv, int *status) {
 }
 
 int moltest_run(int argc, char **argv) {
-    moltest_self = argc > 0 ? argv[0] : NULL;
+    /* The same question as the spec lookup below, and it wants the same answer:
+       a fake is a copy of this file, so this has to be the file and not the
+       name somebody typed. */
+    static char own[MOLTEST_LINE_MAX];
+    moltest_self = moltest_own_path(argc, argv, own, sizeof own);
 
     /* Before anything else, including argument parsing: a fabricated program
        is not a suite and must not be read as one. */
