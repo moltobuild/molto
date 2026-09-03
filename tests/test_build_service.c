@@ -486,10 +486,8 @@ MOLTEST_FAKE(fake_racing_compiler) {
     }
 
     const char *log = moltest_fake_setting("log");
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        fprintf(file, "x\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_append_line(log, "x");
     return 0;
 }
 

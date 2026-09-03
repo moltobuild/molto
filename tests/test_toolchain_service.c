@@ -59,11 +59,8 @@ MOLTEST_FAKE(fake_pickup_toolchain) {
     (void)argc;
     (void)argv;
     const char *log = moltest_fake_setting("log");
-    FILE *file;
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        fprintf(file, "called\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_append_line(log, "called");
     const char *answer = moltest_fake_setting("answer");
     if (answer != NULL) {
         char *text = fs_read_file(answer);

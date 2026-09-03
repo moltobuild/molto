@@ -67,14 +67,8 @@ static void sandbox_teardown(sandbox *box) {
 MOLTEST_FAKE(fake_plugin) {
     const char *log = moltest_fake_setting("log");
     const char *dir = moltest_fake_setting("dir");
-    FILE *file;
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        fprintf(file, "%s", dir != NULL ? dir : "");
-        for (int i = 1; i < argc; i++)
-            fprintf(file, " %s", argv[i]);
-        fprintf(file, "\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_log_argv(log, dir != NULL ? dir : "", argc, argv);
     const char *code = moltest_fake_setting("exit");
     return code != NULL ? atoi(code) : 0;
 }
