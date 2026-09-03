@@ -140,15 +140,44 @@ static void workspace_teardown(const char *root) {
     (void)fs_remove_tree(root);
 }
 
-/* An answer naming a program that certainly exists, since the resolved
-   compiler is tracked as a file. */
-#define STUB_ANSWER \
-    "[compiler]\n" \
-    "path = \"/bin/sh\"\n" \
-    "c_path = \"/bin/sh\"\n" \
-    "cxx_path = \"/bin/echo\"\n" \
-    "vendor = \"gcc\"\n" \
-    "version = \"12.3.0\"\n"
+/*
+ * An answer naming programs that certainly exist, since the resolved compiler
+ * is tracked as a file: its timestamp is what tells a later run the memo still
+ * holds, and a path naming nothing cannot be recorded.
+ *
+ * Made rather than written down. This named `/bin/sh` and `/bin/echo`, which
+ * certainly exist on POSIX and nowhere on Windows -- so the answer was read
+ * and never memoed, and `toolchain_is_asked_once_and_then_remembered` saw the
+ * resolver asked every time, with only `could not record the resolved
+ * toolchain` on stderr to say why.
+ */
+typedef struct {
+    char cc[MOLTEST_PATH];
+    char cxx[MOLTEST_PATH];
+    char toml[1024];
+} stub_answer;
+
+[[nodiscard]] static bool stub_answer_setup(stub_answer *answer) {
+    if (!moltest_temp_file("molto_cc_tool", answer->cc, sizeof answer->cc) ||
+        !moltest_temp_file("molto_cxx_tool", answer->cxx, sizeof answer->cxx))
+        return false;
+    if (!fs_write_file(answer->cc, "") || !fs_write_file(answer->cxx, ""))
+        return false;
+    const int written = snprintf(answer->toml, sizeof answer->toml,
+        "[compiler]\n"
+        "path = \"%s\"\n"
+        "c_path = \"%s\"\n"
+        "cxx_path = \"%s\"\n"
+        "vendor = \"gcc\"\n"
+        "version = \"12.3.0\"\n",
+        answer->cc, answer->cc, answer->cxx);
+    return written > 0 && written < (int)sizeof answer->toml;
+}
+
+static void stub_answer_teardown(stub_answer *answer) {
+    (void)remove(answer->cc);
+    (void)remove(answer->cxx);
+}
 
 static project_target target_requiring(const char *feature) {
     project_target target;
@@ -163,7 +192,9 @@ static project_target target_requiring(const char *feature) {
 
 MOLTEST(toolchain_reads_the_answer_from_the_resolver) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER, 0));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
     char root[64];
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
@@ -173,20 +204,23 @@ MOLTEST(toolchain_reads_the_answer_from_the_resolver) {
     resolved_toolchain chain;
     ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
 
-    EXPECT_STREQ("/bin/sh", chain.cc);
-    EXPECT_STREQ("/bin/echo", chain.cxx);
+    EXPECT_STREQ(answer.cc, chain.cc);
+    EXPECT_STREQ(answer.cxx, chain.cxx);
     EXPECT_STREQ("gcc", chain.vendor);
     EXPECT_STREQ("12.3.0", chain.version);
     EXPECT_EQ(1, stub_calls(&stub));
 
     (void)wsdb_close(db);
     workspace_teardown(root);
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
 MOLTEST(toolchain_is_asked_once_and_then_remembered) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER, 0));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
     char root[64];
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
@@ -202,7 +236,7 @@ MOLTEST(toolchain_is_asked_once_and_then_remembered) {
        is spawned. This is the whole point of caching it. */
     ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
     EXPECT_EQ(1, stub_calls(&stub));
-    EXPECT_STREQ("/bin/sh", chain.cc);
+    EXPECT_STREQ(answer.cc, chain.cc);
 
     /* It survives closing and reopening the workspace. */
     (void)wsdb_close(db);
@@ -213,12 +247,15 @@ MOLTEST(toolchain_is_asked_once_and_then_remembered) {
 
     (void)wsdb_close(db);
     workspace_teardown(root);
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
 MOLTEST(toolchain_is_asked_again_when_the_request_changes) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER, 0));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
     char root[64];
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
@@ -245,6 +282,7 @@ MOLTEST(toolchain_is_asked_again_when_the_request_changes) {
 
     (void)wsdb_close(db);
     workspace_teardown(root);
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
@@ -269,13 +307,16 @@ MOLTEST(toolchain_reports_when_nothing_satisfies_the_request) {
 
 MOLTEST(toolchain_reports_a_resolver_that_cannot_run) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER, 0));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
     ASSERT_TRUE(setenv("MOLTO_PICKUP", "/nonexistent/pickup", 1) == 0);
 
     project_target target = target_requiring("attr_nodiscard");
     resolved_toolchain chain;
     EXPECT_EQ(exit_build_failure, toolchain_resolve(&target, NULL, false, NULL, false, &chain));
 
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
@@ -292,7 +333,9 @@ MOLTEST(toolchain_reports_an_unreadable_answer) {
 
 MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER, 0));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
 
     /* Setting the compiler by hand is a deliberate choice, so it wins and the
        resolver is not consulted at all. */
@@ -306,5 +349,6 @@ MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
     EXPECT_STREQ("/usr/bin/some-c++", chain.cxx);
     EXPECT_EQ(0, stub_calls(&stub));
 
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }

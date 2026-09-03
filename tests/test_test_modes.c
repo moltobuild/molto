@@ -4,6 +4,7 @@
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/process_service.h>
 #include <molto/util/str_list.h>
 
 #include <stdio.h>
@@ -101,16 +102,16 @@ MOLTEST(tests_link_into_one_binary_in_single_mode) {
     EXPECT_TRUE(fs_path_exists(expected));
 
     /* It runs, and both test files registered into it — which only happens if
-       they were linked together with the framework that owns main(). */
-    char cmd[700];
-    snprintf(cmd, sizeof cmd, "%s > %s/out.txt 2>&1", expected, root);
-    EXPECT_TRUE(system(cmd) == 0);
-    char out_path[512];
-    snprintf(out_path, sizeof out_path, "%s/out.txt", root);
-    char *out = fs_read_file(out_path);
-    ASSERT_NOT_NULL(out);
+       they were linked together with the framework that owns main().
+
+       Captured rather than redirected through a shell: `cmd.exe` reads the `/`
+       of an absolute path as an option, and the redirection syntax is not the
+       same on both platforms. The buffer also replaces the file this used to
+       write and read back. */
+    char out[1024] = "";
+    const char *const run[] = { expected, NULL };
+    EXPECT_EQ(0, process_capture_all(run, NULL, 0, out, sizeof out, NULL));
     EXPECT_NOT_NULL(strstr(out, "2"));
-    free(out);
 
     str_list_free(&binaries);
     cleanup(root);

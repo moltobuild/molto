@@ -5,6 +5,7 @@
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/process_service.h>
 #include <molto/util/json.h>
 #include <molto/util/str_list.h>
 
@@ -77,10 +78,17 @@ MOLTEST(build_service) {
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     EXPECT_TRUE(mtime_of(binary) > linked_at);
 
-    /* The produced binary runs successfully. */
-    char cmd[600];
-    snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
-    EXPECT_TRUE(system(cmd) == 0);
+    /* The produced binary runs successfully.
+
+       Through `process_capture_all` rather than `system`, which asked a shell
+       to do it: on Windows that shell is `cmd.exe`, which reads the `/` in an
+       absolute path as the start of an option and answers "The system cannot
+       find the path specified" -- and `> /dev/null` names a file that does not
+       exist there either. Capturing is also what silences it, with no
+       redirection to write in a syntax that differs per platform. */
+    char output[512] = "";
+    const char *const run[] = { binary, NULL };
+    EXPECT_EQ(0, process_capture_all(run, NULL, 0, output, sizeof output, NULL));
 
     (void)fs_remove_tree(root);
 
@@ -360,9 +368,9 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     char binary[512];
     snprintf(binary, sizeof binary, "%s/build/debug/cpp_app" FS_EXECUTABLE_SUFFIX, root);
     ASSERT_TRUE(fs_path_exists(binary));
-    char cmd[600];
-    snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
-    EXPECT_TRUE(system(cmd) == 0);
+    char output[512] = "";
+    const char *const run[] = { binary, NULL };
+    EXPECT_EQ(0, process_capture_all(run, NULL, 0, output, sizeof output, NULL));
 
     (void)fs_remove_tree(root);
 }

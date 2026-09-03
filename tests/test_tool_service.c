@@ -22,22 +22,52 @@ typedef struct {
     bool had_previous;
 } pickup_stub;
 
-/* The answer `pickup tools --format toml` gives. The paths name programs that
-   certainly exist, since a resolved tool is tracked as a file. */
-#define STUB_ANSWER \
-    "[[tool]]\n" \
-    "kind = \"formatter\"\n" \
-    "name = \"clang-format\"\n" \
-    "path = \"/bin/sh\"\n" \
-    "version = \"clang-format version 22.1.8\"\n" \
-    "source = \"pickup\"\n" \
-    "\n" \
-    "[[tool]]\n" \
-    "kind = \"linter\"\n" \
-    "name = \"clang-tidy\"\n" \
-    "path = \"/bin/cat\"\n" \
-    "version = \"LLVM version 22.1.8\"\n" \
-    "source = \"pickup\"\n"
+/*
+ * The answer `pickup tools --format toml` gives, with two paths that certainly
+ * exist -- because a resolved tool is *tracked* as a file: `tool_resolve`
+ * records its timestamp so a later run can tell the memo is still good, and a
+ * path naming nothing cannot be recorded at all.
+ *
+ * Made here rather than written down, which is what this used to do: it named
+ * `/bin/sh` and `/bin/cat`, and those certainly exist on POSIX and nowhere on
+ * Windows. There the answer was read and never memoed, so every test below
+ * that counts how often the resolver was asked saw it asked again -- and the
+ * only sign of it was `could not record the resolved linter` on stderr.
+ */
+typedef struct {
+    char formatter[MOLTEST_PATH];
+    char linter[MOLTEST_PATH];
+    char toml[1024];
+} stub_answer;
+
+[[nodiscard]] static bool stub_answer_setup(stub_answer *answer) {
+    if (!moltest_temp_file("molto_fmt_tool", answer->formatter, sizeof answer->formatter) ||
+        !moltest_temp_file("molto_lint_tool", answer->linter, sizeof answer->linter))
+        return false;
+    if (!fs_write_file(answer->formatter, "") || !fs_write_file(answer->linter, ""))
+        return false;
+    const int written = snprintf(answer->toml, sizeof answer->toml,
+        "[[tool]]\n"
+        "kind = \"formatter\"\n"
+        "name = \"clang-format\"\n"
+        "path = \"%s\"\n"
+        "version = \"clang-format version 22.1.8\"\n"
+        "source = \"pickup\"\n"
+        "\n"
+        "[[tool]]\n"
+        "kind = \"linter\"\n"
+        "name = \"clang-tidy\"\n"
+        "path = \"%s\"\n"
+        "version = \"LLVM version 22.1.8\"\n"
+        "source = \"pickup\"\n",
+        answer->formatter, answer->linter);
+    return written > 0 && written < (int)sizeof answer->toml;
+}
+
+static void stub_answer_teardown(stub_answer *answer) {
+    (void)remove(answer->formatter);
+    (void)remove(answer->linter);
+}
 
 /* The pickup molto asks for a tool: it records that it was called and prints
    the answer it was given. A real program, because a shebang means nothing to
@@ -124,27 +154,32 @@ static void workspace_teardown(const char *root) {
 
 MOLTEST(tool_resolve_reads_the_answer_of_pickup_tools) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml));
 
     /* Two tools in one answer: each kind has to find its own, not the first. */
     resolved_tool formatter;
     ASSERT_EQ(exit_ok, tool_resolve(tool_kind_formatter, NULL, false, &formatter));
     EXPECT_STREQ("clang-format", formatter.name);
-    EXPECT_STREQ("/bin/sh", formatter.path);
+    EXPECT_STREQ(answer.formatter, formatter.path);
     EXPECT_STREQ("clang-format version 22.1.8", formatter.version);
 
     resolved_tool linter;
     ASSERT_EQ(exit_ok, tool_resolve(tool_kind_linter, NULL, false, &linter));
     EXPECT_STREQ("clang-tidy", linter.name);
-    EXPECT_STREQ("/bin/cat", linter.path);
+    EXPECT_STREQ(answer.linter, linter.path);
 
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
 MOLTEST(tool_resolve_remembers_the_answer_in_the_workspace_database) {
     pickup_stub stub;
     char root[64];
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml));
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
     wsdb *db = wsdb_open(root);
@@ -163,13 +198,16 @@ MOLTEST(tool_resolve_remembers_the_answer_in_the_workspace_database) {
 
     wsdb_close(db);
     workspace_teardown(root);
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
 MOLTEST(tool_resolve_asks_again_when_refresh_is_set) {
     pickup_stub stub;
     char root[64];
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml));
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
     wsdb *db = wsdb_open(root);
@@ -182,12 +220,15 @@ MOLTEST(tool_resolve_asks_again_when_refresh_is_set) {
 
     wsdb_close(db);
     workspace_teardown(root);
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
 MOLTEST(tool_resolve_prefers_the_environment_override_without_caching_it) {
     pickup_stub stub;
-    ASSERT_TRUE(stub_setup(&stub, STUB_ANSWER));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml));
     ASSERT_TRUE(setenv("MOLTO_CLANG_TIDY", "/usr/local/bin/my-tidy", 1) == 0);
 
     resolved_tool tool;
@@ -198,9 +239,10 @@ MOLTEST(tool_resolve_prefers_the_environment_override_without_caching_it) {
 
     /* The other kind still resolves normally. */
     ASSERT_EQ(exit_ok, tool_resolve(tool_kind_formatter, NULL, false, &tool));
-    EXPECT_STREQ("/bin/sh", tool.path);
+    EXPECT_STREQ(answer.formatter, tool.path);
 
     (void)unsetenv("MOLTO_CLANG_TIDY");
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
@@ -208,16 +250,22 @@ MOLTEST(tool_resolve_reports_a_machine_with_no_tool_of_that_kind) {
     pickup_stub stub;
     /* Pickup ran and answered; there is simply no formatter here. That is a
        fact to act on — lint still has the compiler — not a malfunction. */
-    ASSERT_TRUE(stub_setup(&stub,
-        "[[tool]]\n"
-        "kind = \"linter\"\n"
-        "name = \"clang-tidy\"\n"
-        "path = \"/bin/cat\"\n"));
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    char only_a_linter[512];
+    ASSERT_TRUE(snprintf(only_a_linter, sizeof only_a_linter,
+                         "[[tool]]\n"
+                         "kind = \"linter\"\n"
+                         "name = \"clang-tidy\"\n"
+                         "path = \"%s\"\n",
+                         answer.linter) < (int)sizeof only_a_linter);
+    ASSERT_TRUE(stub_setup(&stub, only_a_linter));
 
     resolved_tool tool;
     EXPECT_EQ(exit_dependency_failure,
               tool_resolve(tool_kind_formatter, NULL, false, &tool));
 
+    stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
 
