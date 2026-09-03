@@ -276,7 +276,14 @@ MOLTEST(the_writer_escapes_a_quote_in_a_path) {
     char dir[PATH_MAX_LEN];
     char file[PATH_MAX_LEN];
     ASSERT_TRUE(fs_format_path(dir, sizeof dir, "%s/we\"ird", at.root));
-    ASSERT_TRUE(fs_make_dirs(dir));
+    /* Asked of the system rather than assumed of the platform, the way the
+       symlink test above asks: a quote is one of the characters Windows
+       forbids in a filename, so the directory this needs cannot exist there.
+       What is under test -- that the writer escapes a quote it is handed --
+       is exercised by the reader's case either way; what cannot be arranged
+       is a real dependency living behind such a name. */
+    if(!fs_make_dirs(dir))
+        SKIP("this system will not make a directory with a quote in its name");
     ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/recipe.toml", dir));
     ASSERT_TRUE(fs_write_file(file, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                     "name = \"odd\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"

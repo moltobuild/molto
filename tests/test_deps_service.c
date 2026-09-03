@@ -94,9 +94,13 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     ASSERT_EQ(1u, deps.units[0].sources.count);
     EXPECT_NOT_NULL(strstr(deps.units[0].sources.items[0], "yyjson.c"));
 
-    /* Absolute, because the source is not under the project root. */
+    /* Absolute, because the source is not under the project root.
+
+       Asked with `fs_path_is_absolute` rather than by looking at the first
+       byte: a Windows path opens with a drive and a colon, so `[0] == '/'` is
+       this question asked in a way that is only right on one platform. */
     ASSERT_EQ(1u, deps.includes.count);
-    EXPECT_EQ('/', deps.includes.items[0][0]);
+    EXPECT_TRUE(fs_path_is_absolute(deps.includes.items[0]));
 
     ASSERT_EQ(1u, deps.defines.count);
     EXPECT_STREQ("YYJSON_STATIC=1", deps.defines.items[0]);
@@ -106,7 +110,7 @@ MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     /* Where the package sits, kept rather than only used to compose paths:
        it is what turns one of those absolute sources back into the name its
        own author would use. Every source is under it. */
-    EXPECT_EQ('/', deps.units[0].root[0]);
+    EXPECT_TRUE(fs_path_is_absolute(deps.units[0].root));
     EXPECT_EQ(0, strncmp(deps.units[0].sources.items[0], deps.units[0].root,
                          strlen(deps.units[0].root)));
 
@@ -198,7 +202,7 @@ MOLTEST(deps_prepare_records_what_each_package_exports) {
     const prepared_interface *exports = &deps.units[0].exports;
 
     ASSERT_EQ(1u, exports->includes.count);
-    EXPECT_EQ('/', exports->includes.items[0][0]); /* absolute, as the sum's is */
+    EXPECT_TRUE(fs_path_is_absolute(exports->includes.items[0])); /* absolute, as the sum's is */
     ASSERT_EQ(1u, exports->defines.count);
     EXPECT_STREQ("YYJSON_STATIC=1", exports->defines.items[0]);
     ASSERT_EQ(1u, exports->links.count);

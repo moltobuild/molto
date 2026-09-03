@@ -277,3 +277,57 @@ MOLTEST(a_name_that_does_not_fit_is_refused_rather_than_cut) {
     EXPECT_FALSE(fs_path_without_root("/tmp/x", NULL, sizeof out));
     EXPECT_FALSE(fs_path_without_root(NULL, out, sizeof out));
 }
+
+/*
+ * Two writes inside the same second are two different times.
+ *
+ * This is the whole of what a build tool asks a filesystem, and on Windows it
+ * used to answer wrong: `struct stat` there carries whole seconds, so a source
+ * edited a moment after a build had the same timestamp as the object built
+ * from it, and the rebuild never happened. Not a slow rebuild -- a skipped
+ * one.
+ *
+ * Written without a sleep on purpose. A test that waits a second to prove a
+ * second-resolution bug is a test that passes either way.
+ */
+MOLTEST(two_writes_in_the_same_second_are_told_apart) {
+    char first[MOLTEST_PATH];
+    char second[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_file("molto_stamp_a", first, sizeof first));
+    ASSERT_TRUE(moltest_temp_file("molto_stamp_b", second, sizeof second));
+
+    ASSERT_TRUE(fs_write_file(first, "one\n"));
+    ASSERT_TRUE(fs_write_file(second, "two\n"));
+
+    int64_t earlier = 0;
+    int64_t later = 0;
+    ASSERT_TRUE(fs_mtime_ns(first, &earlier));
+    ASSERT_TRUE(fs_mtime_ns(second, &later));
+
+    /* Not `>`: two writes really can land on the same tick, and a filesystem
+       is allowed to say so. What may not happen is a clock that only counts
+       seconds, which is what the sub-second remainder being zero every time
+       would mean. */
+    EXPECT_TRUE(later >= earlier);
+    EXPECT_TRUE(earlier % 1000000000LL != 0 || later % 1000000000LL != 0);
+
+    (void)remove(first);
+    (void)remove(second);
+}
+
+/* And the size comes back with it, since one call answers both. */
+MOLTEST(a_stamp_carries_the_size_as_well_as_the_time) {
+    char path[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_file("molto_stamp_size", path, sizeof path));
+    ASSERT_TRUE(fs_write_file(path, "12345"));
+
+    int64_t when = 0;
+    uint64_t size = 0;
+    ASSERT_TRUE(fs_stamp(path, &when, &size));
+    EXPECT_EQ(5u, size);
+    EXPECT_TRUE(when > 0);
+
+    EXPECT_FALSE(fs_stamp("molto_no_such_file_zzz", &when, &size));
+
+    (void)remove(path);
+}

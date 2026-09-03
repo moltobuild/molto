@@ -54,6 +54,25 @@ static bool plugin_program(const char *name, char *out, size_t size) {
     return fs_format_path(out, size, PLUGIN_PREFIX "%s", name);
 }
 
+/*
+ * `<dir>/molto-<name>` as the filesystem holds it, suffix and all.
+ *
+ * `plugin_program` above gives the *name*; this gives the *filename*, and on
+ * Windows they are not the same string. Three places composed the second by
+ * writing the first and joining a directory onto it, so `molto plugin remove`
+ * could not find what `molto plugin install` had put there -- it reported
+ * "was not installed by molto" about its own work -- and `plugin list`
+ * described a path with no file at the end of it.
+ */
+[[nodiscard]] static bool plugin_file_in(const char *dir, const char *name, char *out,
+                                         size_t size) {
+    char program[PLUGIN_PROGRAM_MAX];
+    char file[PLUGIN_PROGRAM_MAX + sizeof ".exe"];
+    return plugin_program(name, program, sizeof program) &&
+           fs_executable_file(program, file, sizeof file) &&
+           fs_format_path(out, size, "%s/%s", dir, file);
+}
+
 /* --- where to look --- */
 
 bool plugin_dir(char *out, size_t size) {
@@ -283,7 +302,7 @@ static bool add_entry(plugin_entry *out, size_t capacity, size_t *count, const c
     plugin_entry *entry = &out[*count];
     memset(entry, 0, sizeof *entry);
     snprintf(entry->name, sizeof entry->name, "%s", name);
-    if(!fs_format_path(entry->path, sizeof entry->path, "%s/" PLUGIN_PREFIX "%s", dir, name))
+    if(!plugin_file_in(dir, name, entry->path, sizeof entry->path))
         return true; /* a path that does not fit is a plugin nothing could run */
 
     entry->origin = origin;
@@ -478,8 +497,10 @@ static bool place_binary(const char *root, const char *name, char *err, size_t e
        artifact in this ecosystem is packed with. */
     char source[PLUGIN_PATH_MAX];
     char destination[PLUGIN_PATH_MAX];
-    if(!fs_format_path(source, sizeof source, "%s/bin/" PLUGIN_PREFIX "%s", root, name) ||
-       !fs_format_path(destination, sizeof destination, "%s/" PLUGIN_PREFIX "%s", dir, name))
+    char bin[PLUGIN_PATH_MAX];
+    if(!fs_format_path(bin, sizeof bin, "%s/bin", root) ||
+       !plugin_file_in(bin, name, source, sizeof source) ||
+       !plugin_file_in(dir, name, destination, sizeof destination))
         return recipe_error(err, err_size, "the path to '%s' is too long", name);
 
     if(!fs_path_exists(source))
@@ -537,8 +558,7 @@ bool plugin_remove(const char *name, char *err, size_t err_size) {
 
     char dir[PLUGIN_PATH_MAX];
     char binary[PLUGIN_PATH_MAX];
-    if(!plugin_dir(dir, sizeof dir) ||
-       !fs_format_path(binary, sizeof binary, "%s/" PLUGIN_PREFIX "%s", dir, name))
+    if(!plugin_dir(dir, sizeof dir) || !plugin_file_in(dir, name, binary, sizeof binary))
         return recipe_error(err, err_size, "the path to '%s' is too long", name);
 
     /* A plugin on PATH was put there by someone else and is not molto's to
