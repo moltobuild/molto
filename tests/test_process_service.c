@@ -3,8 +3,63 @@
 #include <molto/services/process_service.h>
 #include <molto/util/thread.h>
 
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h> /* SetErrorMode, so a deliberate fault opens no dialog */
+#endif
+
+/*
+ * A program that dies the way a broken program dies, on either platform.
+ *
+ * Each side asks for the death in the way its own platform defines, and both
+ * arrive as `128 + SIGABRT`: one number, which is the point of translating
+ * Windows' exception rather than growing a second contract for callers.
+ *
+ * Two things this may not do, both learnt the hard way.
+ *
+ * It may not fault a page. Writing through a null pointer is undefined
+ * behaviour, and the sanitizers job exists to catch exactly that: UBSan
+ * intercepts the store, reports it, and the child leaves with 1 rather than
+ * dying. A test that needs undefined behaviour to pass is a test that cannot
+ * run under the build that looks for it.
+ *
+ * And it may not raise SIGSEGV or SIGFPE, which are defined but no better
+ * here: ASan installs handlers for both, so the child is caught there too and
+ * again leaves with 1. `abort()` is the one abnormal death that reaches the
+ * parent with the sanitizers on -- measured, not assumed.
+ *
+ * Not `raise(SIGTERM)`, which is what this test used to do: the C runtime on
+ * Windows handles that itself and leaves with 3, and no parent can tell that
+ * from `exit(3)`. The information is gone before the process ends.
+ */
+MOLTEST_FAKE(fake_crashing_program) {
+    (void)argc;
+    (void)argv;
+#ifdef _WIN32
+    /* `SetErrorMode` first, or the exception opens the Windows error dialog
+       and the run waits on a box nobody is there to close.
+
+       `abort()` is no use on this side: mingw's runtime leaves with 3, an
+       ordinary status. STATUS_STACK_BUFFER_OVERRUN is what the platform's own
+       fail-fast path raises, and `exception_to_signal` reads it as SIGABRT. */
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    RaiseException(0xC0000409u, EXCEPTION_NONCONTINUABLE, 0, NULL);
+#else
+    abort();
+#endif
+    return 0; /* not reached */
+}
+
+/* The crashing program, made once per test that wants it. */
+static bool make_crasher(char *path, size_t size) {
+    char at[MOLTEST_PATH];
+    if(!moltest_temp_file("molto_crasher", at, sizeof at))
+        return false;
+    return moltest_fake_program(at, "behave fake_crashing_program\n", path, size);
+}
 
 MOLTEST(process_service) {
     const char *ok[] = { "true", NULL };
@@ -18,9 +73,11 @@ MOLTEST(process_service) {
     int code = process_run(missing);
     EXPECT_TRUE(code == 127 || code == -1);
 
-    /* A child killed by a signal is reported as 128 + signal. */
-    const char *killed[] = { "sh", "-c", "kill -TERM $$", NULL };
-    EXPECT_TRUE(process_run(killed) == 128 + 15); /* SIGTERM = 15 */
+    /* A child that dies abnormally is reported as 128 + signal. */
+    char crasher[MOLTEST_PATH];
+    ASSERT_TRUE(make_crasher(crasher, sizeof crasher));
+    const char *killed[] = { crasher, NULL };
+    EXPECT_EQ(128 + SIGABRT, process_run(killed));
 }
 
 MOLTEST(process_exports_env_only_to_the_child) {
@@ -83,8 +140,10 @@ MOLTEST(process_capture_all_reports_a_child_that_could_not_run) {
     int code = process_capture_all(missing, NULL, 0, out, sizeof out, NULL);
     EXPECT_TRUE(code == 127 || code == -1);
 
-    const char *const killed[] = { "sh", "-c", "kill -TERM $$", NULL };
-    EXPECT_EQ(128 + 15, process_capture_all(killed, NULL, 0, out, sizeof out, NULL));
+    char crasher[MOLTEST_PATH];
+    ASSERT_TRUE(make_crasher(crasher, sizeof crasher));
+    const char *const killed[] = { crasher, NULL };
+    EXPECT_EQ(128 + SIGABRT, process_capture_all(killed, NULL, 0, out, sizeof out, NULL));
 }
 
 MOLTEST(process_capture_still_leaves_stderr_alone) {

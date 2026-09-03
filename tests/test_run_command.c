@@ -36,13 +36,28 @@ MOLTEST(run_command) {
     char *forwarded[] = { "alpha", "beta" };
     EXPECT_TRUE(run_command_run(NULL, false, 0, forwarded, 2) == 2);
 
-    /* A program that dies from a signal is reported as 128 + signal, not as a
-       "failed to start" error. */
+    /* A program that dies abnormally is reported as 128 + signal, not as a
+       "failed to start" error.
+
+       Each platform is asked in its own terms and both answer 128 + SIGABRT.
+       Not `raise(SIGTERM)`, which is what this used to be: the C runtime on
+       Windows handles it and leaves with 3, a status no parent can tell from
+       an ordinary `exit(3)`. And not a null write, which is undefined
+       behaviour a sanitized build catches instead of dying from. */
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path,
-        "#include <signal.h>\n"
-        "int main(void) { raise(SIGTERM); return 0; }\n"));
-    EXPECT_TRUE(run_command_run(NULL, false, 0, NULL, 0) == 128 + SIGTERM);
+        "#ifdef _WIN32\n"
+        "#include <windows.h>\n"
+        "int main(void) {\n"
+        "    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);\n"
+        "    RaiseException(0xC0000409u, EXCEPTION_NONCONTINUABLE, 0, 0);\n"
+        "    return 0;\n"
+        "}\n"
+        "#else\n"
+        "#include <stdlib.h>\n"
+        "int main(void) { abort(); return 0; }\n"
+        "#endif\n"));
+    EXPECT_EQ(128 + SIGABRT, run_command_run(NULL, false, 0, NULL, 0));
 
     EXPECT_TRUE(chdir(previous) == 0);
 

@@ -48,10 +48,18 @@ typedef struct {
 /* The name of the signal a child died from, for the 128 + N codes above.
  *
  * It lives here because the convention does: a caller reporting one has the
- * number this service handed it. `strsignal` is POSIX, and on Windows the
- * question does not arise — nothing there dies from a signal, so the answer is
- * the honest "unknown signal" rather than a table of names for a mechanism the
- * platform does not have. */
+ * number this service handed it. `strsignal` is POSIX; Windows answers from a
+ * short table of its own.
+ *
+ * Windows has no signals, but it does have abnormal deaths, and it reports
+ * them as the exception that caused one: a process that faults exits
+ * 0xC0000005. Those are translated to the POSIX number nearest in meaning, so
+ * `128 + N` says the same thing on both platforms and a caller needs one rule.
+ * Untranslated, every such death read as a signal in the three-billions.
+ *
+ * What no translation reaches is a child that handles its own signal —
+ * `raise(SIGTERM)` leaves with 3 through the C runtime, and nothing about the
+ * process it leaves behind distinguishes that from `exit(3)`. */
 [[nodiscard]] const char *process_signal_name(int signal_number);
 
 /* Run a command described by a NULL-terminated `argv`, inheriting stdio so
