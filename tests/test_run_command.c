@@ -36,13 +36,29 @@ MOLTEST(run_command) {
     char *forwarded[] = { "alpha", "beta" };
     EXPECT_TRUE(run_command_run(NULL, false, 0, forwarded, 2) == 2);
 
-    /* A program that dies from a signal is reported as 128 + signal, not as a
-       "failed to start" error. */
+    /* A program that dies abnormally is reported as 128 + signal, not as a
+       "failed to start" error.
+
+       A page fault rather than `raise(SIGTERM)`, because the two platforms
+       agree about the first and not the second: POSIX raises SIGSEGV, Windows
+       exits with EXCEPTION_ACCESS_VIOLATION, and both arrive here as
+       `128 + SIGSEGV`. A raised SIGTERM is handled by the C runtime on
+       Windows, which leaves with 3 -- a status no parent can tell from an
+       ordinary `exit(3)`. */
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path,
-        "#include <signal.h>\n"
-        "int main(void) { raise(SIGTERM); return 0; }\n"));
-    EXPECT_TRUE(run_command_run(NULL, false, 0, NULL, 0) == 128 + SIGTERM);
+        "#ifdef _WIN32\n"
+        "#include <windows.h>\n"
+        "#endif\n"
+        "int main(void) {\n"
+        "#ifdef _WIN32\n"
+        "    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);\n"
+        "#endif\n"
+        "    volatile int *nowhere = 0;\n"
+        "    *nowhere = 1;\n"
+        "    return 0;\n"
+        "}\n"));
+    EXPECT_EQ(128 + SIGSEGV, run_command_run(NULL, false, 0, NULL, 0));
 
     EXPECT_TRUE(chdir(previous) == 0);
 

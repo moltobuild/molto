@@ -3,6 +3,7 @@
 #include <molto/services/process_service.h>
 #include <molto/util/thread.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -386,6 +387,52 @@ static pipe_end open_null_sink(void) {
 
 static bool child_started(child_handle child) { return child != CHILD_NONE; }
 
+/*
+ * What Windows says instead of a signal, said as a signal.
+ *
+ * A process that dies abnormally here leaves the exception that killed it as
+ * its exit code, and those are NTSTATUS values above 0xC0000000 -- an access
+ * violation exits 3221225477. Every one of them is greater than
+ * `SIGNAL_EXIT_BASE`, so the three callers that read `> 128` as "killed"
+ * already treated them as signal deaths, and reported the signal number as
+ * 3221225349. Correct in shape and useless to read.
+ *
+ * Mapping them onto the POSIX numbers keeps one contract on both platforms
+ * rather than growing a second one for callers to learn. The table is short on
+ * purpose: these are the deaths a build tool actually witnesses -- a compiler
+ * that faults, a test binary that overruns its stack, a program stopped with
+ * Ctrl-C. Anything else stays the raw code, which is worse to read than a
+ * signal name and better than a wrong one.
+ *
+ * What this cannot recover is a `raise(SIGTERM)`: the C runtime handles it in
+ * the child and leaves with 3, which no parent can tell from `exit(3)`. That
+ * is not a translation this side is failing to do -- the information is gone
+ * before the process ends.
+ */
+static int exception_to_signal(DWORD code) {
+    switch(code) {
+    case 0xC0000005: /* EXCEPTION_ACCESS_VIOLATION */
+    case 0xC00000FD: /* EXCEPTION_STACK_OVERFLOW */
+        return SIGSEGV;
+    case 0xC000001D: /* EXCEPTION_ILLEGAL_INSTRUCTION */
+    case 0xC000001E: /* EXCEPTION_INVALID_DISPOSITION */
+        return SIGILL;
+    case 0xC0000094: /* EXCEPTION_INT_DIVIDE_BY_ZERO */
+    case 0xC000008E: /* EXCEPTION_FLT_DIVIDE_BY_ZERO */
+    case 0xC0000090: /* EXCEPTION_FLT_INVALID_OPERATION */
+        return SIGFPE;
+    case 0xC000013A: /* CONTROL_C_EXIT */
+        return SIGINT;
+    case 0xC0000409: /* STATUS_STACK_BUFFER_OVERRUN, what abort() raises */
+        return SIGABRT;
+    /* EXCEPTION_BREAKPOINT is deliberately absent: the CRT here has no
+       SIGTRAP to name it with, and a breakpoint reaches a process under a
+       debugger rather than under a build. */
+    default:
+        return 0;
+    }
+}
+
 static int child_wait(child_handle child) {
     if(WaitForSingleObject(child, INFINITE) != WAIT_OBJECT_0) {
         (void)CloseHandle(child);
@@ -394,7 +441,10 @@ static int child_wait(child_handle child) {
     DWORD code = 0;
     const BOOL got = GetExitCodeProcess(child, &code);
     (void)CloseHandle(child);
-    return got ? (int)code : -1;
+    if(!got)
+        return -1;
+    const int signal_number = exception_to_signal(code);
+    return signal_number != 0 ? SIGNAL_EXIT_BASE + signal_number : (int)code;
 }
 
 static void child_kill(child_handle child) {
@@ -597,8 +647,23 @@ int process_execute(const char *const argv[], process_spec *spec) {
 
 const char *process_signal_name(int signal_number) {
 #ifdef _WIN32
-    (void)signal_number;
-    return "unknown signal";
+    /* No `strsignal` here, and a short table rather than one: these are the
+       numbers `exception_to_signal` can produce and nothing else reaches this
+       function on this platform. */
+    switch(signal_number) {
+    case SIGSEGV:
+        return "segmentation fault";
+    case SIGILL:
+        return "illegal instruction";
+    case SIGFPE:
+        return "arithmetic exception";
+    case SIGINT:
+        return "interrupt";
+    case SIGABRT:
+        return "aborted";
+    default:
+        return "unknown signal";
+    }
 #else
     const char *name = strsignal(signal_number);
     return name != NULL ? name : "unknown signal";
