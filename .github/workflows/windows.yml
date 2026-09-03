@@ -167,6 +167,15 @@ jobs:
       # bootstrap Makefile needs, and a gcc from the same family the cross job
       # compiles with, so the two halves disagree about as little as possible.
       # TODO: pin to an exact tag, the way every other action here is pinned.
+      #
+      # `unzip` is molto's, not the suite's: `source_service` shells out to it
+      # for an archive dependency, so a runner without it is a runner where
+      # that feature does not work -- which the tally should say. `zip` is the
+      # suite's, to make the archive it then asks molto to unpack. Two
+      # packages because MSYS2 ships them separately, and installing only the
+      # one that made the failure visible would move the failure rather than
+      # fix it. `tar` is already in the base install, which is why the tarball
+      # half of those tests was passing all along.
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -174,6 +183,8 @@ jobs:
           install: >-
             make
             mingw-w64-x86_64-gcc
+            unzip
+            zip
 
       # `CC=gcc` because the bootstrap Makefile reaches for `gcc-12` when
       # nobody names a compiler, and MSYS2 calls its own `gcc`. The Makefile is
