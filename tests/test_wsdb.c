@@ -255,15 +255,26 @@ MOLTEST(wsdb_reports_a_state_it_could_not_save) {
     ASSERT_NOT_NULL(db);
     wsdb_record_object(db, fixture.object, "cmd-v1", &fixture.prereqs);
 
-    /* Make .bin/ read-only so the atomic save cannot write its staging file.
-       Losing the incremental state must be reported, not swallowed. */
-    char bindir[256];
-    snprintf(bindir, sizeof bindir, "%s/.bin", fixture.root);
-    ASSERT_TRUE(chmod(bindir, 0500) == 0);
+    /* Put a directory where the atomic save needs to write its staging file.
+       Opening a directory for writing is refused everywhere, so the save
+       cannot complete -- and losing the incremental state must be reported,
+       not swallowed.
+
+       Two things this may not do. Not `chmod`, which is how it used to arrange
+       the failure and which only works on one platform: on Windows the mode
+       bits of a *directory* say nothing about who may create a file inside it,
+       so `.bin` stayed writable and the save succeeded. And not removing
+       `.bin` either -- the database's own file is still open at this point,
+       and Windows does not let an open file be deleted, so the arrangement
+       failed before the thing under test ran. Blocking just the staging name
+       leaves every open handle alone. */
+    char staging[256];
+    snprintf(staging, sizeof staging, "%s/.bin/wsdb.tmp", fixture.root);
+    ASSERT_TRUE(fs_make_dirs(staging));
 
     EXPECT_FALSE(wsdb_close(db));
 
-    EXPECT_TRUE(chmod(bindir, 0700) == 0);
+    ASSERT_TRUE(fs_remove_tree(staging));
     fixture_teardown(&fixture);
 }
 
