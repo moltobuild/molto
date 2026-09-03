@@ -165,3 +165,58 @@ MOLTEST(an_absolute_path_is_recognised_as_one) {
     EXPECT_FALSE(fs_path_is_absolute("D:work"));
 #endif
 }
+
+/*
+ * A name and a filename, and the conversion between them.
+ *
+ * These two are inverses, and the pair exists because on Windows they are not
+ * the same string: there is no execute bit there, so `.exe` is what says a
+ * file may be run at all. Everything that composes a name and then looks for
+ * the file needs `fs_executable_file`; everything that reads a filename and
+ * wants the name a person types needs `fs_executable_name`.
+ */
+MOLTEST(a_name_becomes_the_filename_the_platform_stores_it_in) {
+    char file[64] = "";
+    EXPECT_TRUE(fs_executable_file("molto-meson", file, sizeof file));
+#ifdef _WIN32
+    EXPECT_STREQ("molto-meson.exe", file);
+#else
+    EXPECT_STREQ("molto-meson", file);
+#endif
+}
+
+MOLTEST(a_filename_that_does_not_fit_is_refused_rather_than_cut) {
+    char file[4] = "";
+    EXPECT_FALSE(fs_executable_file("molto-meson", file, sizeof file));
+}
+
+MOLTEST(a_filename_gives_back_the_name_it_is_run_by) {
+    char name[64] = "";
+#ifdef _WIN32
+    EXPECT_TRUE(fs_executable_name("molto-meson.exe", name, sizeof name));
+    EXPECT_STREQ("molto-meson", name);
+
+    /* Case-insensitively: a filesystem that does not tell `.EXE` from `.exe`
+       hands back either, so both are the same file and both are runnable. */
+    EXPECT_TRUE(fs_executable_name("molto-meson.EXE", name, sizeof name));
+    EXPECT_STREQ("molto-meson", name);
+
+    /* And a file without it cannot be run, so it has no such name. */
+    EXPECT_FALSE(fs_executable_name("molto-meson", name, sizeof name));
+    EXPECT_FALSE(fs_executable_name(".exe", name, sizeof name));
+#else
+    /* Nothing is appended to run a file here, so the filename is the name. */
+    EXPECT_TRUE(fs_executable_name("molto-meson", name, sizeof name));
+    EXPECT_STREQ("molto-meson", name);
+#endif
+}
+
+/* The round trip, which is the property the two are used for: a plugin is
+   found by scanning filenames and started by composing one. */
+MOLTEST(a_name_survives_the_trip_through_its_filename) {
+    char file[64] = "";
+    char back[64] = "";
+    EXPECT_TRUE(fs_executable_file("molto-meson", file, sizeof file));
+    EXPECT_TRUE(fs_executable_name(file, back, sizeof back));
+    EXPECT_STREQ("molto-meson", back);
+}

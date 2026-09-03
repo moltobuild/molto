@@ -189,6 +189,19 @@ void fs_lock_release(fs_lock *lock);
    so two edits within the same second are still told apart). */
 [[nodiscard]] bool fs_source_newer(const char *source, const char *target);
 
+/* What the platform appends to a filename to make it runnable: nothing on
+   POSIX, `.exe` on Windows.
+
+   Defined here so the suffix has one spelling. It is written into a format
+   string wherever a path is composed in one call -- the way `OBJECT_SUFFIX`
+   is -- and applied by `fs_executable_file` wherever a name arrives on its
+   own. Two ways to reach it, one definition of what it is. */
+#ifdef _WIN32
+#define FS_EXECUTABLE_SUFFIX ".exe"
+#else
+#define FS_EXECUTABLE_SUFFIX ""
+#endif
+
 /* The name a file would be run by, with whatever the platform appends to an
    executable taken off.
 

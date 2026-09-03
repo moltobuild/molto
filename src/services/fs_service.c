@@ -497,7 +497,7 @@ bool fs_executable_name(const char *file, char *out, size_t size) {
 #ifdef _WIN32
     if(!ends_with_exe(file, length))
         return false;
-    const size_t bare = length - (sizeof ".exe" - 1);
+    const size_t bare = length - (sizeof FS_EXECUTABLE_SUFFIX - 1);
 #else
     (void)ends_with_exe;
     const size_t bare = length;
@@ -510,11 +510,7 @@ bool fs_executable_name(const char *file, char *out, size_t size) {
 }
 
 bool fs_executable_file(const char *name, char *out, size_t size) {
-#ifdef _WIN32
-    const int written = snprintf(out, size, "%s.exe", name);
-#else
-    const int written = snprintf(out, size, "%s", name);
-#endif
+    const int written = snprintf(out, size, "%s" FS_EXECUTABLE_SUFFIX, name);
     return written > 0 && (size_t)written < size;
 }
 

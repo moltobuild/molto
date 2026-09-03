@@ -51,7 +51,7 @@ MOLTEST(build_service) {
     /* First build compiles and links. */
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
     char binary[512];
-    snprintf(binary, sizeof binary, "%s/build/debug/demo_app", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/demo_app" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_TRUE(fs_path_exists(binary));
     int64_t linked_at = mtime_of(binary);
 
@@ -358,7 +358,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
 
     char binary[512];
-    snprintf(binary, sizeof binary, "%s/build/debug/cpp_app", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/cpp_app" FS_EXECUTABLE_SUFFIX, root);
     ASSERT_TRUE(fs_path_exists(binary));
     char cmd[600];
     snprintf(cmd, sizeof cmd, "%s > /dev/null 2>&1", binary);
@@ -385,10 +385,10 @@ MOLTEST(build_honours_the_release_profile) {
 
     /* Each profile gets its own output tree, so debug and release coexist. */
     char release_binary[512];
-    snprintf(release_binary, sizeof release_binary, "%s/build/release/fast", root);
+    snprintf(release_binary, sizeof release_binary, "%s/build/release/fast" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_TRUE(fs_path_exists(release_binary));
     char debug_binary[512];
-    snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast", root);
+    snprintf(debug_binary, sizeof debug_binary, "%s/build/debug/fast" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_FALSE(fs_path_exists(debug_binary));
 
     EXPECT_TRUE(build_project(root, profile_debug, NULL, false, 0, NULL, 0) == exit_ok);
@@ -793,7 +793,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
     char object[512];
     char binary[512];
     snprintf(object, sizeof object, "%s/build/debug/obj/src/main.c.o", root);
-    snprintf(binary, sizeof binary, "%s/build/debug/flavoured", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/flavoured" FS_EXECUTABLE_SUFFIX, root);
     ASSERT_TRUE(fs_path_exists(object));
     int64_t compiled_at = mtime_of(object);
     int64_t linked_at = mtime_of(binary);
@@ -1095,7 +1095,7 @@ MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
 
     /* And no executable beside it: the manifest asked for one thing. */
     char binary[512];
-    snprintf(binary, sizeof binary, "%s/build/debug/greet", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/greet" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_FALSE(fs_path_exists(binary));
 
     remove_tree(root);
@@ -1242,7 +1242,7 @@ MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
     ASSERT_EQ(exit_ok, code);
 
     char binary[512];
-    snprintf(binary, sizeof binary, "%s/build/sparc-unknown-none-elf/debug/far", root);
+    snprintf(binary, sizeof binary, "%s/build/sparc-unknown-none-elf/debug/far" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_TRUE(fs_path_exists(binary));
 
     /* And the objects went with it, rather than into the host's tree where the
@@ -1275,7 +1275,7 @@ MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char binary[512];
-    snprintf(binary, sizeof binary, "%s/build/debug/near", root);
+    snprintf(binary, sizeof binary, "%s/build/debug/near" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_TRUE(fs_path_exists(binary));
 
     remove_tree(root);

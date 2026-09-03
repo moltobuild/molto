@@ -69,9 +69,14 @@ bool library_names_of(artifact_kind kind, const char *package, const char *versi
 
     switch(kind) {
     case artifact_executable:
-        /* No `lib` and no extension: an executable is called what the package
-           is called, which is what a person types to run it. */
-        return put(out->file, "%s", package) || too_long(err, err_size, package);
+        /* No `lib`, and no extension beyond the one the platform needs to run
+           a file at all: an executable is called what the package is called.
+           This field is the *filename*, though, and on Windows a name is not
+           yet one -- there is no execute bit there, so `.exe` is what says a
+           file may be run, and a `demo_app` with the suffix left off is a
+           file nothing starts and nothing finds. */
+        return fs_executable_file(package, out->file, LIBRARY_NAME_MAX) ||
+               too_long(err, err_size, package);
     case artifact_static:
         return put(out->file, "lib%s.a", package) || too_long(err, err_size, package);
     case artifact_shared:

@@ -2013,7 +2013,8 @@ int build_project_with(const char *root, build_profile profile, const char *plat
     char *slash = strrchr(stem, '/');
     if(dot != NULL && (slash == NULL || dot > slash))
         *dot = '\0';
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, profile_dir, stem) ||
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s" FS_EXECUTABLE_SUFFIX, root,
+                          profile_dir, stem) ||
            fs_report_long_path(test_source);
 }
 
@@ -2083,9 +2084,9 @@ static int link_tests_single(const test_link_context *context, const str_list *t
         return exit_ok; /* nothing to link */
 
     char binary[PATH_BUFFER_SIZE];
-    if(!fs_format_path(binary, sizeof binary, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/%s%s",
-                       context->root, context->profile_dir, context->ctx->project_name,
-                       TEST_SUITE_SUFFIX)) {
+    if(!fs_format_path(binary, sizeof binary,
+                       "%s/" DIR_BUILD "/%s/" DIR_TESTS "/%s%s" FS_EXECUTABLE_SUFFIX, context->root,
+                       context->profile_dir, context->ctx->project_name, TEST_SUITE_SUFFIX)) {
         (void)fs_report_long_path(context->ctx->project_name);
         return exit_build_failure;
     }
