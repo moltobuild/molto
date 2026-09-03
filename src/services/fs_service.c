@@ -517,3 +517,11 @@ bool fs_executable_file(const char *name, char *out, size_t size) {
 #endif
     return written > 0 && (size_t)written < size;
 }
+
+bool fs_replace(const char *from, const char *to) {
+#ifdef _WIN32
+    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    return rename(from, to) == 0;
+#endif
+}

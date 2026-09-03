@@ -150,7 +150,7 @@ bool compile_db_write(const compile_db *db, const char *root) {
         remove(temp);
         return false;
     }
-    if(rename(temp, path) != 0) {
+    if(!fs_replace(temp, path)) {
         remove(temp);
         return false;
     }
