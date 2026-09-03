@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/build/library.h>
+#include <molto/services/fs_service.h>
 
 #include <string.h>
 
@@ -23,12 +24,31 @@ static library_names named(artifact_kind kind, const char *package, const char *
 
 MOLTEST(an_executable_is_called_what_the_package_is_called) {
     const library_names names = named(artifact_executable, "calculator", "0.1.0");
-    EXPECT_STREQ("calculator", names.file);
+    EXPECT_STREQ("calculator" FS_EXECUTABLE_SUFFIX, names.file);
 
     /* Nothing to record and nothing to point at it: the two fields exist for
        the one kind that has them. */
     EXPECT_STREQ("", names.soname);
     EXPECT_STREQ("", names.devlink);
+}
+
+/*
+ * And on Windows that name is not yet a filename.
+ *
+ * Written from both sides rather than through the macro, because the macro is
+ * what is under test: `field` holds what the linker is told to write and what
+ * every later `fs_path_exists` looks for, and those two agreeing is the whole
+ * of it. A build that links `calculator` and then asks after `calculator`
+ * passes on Linux either way -- it is only here that leaving the suffix off
+ * makes the two different files.
+ */
+MOLTEST(the_executables_name_is_the_filename_the_platform_will_run) {
+    const library_names names = named(artifact_executable, "calculator", "0.1.0");
+#ifdef _WIN32
+    EXPECT_STREQ("calculator.exe", names.file);
+#else
+    EXPECT_STREQ("calculator", names.file);
+#endif
 }
 
 MOLTEST(a_static_library_takes_the_lib_prefix_and_the_a_suffix) {

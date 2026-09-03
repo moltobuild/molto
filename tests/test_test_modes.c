@@ -96,7 +96,7 @@ MOLTEST(tests_link_into_one_binary_in_single_mode) {
     /* One executable for the whole suite, named after the package. */
     ASSERT_EQ(1, str_list_count(&binaries));
     char expected[512];
-    snprintf(expected, sizeof expected, "%s/build/debug/tests/suite_tests", root);
+    snprintf(expected, sizeof expected, "%s/build/debug/tests/suite_tests" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_STREQ(expected, str_list_get(&binaries, 0));
     EXPECT_TRUE(fs_path_exists(expected));
 

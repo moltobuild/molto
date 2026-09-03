@@ -48,8 +48,8 @@ MOLTEST(test_command) {
 
     /* One test fails -> non-zero exit; both binaries built. */
     EXPECT_TRUE(test_command_run(NULL, false, 0) == exit_build_failure);
-    EXPECT_TRUE(fs_path_exists("build/debug/tests/test_pass"));
-    EXPECT_TRUE(fs_path_exists("build/debug/tests/test_fail"));
+    EXPECT_TRUE(fs_path_exists("build/debug/tests/test_pass" FS_EXECUTABLE_SUFFIX));
+    EXPECT_TRUE(fs_path_exists("build/debug/tests/test_fail" FS_EXECUTABLE_SUFFIX));
 
     /* Fix the failing test -> everything passes. */
     EXPECT_TRUE(fs_write_file("tests/test_fail.c", "int main(void) { return 0; }\n"));
@@ -133,7 +133,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
     str_list_free(&binaries);
 
     char doomed_binary[512];
-    snprintf(doomed_binary, sizeof doomed_binary, "%s/build/debug/tests/doomed", root);
+    snprintf(doomed_binary, sizeof doomed_binary, "%s/build/debug/tests/doomed" FS_EXECUTABLE_SUFFIX, root);
     char doomed_object[512];
     snprintf(doomed_object, sizeof doomed_object,
              "%s/build/debug/obj/tests/doomed.c.o", root);
@@ -153,7 +153,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
 
     /* The surviving test is untouched. */
     char keep_binary[512];
-    snprintf(keep_binary, sizeof keep_binary, "%s/build/debug/tests/keep", root);
+    snprintf(keep_binary, sizeof keep_binary, "%s/build/debug/tests/keep" FS_EXECUTABLE_SUFFIX, root);
     EXPECT_TRUE(fs_path_exists(keep_binary));
 
     char cmd[600];
