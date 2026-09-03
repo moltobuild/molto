@@ -210,8 +210,19 @@ static manifest_profile profile_settings(const project_ctx *ctx, build_profile p
     const char *relative = source;
     if(strncmp(source, root, root_len) == 0 && source[root_len] == '/')
         relative = source + root_len + 1;
+
+    /* A dependency lives outside the project, so `relative` is still absolute
+       for every source one brings -- and an absolute path cannot name a place
+       inside `obj/`. On POSIX the join happens to work and hides that: the
+       object for `/tmp/greet/greet.c` lands in `obj//tmp/greet`, which is a
+       directory like any other. On Windows the same join produces
+       `obj/D:/tmp/greet`, and `D:` is not a name a directory can have. */
+    char inside[PATH_BUFFER_SIZE];
+    if(!fs_path_without_root(relative, inside, sizeof inside))
+        return fs_report_long_path(source);
+
     return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX, root,
-                          profile_dir, relative) ||
+                          profile_dir, inside) ||
            fs_report_long_path(source);
 }
 

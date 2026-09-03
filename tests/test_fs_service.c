@@ -220,3 +220,60 @@ MOLTEST(a_name_survives_the_trip_through_its_filename) {
     EXPECT_TRUE(fs_executable_name(file, back, sizeof back));
     EXPECT_STREQ("molto-meson", back);
 }
+
+/*
+ * Making a path into a name that fits inside another directory.
+ *
+ * The build mirrors a source tree under `build/`, and a dependency's sources
+ * are not under the project at all -- they arrive absolute. Asserted from both
+ * sides, like `fs_path_is_absolute` above, because the interesting half is the
+ * drive letter and it only exists on one platform.
+ */
+MOLTEST(an_absolute_path_becomes_a_name_that_fits_inside_a_directory) {
+    char out[64] = "";
+    EXPECT_TRUE(fs_path_without_root("/tmp/greet/greet.c", out, sizeof out));
+    EXPECT_STREQ("tmp/greet/greet.c", out);
+
+#ifdef _WIN32
+    /* The drive is kept as a directory. Dropping it would put `C:/greet` and
+       `D:/greet` in the same place, and they are two different files. */
+    EXPECT_TRUE(fs_path_without_root("D:/tmp/greet.c", out, sizeof out));
+    EXPECT_STREQ("D/tmp/greet.c", out);
+
+    EXPECT_TRUE(fs_path_without_root("c:/greet.c", out, sizeof out));
+    EXPECT_STREQ("c/greet.c", out);
+
+    /* `D:x` is relative to whatever directory that drive is on, so there is no
+       root to take off and the name stands as it is. */
+    EXPECT_TRUE(fs_path_without_root("D:greet.c", out, sizeof out));
+    EXPECT_STREQ("D:greet.c", out);
+#endif
+}
+
+MOLTEST(a_relative_path_is_already_a_name_and_is_left_alone) {
+    char out[64] = "";
+    EXPECT_TRUE(fs_path_without_root("src/main.c", out, sizeof out));
+    EXPECT_STREQ("src/main.c", out);
+
+    EXPECT_TRUE(fs_path_without_root("./here", out, sizeof out));
+    EXPECT_STREQ("./here", out);
+}
+
+/* A machine really does hand out `//server/share`, and two empty components at
+   the front of the answer would be a directory called nothing, twice. */
+MOLTEST(every_leading_slash_comes_off_and_not_just_the_first) {
+    char out[64] = "";
+    EXPECT_TRUE(fs_path_without_root("//server/share/x.c", out, sizeof out));
+    EXPECT_STREQ("server/share/x.c", out);
+
+    /* The root itself has nothing left once its root is off. */
+    EXPECT_TRUE(fs_path_without_root("/", out, sizeof out));
+    EXPECT_STREQ("", out);
+}
+
+MOLTEST(a_name_that_does_not_fit_is_refused_rather_than_cut) {
+    char out[8] = "";
+    EXPECT_FALSE(fs_path_without_root("/tmp/a/rather/long/one.c", out, sizeof out));
+    EXPECT_FALSE(fs_path_without_root("/tmp/x", NULL, sizeof out));
+    EXPECT_FALSE(fs_path_without_root(NULL, out, sizeof out));
+}
