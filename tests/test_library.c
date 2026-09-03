@@ -24,7 +24,7 @@ static library_names named(artifact_kind kind, const char *package, const char *
 
 MOLTEST(an_executable_is_called_what_the_package_is_called) {
     const library_names names = named(artifact_executable, "calculator", "0.1.0");
-    EXPECT_STREQ("calculator" FS_EXECUTABLE_SUFFIX, names.file);
+    EXPECT_STREQ("calculator", names.file);
 
     /* Nothing to record and nothing to point at it: the two fields exist for
        the one kind that has them. */
@@ -33,22 +33,21 @@ MOLTEST(an_executable_is_called_what_the_package_is_called) {
 }
 
 /*
- * And on Windows that name is not yet a filename.
+ * And the same name on every platform, Windows included.
  *
- * Written from both sides rather than through the macro, because the macro is
- * what is under test: `field` holds what the linker is told to write and what
- * every later `fs_path_exists` looks for, and those two agreeing is the whole
- * of it. A build that links `calculator` and then asks after `calculator`
- * passes on Linux either way -- it is only here that leaving the suffix off
- * makes the two different files.
+ * These names reach the IR, where `artifact.path` says what a project builds
+ * and has to read the same everywhere. Appending the host's `.exe` here is
+ * what a first attempt did, and `frontend_native_describes_a_manifest_and_its_
+ * sources` caught it: the document came back saying `app.exe`, which is a
+ * machine's answer written into a portable description.
+ *
+ * The suffix is real and still needed -- it goes on in `build_service`, where
+ * the path on disk is composed and a filename is what is wanted.
  */
-MOLTEST(the_executables_name_is_the_filename_the_platform_will_run) {
+MOLTEST(an_executables_name_carries_no_platform_of_its_own) {
     const library_names names = named(artifact_executable, "calculator", "0.1.0");
-#ifdef _WIN32
-    EXPECT_STREQ("calculator.exe", names.file);
-#else
     EXPECT_STREQ("calculator", names.file);
-#endif
+    EXPECT_EQ(NULL, strstr(names.file, ".exe"));
 }
 
 MOLTEST(a_static_library_takes_the_lib_prefix_and_the_a_suffix) {

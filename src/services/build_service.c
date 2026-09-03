@@ -181,9 +181,20 @@ static build_unit_label label_for_target(const ir_document *doc, const ir_target
     return fs_format_path(out, out_size, "%s/%s", platform, profile_name(profile));
 }
 
+/*
+ * Where the artifact lands, which is the one place that wants a filename
+ * rather than a name.
+ *
+ * `name` comes from `library_names_of` and is portable on purpose -- it is
+ * also what the IR records. Only an executable gains anything here, and only
+ * on Windows: a library already carries its own extension, and adding `.exe`
+ * to `libgreet.a` would name a file no linker looks for.
+ */
 [[nodiscard]] static bool compose_binary_path(const char *root, const char *segment,
-                                              const char *name, char *out, size_t out_size) {
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s", root, segment, name) ||
+                                              const char *name, ir_target_kind kind, char *out,
+                                              size_t out_size) {
+    const char *suffix = kind == ir_target_executable ? FS_EXECUTABLE_SUFFIX : "";
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s%s", root, segment, name, suffix) ||
            fs_report_long_path(name);
 }
 
@@ -1970,7 +1981,7 @@ int build_project_with(const char *root, build_profile profile, const char *plat
         if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, name_err,
                              sizeof name_err) ||
            !build_segment(profile, platform, segment, sizeof segment) ||
-           !compose_binary_path(root, segment, names.file, binary, sizeof binary) ||
+           !compose_binary_path(root, segment, names.file, node->kind, binary, sizeof binary) ||
            !fs_format_path(directory, sizeof directory, "%s/" DIR_BUILD "/%s", root, segment)) {
             if(name_err[0] != '\0')
                 build_report_message(report, "molto: %s\n", name_err);
