@@ -79,7 +79,13 @@ static bool write_private(const char *path, const char *content, char *err, size
     if(!fs_format_path(temporary, sizeof temporary, "%s.new", path))
         return fail(err, err_size, "the credentials path is too long");
 
-    const int fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    /* O_BINARY, because mingw's `open` is text mode by default and a token is
+       not text the platform gets to reformat. It is not defined on POSIX,
+       where there is no such distinction to make. */
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+    const int fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, S_IRUSR | S_IWUSR);
     if(fd < 0)
         return fail(err, err_size, "could not create the credentials file");
 
@@ -89,7 +95,7 @@ static bool write_private(const char *path, const char *content, char *err, size
         (void)unlink(temporary);
         return fail(err, err_size, "could not write the credentials file");
     }
-    if(rename(temporary, path) != 0) {
+    if(!fs_replace(temporary, path)) {
         (void)unlink(temporary);
         return fail(err, err_size, "could not replace the credentials file");
     }

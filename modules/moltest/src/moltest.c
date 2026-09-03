@@ -479,6 +479,106 @@ static size_t collect_files(const char **out_files) {
     return count;
 }
 
+/*
+ * The environment, saved whole and put back whole.
+ *
+ * Whole rather than per-variable because the harness cannot know which ones a
+ * case will touch, and a list it had to be told about would be a list that
+ * goes stale the first time somebody adds a fixture.
+ */
+#define MOLTEST_ENV_NAME_MAX 256
+
+typedef struct {
+    char **entries; /* "NAME=VALUE", NUL-terminated list */
+    size_t count;
+} moltest_env;
+
+#ifdef _WIN32
+#define moltest_environ _environ
+#else
+extern char **environ;
+#define moltest_environ environ
+#endif
+
+static void moltest_env_free(moltest_env *saved) {
+    if (saved == NULL)
+        return;
+    for (size_t i = 0; i < saved->count; i++)
+        free(saved->entries[i]);
+    free(saved->entries);
+    free(saved);
+}
+
+static moltest_env *moltest_env_save(void) {
+    moltest_env *saved = calloc(1, sizeof *saved);
+    if (saved == NULL)
+        return NULL;
+
+    size_t total = 0;
+    while (moltest_environ[total] != NULL)
+        total++;
+
+    saved->entries = calloc(total + 1, sizeof *saved->entries);
+    if (saved->entries == NULL) {
+        free(saved);
+        return NULL;
+    }
+    for (size_t i = 0; i < total; i++) {
+        saved->entries[i] = dup_string(moltest_environ[i]);
+        if (saved->entries[i] == NULL) {
+            saved->count = i;
+            moltest_env_free(saved);
+            return NULL;
+        }
+    }
+    saved->count = total;
+    return saved;
+}
+
+/* The name in "NAME=VALUE", into `out`. False when there is no `=`, which the
+   platform should never produce and which is not ours to guess about. */
+static bool moltest_env_name(const char *entry, char *out, size_t size) {
+    const char *equals = strchr(entry, '=');
+    if (equals == NULL || (size_t)(equals - entry) >= size)
+        return false;
+    memcpy(out, entry, (size_t)(equals - entry));
+    out[equals - entry] = '\0';
+    return true;
+}
+
+static void moltest_env_restore(moltest_env *saved) {
+    if (saved == NULL)
+        return;
+
+    /* Everything the case added or changed goes first. Removing while walking
+       the live environment would step over entries, so the names are collected
+       and then unset. */
+    for (size_t i = 0; moltest_environ[i] != NULL;) {
+        char name[MOLTEST_ENV_NAME_MAX];
+        if (!moltest_env_name(moltest_environ[i], name, sizeof name)) {
+            i++;
+            continue;
+        }
+        (void)unsetenv(name);
+        i = 0; /* the list shifted under us */
+        if (moltest_environ[0] == NULL)
+            break;
+        /* Guard against an implementation that refuses to remove one. */
+        char again[MOLTEST_ENV_NAME_MAX];
+        if (moltest_env_name(moltest_environ[0], again, sizeof again)
+            && strcmp(again, name) == 0)
+            break;
+    }
+
+    for (size_t i = 0; i < saved->count; i++) {
+        char name[MOLTEST_ENV_NAME_MAX];
+        if (!moltest_env_name(saved->entries[i], name, sizeof name))
+            continue;
+        (void)setenv(name, strchr(saved->entries[i], '=') + 1, 1);
+    }
+    moltest_env_free(saved);
+}
+
 static void run_one(size_t index) {
     test_entry *t = &tests[index];
     current_test = index;
@@ -491,11 +591,26 @@ static void run_one(size_t index) {
         return;
     }
 
+    /* The environment is put back however the case leaves. A fixture that sets
+       `C_COMPILER` restores it at the end, and `ASSERT` returns from the case
+       where it stands — so the restore is skipped exactly when it matters,
+       leaving a variable pointing into a temporary directory the teardown
+       never removed either. Every later case that reads it then fails for a
+       reason none of them mentions: one lint fixture failing this way took
+       twenty build cases down with it, twice, on two different days.
+
+       A test that fails must not change the result of the next one. That is a
+       property of the harness, not something each of eight hundred cases can
+       be trusted to remember. */
+    moltest_env *saved = moltest_env_save();
+
     double started = now_seconds();
     capture_start();
     t->fn();
     t->output = capture_finish();
     t->seconds = now_seconds() - started;
+
+    moltest_env_restore(saved);
 
     if (current_failed)
         t->status = moltest_status_failed;
@@ -531,6 +646,33 @@ static void print_usage(void) {
 
 /* Where this process was started from, kept so a fake can be made out of it. */
 static const char *moltest_self;
+
+/*
+ * The file this program actually is, which on Windows is not what `argv[0]`
+ * says it is.
+ *
+ * A caller may name a program without `.exe` — `CreateProcess` resolves the
+ * suffix and starts the right file, but `argv[0]` keeps the name it was handed.
+ * Molto does exactly that when it looks for pickup: it composes a name, runs
+ * it, and the fake it started then looked for a spec beside a path that does
+ * not exist, decided it was not a fake, and read `tools` as a command-line
+ * option. One `moltest: unknown option` and every test that shells out to that
+ * fake fails for a reason nothing in it mentions.
+ *
+ * `argv[0]` is the answer on POSIX, where a name and a filename are the same
+ * thing and nothing is appended to run a file.
+ */
+static const char *moltest_own_path(int argc, char **argv, char *out, size_t size) {
+#ifdef _WIN32
+    const DWORD written = GetModuleFileNameA(NULL, out, (DWORD)size);
+    if (written > 0 && (size_t)written < size)
+        return out;
+#else
+    (void)out;
+    (void)size;
+#endif
+    return argc > 0 ? argv[0] : NULL;
+}
 
 #ifdef _WIN32
 #define MOLTEST_EXE_SUFFIX ".exe"
@@ -754,11 +896,13 @@ static bool moltest_obey(const char *line, int argc, char **argv, int *status) {
  * somebody copied it would be a surprise nobody could debug.
  */
 static bool moltest_ran_as_fake(int argc, char **argv, int *status) {
-    if (argc < 1 || argv[0] == NULL)
+    char own[MOLTEST_LINE_MAX];
+    const char *self = moltest_own_path(argc, argv, own, sizeof own);
+    if (self == NULL)
         return false;
 
     char spec_path[MOLTEST_LINE_MAX];
-    if (!moltest_beside(argv[0], MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
+    if (!moltest_beside(self, MOLTEST_SPEC_SUFFIX, spec_path, sizeof spec_path))
         return false;
     FILE *spec = fopen(spec_path, "rb");
     if (spec == NULL)
@@ -815,7 +959,11 @@ static bool moltest_ran_as_fake(int argc, char **argv, int *status) {
 }
 
 int moltest_run(int argc, char **argv) {
-    moltest_self = argc > 0 ? argv[0] : NULL;
+    /* The same question as the spec lookup below, and it wants the same answer:
+       a fake is a copy of this file, so this has to be the file and not the
+       name somebody typed. */
+    static char own[MOLTEST_LINE_MAX];
+    moltest_self = moltest_own_path(argc, argv, own, sizeof own);
 
     /* Before anything else, including argument parsing: a fabricated program
        is not a suite and must not be read as one. */

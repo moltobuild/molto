@@ -215,4 +215,17 @@ void fs_lock_release(fs_lock *lock);
    nothing at all. */
 [[nodiscard]] bool fs_executable_file(const char *name, char *out, size_t size);
 
+/* Move `from` onto `to`, replacing whatever `to` was.
+
+   This is the second half of the write-to-a-temporary-then-rename idiom, which
+   five places in molto use to make a file appear whole or not at all. POSIX
+   `rename` replaces the destination; Windows `rename` *fails* when it exists —
+   so every one of those places worked the first time and failed on every save
+   after it, which reads as "could not replace" rather than as a platform
+   difference.
+
+   Files only. A directory has its own rules on Windows and no caller here
+   needs one. */
+[[nodiscard]] bool fs_replace(const char *from, const char *to);
+
 #endif /* MOLTO_FS_SERVICE_H */

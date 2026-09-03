@@ -574,7 +574,7 @@ static bool wsdb_save(wsdb *db) {
         remove(tmp);
         return false;
     }
-    return rename(tmp, path) == 0;
+    return fs_replace(tmp, path);
 }
 
 static bool read_bytes(FILE *f, void *out, size_t len) { return fread(out, 1, len, f) == len; }

@@ -32,7 +32,7 @@ static int write_document(const ir_document *doc, const char *output_path) {
     if(output_path == NULL)
         return ir_write(doc, stdout) ? exit_ok : exit_build_failure;
 
-    FILE *file = fopen(output_path, "w");
+    FILE *file = fopen(output_path, "wb");
     if(file == NULL) {
         fprintf(stderr, "molto: cannot write '%s'\n", output_path);
         return exit_build_failure;

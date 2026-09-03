@@ -163,6 +163,6 @@ void object_cache_put(const char *object, const char *cached) {
         (void)remove(staging);
         return;
     }
-    if(rename(staging, cached) != 0)
+    if(!fs_replace(staging, cached))
         (void)remove(staging);
 }

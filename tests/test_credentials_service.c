@@ -19,8 +19,14 @@ static void with_private_home(void) {
     const char *home = getenv("HOME");
     snprintf(previous_home, sizeof previous_home, "%s", home == NULL ? "" : home);
 
-    snprintf(sandbox, sizeof sandbox, "/tmp/molto-credentials-%d", (int)getpid());
-    (void)fs_make_dir(sandbox);
+    /* Wherever the platform keeps temporary files, not `/tmp`. Under MSYS2 a
+       native binary reads `/tmp` as a path on the current drive, and there is
+       no such directory there — so every save into it failed, and the failure
+       said the credentials could not be written rather than that the sandbox
+       was never made. RFC-0017 names this idiom as the single largest reason
+       these suites did not run on Windows; this is the one that got away. */
+    if(!moltest_temp_dir("molto_credentials", sandbox, sizeof sandbox))
+        sandbox[0] = '\0';
     setenv("HOME", sandbox, 1);
 }
 
@@ -68,8 +74,14 @@ MOLTEST(credentials_are_readable_only_by_their_owner) {
     ASSERT_TRUE(credentials_path(path, sizeof path));
     struct stat info;
     ASSERT_EQ(0, stat(path, &info));
-    /* A token another account can read is a token that is already leaked. */
+    /* A token another account can read is a token that is already leaked.
+       Asked only where the answer means something: Windows has no mode bits
+       for `stat` to report, and what protects a file there is an ACL. Molto
+       does not set one yet, and asserting a POSIX number about a platform that
+       has none would report a security property nobody implemented. */
+#ifndef _WIN32
     EXPECT_EQ(0, (int)(info.st_mode & (S_IRWXG | S_IRWXO)));
+#endif
 
     restore_home();
 }
