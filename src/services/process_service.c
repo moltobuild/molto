@@ -423,7 +423,11 @@ static int exception_to_signal(DWORD code) {
         return SIGFPE;
     case 0xC000013A: /* CONTROL_C_EXIT */
         return SIGINT;
-    case 0xC0000409: /* STATUS_STACK_BUFFER_OVERRUN, what abort() raises */
+    /* STATUS_STACK_BUFFER_OVERRUN: the platform's fail-fast path, which a
+       security check and `__fastfail` both end in. Not what mingw's `abort()`
+       raises -- that one leaves with an ordinary 3, and nothing distinguishes
+       it from a program that chose to exit 3. */
+    case 0xC0000409:
         return SIGABRT;
     /* EXCEPTION_BREAKPOINT is deliberately absent: the CRT here has no
        SIGTRAP to name it with, and a breakpoint reaches a process under a

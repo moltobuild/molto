@@ -39,26 +39,25 @@ MOLTEST(run_command) {
     /* A program that dies abnormally is reported as 128 + signal, not as a
        "failed to start" error.
 
-       A page fault rather than `raise(SIGTERM)`, because the two platforms
-       agree about the first and not the second: POSIX raises SIGSEGV, Windows
-       exits with EXCEPTION_ACCESS_VIOLATION, and both arrive here as
-       `128 + SIGSEGV`. A raised SIGTERM is handled by the C runtime on
-       Windows, which leaves with 3 -- a status no parent can tell from an
-       ordinary `exit(3)`. */
+       Each platform is asked in its own terms and both answer 128 + SIGABRT.
+       Not `raise(SIGTERM)`, which is what this used to be: the C runtime on
+       Windows handles it and leaves with 3, a status no parent can tell from
+       an ordinary `exit(3)`. And not a null write, which is undefined
+       behaviour a sanitized build catches instead of dying from. */
     snprintf(path, sizeof path, "%s/src/main.c", root);
     EXPECT_TRUE(fs_write_file(path,
         "#ifdef _WIN32\n"
         "#include <windows.h>\n"
-        "#endif\n"
         "int main(void) {\n"
-        "#ifdef _WIN32\n"
         "    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);\n"
-        "#endif\n"
-        "    volatile int *nowhere = 0;\n"
-        "    *nowhere = 1;\n"
+        "    RaiseException(0xC0000409u, EXCEPTION_NONCONTINUABLE, 0, 0);\n"
         "    return 0;\n"
-        "}\n"));
-    EXPECT_EQ(128 + SIGSEGV, run_command_run(NULL, false, 0, NULL, 0));
+        "}\n"
+        "#else\n"
+        "#include <stdlib.h>\n"
+        "int main(void) { abort(); return 0; }\n"
+        "#endif\n"));
+    EXPECT_EQ(128 + SIGABRT, run_command_run(NULL, false, 0, NULL, 0));
 
     EXPECT_TRUE(chdir(previous) == 0);
 
