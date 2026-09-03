@@ -450,6 +450,37 @@ bool fs_path_is_absolute(const char *path) {
     return path[0] == '/';
 }
 
+bool fs_path_without_root(const char *path, char *out, size_t size) {
+    if(path == NULL || out == NULL || size == 0)
+        return false;
+
+    /* Written into the result before `rest`, so a drive survives as a
+       directory of its own. Empty whenever there is no drive to keep, which is
+       every path on POSIX and most of them on Windows. */
+    char drive[3] = "";
+    const char *rest = path;
+    if(fs_path_is_absolute(path)) {
+#ifdef _WIN32
+        if(path[1] == ':') {
+            drive[0] = path[0];
+            drive[1] = '/';
+            rest = path + 2;
+        }
+#endif
+        /* Every leading slash, not one: `//server/share` is a path a Windows
+           machine really hands out, and two empty components at the front of
+           the result would be a directory called nothing. */
+        while(rest[0] == '/')
+            rest++;
+    }
+
+    /* `>= 0`, not `> 0`: the root with its root off is the empty string, and
+       that is an answer written successfully rather than a failure to write
+       one. */
+    const int written = snprintf(out, size, "%s%s", drive, rest);
+    return written >= 0 && (size_t)written < size;
+}
+
 bool fs_copy_file(const char *from, const char *to) {
     FILE *in = fopen(from, "rb");
     if(in == NULL)

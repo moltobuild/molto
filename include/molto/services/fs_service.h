@@ -135,6 +135,22 @@ void fs_to_one_separator(char *path);
  * Windows path as relative and joined it onto a root. */
 [[nodiscard]] bool fs_path_is_absolute(const char *path);
 
+/* `path` written so it can be a name *inside* another directory: whatever made
+   it absolute taken off, and nothing else touched. A relative path is already
+   one, and comes back unchanged.
+
+   `/tmp/x` gives `tmp/x`, and on Windows `D:/tmp/x` gives `D/tmp/x` -- the
+   drive letter becomes an ordinary directory rather than being dropped,
+   because two drives can hold the same path and dropping it would land them
+   both in one place.
+
+   This exists because mirroring a source tree under `build/` has to place
+   sources that live outside the project, and those arrive absolute. Joining
+   one on unchanged reads as a working path on POSIX -- `obj//tmp/x` is a
+   directory like any other -- and as nothing at all on Windows, where `D:` is
+   not a name a directory can have. */
+[[nodiscard]] bool fs_path_without_root(const char *path, char *out, size_t size);
+
 /* Resolve `path` to an absolute one with no `.`, `..` or symlink left in it,
    and false when it cannot be resolved — which for an existing file means only
    that the buffer was too small. The result uses Molto's separator, for the
