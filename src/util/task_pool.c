@@ -27,8 +27,9 @@
  *                          without a lock (used for simple counters and flags).
  *
  * The first three come from molto/util/thread.h rather than from C11
- * <threads.h>, which mingw does not ship (RFC-0017). On POSIX each one is the
- * C11 call it always was, so nothing about how this behaves here changed.
+ * <threads.h>, which neither mingw nor Apple ships (RFC-0017, RFC-0018). On
+ * POSIX each one is a pthreads call, which is what glibc implements C11
+ * threads on top of, so nothing about how this behaves here changed.
  */
 
 #include <molto/util/task_pool.h>

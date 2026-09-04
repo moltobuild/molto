@@ -5,7 +5,7 @@
 #include <stddef.h>
 
 /*
- * A work-stealing thread pool built on OS threads (C11 <threads.h>).
+ * A work-stealing thread pool built on OS threads (`util/thread.h`).
  *
  * Use it to run many independent tasks across CPU cores at once. Each worker
  * thread owns a queue; an idle worker steals tasks from a busy one, so the load
