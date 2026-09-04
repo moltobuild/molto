@@ -186,6 +186,65 @@ port is paid for in runner minutes. That is an argument for making each run
 count — measuring everything on every run rather than stopping at the first
 failure — which is what the tally already does.
 
+## Implementation Status
+
+**2026-09-04.** The measurement ran twice on `macos-14`, Apple clang 15.0.0,
+GNU Make 3.81.
+
+The first run: **3 errors across 2 files** — `threads.h` not found, and
+`st_mtim` twice. Both were predicted above and nothing else was. That is a
+different result from the Windows port, whose sweep missed `fnmatch.h` and
+found it in the first translation unit it compiled; 26,536 lines under `src/`
+compile for Darwin with two files' worth of exceptions, which is what the
+platform layer being finished looks like from the outside.
+
+The second run, after both were fixed:
+
+| | |
+|---|---|
+| `src/` compiles | 0 errors |
+| The suite compiles | 0 errors |
+| The binary | `Mach-O 64-bit executable arm64` |
+| `molto new` → `molto run` | `Hello, world!` |
+| molto builds molto | 2.08s |
+| The suite | **815 passed, 44 failed, 4 skipped** |
+
+For comparison, the first Windows run that reached its suite reported 680
+passed and 163 failed.
+
+### The 44, and why they are mostly one bug
+
+Nearly all of them say the same sentence:
+
+> the root of the project resolves to `/private/tmp/molto_devdeps_CVvNRR/app`,
+> which is outside the workspace, the build directory, the cache and every
+> dependency this build resolved
+
+`/tmp` is a symlink to `/private/tmp` on macOS. `path_allowed`
+(`src/services/ir_validate.c:263`) resolves the path under test through
+`anchor` and then compares it against bounds that were never resolved, so on
+Linux `/tmp/x` matches `/tmp/x` and the mismatch never appears. It is not a
+test bug and it is not macOS-specific: any project under a symlinked path on
+Linux is refused the same way, and macOS only makes it universal because that
+one symlink is always there.
+
+It is the containment check RFC-0014 relies on, so it gets its own change and
+its own review rather than being folded into a port. Resolving both sides is
+the fix; resolving neither is not, because the check exists to stop a document
+naming a path outside the build.
+
+Two failures are not that bug and are still open:
+`test_process_service.c::a_capture_does_not_leak_its_pipe_into_another_child`,
+and the `digest_of` failures in `test_source_service.c`.
+
+### The tranche after that
+
+The link and meaning layers are still unmeasured, because nothing in the suite
+builds a shared library yet on this platform. `-Wl,-soname` and
+`lib%s.so.%lu.%lu.%lu` are still where they were, and
+`build_makes_a_shared_library_with_the_two_links_beside_it` is among the 44 —
+it will be the one that says what a dylib costs.
+
 ## Non-Goals
 
 Molto does not ship universal binaries as part of this. `arm64` is what the
