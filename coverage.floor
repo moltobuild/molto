@@ -8,4 +8,8 @@
 #
 # Raise it when the real figure has moved comfortably past it. `make coverage`
 # prints both.
-79.0
+#
+# 79.9 on the runner against 80.0 here: a machine with a compiler runs tests a
+# machine without one skips, so the two disagree slightly and the floor sits
+# under both rather than chasing either.
+79.5
