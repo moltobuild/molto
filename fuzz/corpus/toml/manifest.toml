@@ -1,0 +1,42 @@
+# Molto's own manifest (dogfooding, see rfcs/0003-project-manifest.md).
+#
+# Note what this file does NOT say: no compiler binary, no version. The code
+# needs C23 attributes — a property of the code. Which local binary provides
+# them is a property of the machine, and pickup answers that. The Makefile has
+# to hardcode `gcc-12` precisely because it cannot ask.
+#
+# This manifest builds molto: `molto build` and `molto test` both work on it.
+# The Makefile remains as the bootstrap — something has to compile the first
+# molto — not because molto is unable.
+[package]
+name = "molto"
+version = "0.38.8"
+description = "A package manager and build system for C and C++"
+repository = "https://github.com/moltobuild/molto"
+# The key states a licence; LICENSE and NOTICE at the root grant it. Apache-2.0
+# for the patent grant above all: molto executes other people's compilers and
+# its registry distributes other people's code, so a bare permissive licence
+# leaves the one risk this project actually carries unaddressed.
+license = "Apache-2.0"
+
+[target]
+std = "c2x"
+requires = ["attr_nodiscard"]
+defines = ["_DEFAULT_SOURCE", "__USE_MINGW_ANSI_STDIO=1"]
+include = ["include"]
+flags = ["-Wall", "-Wextra", "-Wpedantic", "-pthread"]
+
+[test]
+# The suite registers its cases and moltest owns main(), so everything links
+# into one executable. moltest lives outside src/, hence the extra sources.
+mode = "single"
+sources = ["modules/moltest/src"]
+include = ["modules/moltest/include"]
+
+[profile.debug]
+opt_level = 0
+debug_info = true
+
+[profile.release]
+opt_level = 3
+debug_info = false

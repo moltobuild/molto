@@ -1,0 +1,8 @@
+{
+    "preset": "molto",
+    "rules": {
+        "bugprone": "warn",
+        "swappable_parameters": "off",
+        "spurious_wakeup": "off"
+    }
+}

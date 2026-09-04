@@ -4,6 +4,16 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # For the long fuzzing run. Everything else here is the same either way; the
+  # only knob is how long the search gets, and it exists because a search
+  # bounded by what a pull request can afford is a search that finds what is
+  # shallow. Ask for an hour when a parser has been touched.
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: "Seconds each fuzz target searches for"
+        required: false
+        default: "60"
 
 # A push that supersedes another cancels it. Eight jobs per run adds up, and
 # the result of a commit that is no longer the tip settles nothing.
@@ -160,6 +170,60 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 gcc-12 g++-12
       - name: Measure it
         run: make coverage
+
+  # The readers that are handed text Molto did not write.
+  #
+  # Everything else in this file checks the code against inputs someone thought
+  # of. This checks it against inputs nobody did, which is the only kind a
+  # `Project.toml` from a dependency, a recipe off the registry, a compiler's
+  # diagnostics and a plugin's IR document are ever guaranteed to be.
+  #
+  # Two steps, and they answer different questions. The corpus is a test: it
+  # replays what is committed under fuzz/corpus, takes a second, and fails the
+  # same way every time — which is what makes a crash found once a crash that
+  # cannot come back unnoticed. The search is not a test: it is a search, it
+  # finds something or it does not, and what it finds is filed into the corpus
+  # so the first step inherits it.
+  #
+  # A finding fails the run rather than being collected quietly. A crash in a
+  # parser that reads untrusted text is not a lower grade of bug because a
+  # fuzzer was what noticed it.
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # libFuzzer is clang's runtime and ships in libclang-rt, which the clang
+      # package does not pull in on its own — without it the link fails on a
+      # missing libclang_rt.fuzzer.a and says nothing about why.
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y \
+            "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get install -y -o Acquire::Retries=3 \
+            clang-${LLVM_VERSION} libclang-rt-${LLVM_VERSION}-dev
+      - name: Replay the corpus
+        run: make fuzz-corpus FUZZ_CC=clang-${LLVM_VERSION}
+      - name: Search
+        run: |
+          make fuzz-run FUZZ_CC=clang-${LLVM_VERSION} \
+            FUZZ_TIME=${{ github.event.inputs.fuzz_seconds || '60' }}
+      # Only reached when a step above failed, and then it is the whole point:
+      # the input that crashed is the bug report, and it has to leave the
+      # runner to become one.
+      - name: What it found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+            oom-*
+          if-no-files-found: ignore
 
   # The shape the release ships, built on every push rather than only at a tag.
   # A release artifact that CI never builds is one that breaks between releases

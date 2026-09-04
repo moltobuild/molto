@@ -54,7 +54,7 @@ MOLTEST_SRC := $(shell find $(MOLTEST_DIR)/src -name '*.c')
 LIB_OBJ  := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 MAIN_OBJ := $(MAIN_SRC:%.c=$(BUILD_DIR)/%.o)
 
-.PHONY: all build run test coverage clean
+.PHONY: all build run test fuzz fuzz-corpus fuzz-run coverage clean
 
 all: build
 
@@ -126,6 +126,75 @@ $(COVERAGE_BIN): $(COVERAGE_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
 	@mkdir -p $(dir $@)
 	$(CC) $(COVERAGE_CFLAGS) -I$(MOLTEST_DIR)/include $(COVERAGE_OBJ) $(MOLTEST_SRC) \
 	    $(TEST_SRC) -o $@ $(LDFLAGS) --coverage
+
+# Fuzzing the parsers.
+#
+# Every target under fuzz/ drives one of the readers that take text Molto did
+# not write: a manifest from a dependency, a recipe off the registry, what a
+# compiler printed, what a plugin answered. They live outside tests/ on purpose
+# — each one defines LLVMFuzzerTestOneInput, and six of those in one binary is a
+# link error, which is what putting them in the suite would produce.
+#
+# clang only: libFuzzer is its runtime. The objects are instrumented with
+# `fuzzer-no-link` and the target is linked with `fuzzer`, so the coverage
+# tracking reaches the parser while only the target brings a main.
+FUZZ_CC     ?= clang
+FUZZ_DIR    := fuzz
+FUZZ_OUT    := $(BUILD_DIR)/fuzz
+FUZZ_SRC    := $(wildcard $(FUZZ_DIR)/*.c)
+FUZZ_BIN    := $(FUZZ_SRC:$(FUZZ_DIR)/%.c=$(FUZZ_OUT)/bin/%)
+FUZZ_OBJ    := $(LIB_SRC:%.c=$(FUZZ_OUT)/obj/%.o)
+FUZZ_SANITIZE := address,undefined
+# Derived rather than spelled again: a fuzz target that compiles with a
+# different standard or a different define than the build is not testing the
+# build. -O1 because libFuzzer wants the code optimised enough to be fast and
+# unoptimised enough to have frames worth reading.
+FUZZ_CFLAGS := $(CFLAGS) -g -O1 -fno-omit-frame-pointer -fsanitize=$(FUZZ_SANITIZE)
+
+# How long each target runs under `fuzz-run`. Seconds, per target.
+FUZZ_TIME ?= 60
+
+fuzz: $(FUZZ_BIN)
+
+$(FUZZ_OUT)/obj/%.o: %.c Project.toml
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -fsanitize=fuzzer-no-link -MMD -MP -c $< -o $@
+
+# The same reason the build has them: editing a header has to rebuild what
+# includes it, or a fuzz target reads a struct that no longer has that shape.
+-include $(FUZZ_OBJ:.o=.d)
+
+$(FUZZ_OUT)/bin/%: $(FUZZ_DIR)/%.c $(FUZZ_OBJ)
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -fsanitize=fuzzer $< $(FUZZ_OBJ) -o $@ $(LDFLAGS)
+
+# The corpus, and nothing else: every input under fuzz/corpus is replayed and
+# the binary exits. Deterministic and quick, which is what makes it a test
+# rather than a search — a crash found once is filed here and never comes back
+# unnoticed.
+fuzz-corpus: fuzz
+	@for bin in $(FUZZ_BIN); do \
+	    name=$${bin##*/fuzz_}; \
+	    echo "== fuzz_$$name"; \
+	    ./$$bin -runs=0 $(FUZZ_DIR)/corpus/$$name || exit 1; \
+	done
+
+# The search. Bounded by FUZZ_TIME so it can run unattended.
+#
+# Two directories, and the order is the point: libFuzzer writes what it
+# generates into the first one and only reads the rest. So the growth goes under
+# $(BUILD_DIR), which `clean` removes, and the corpus in the repository stays
+# what a person put there — seeds and filed crashes, not ninety thousand bytes
+# of mutation nobody chose to keep.
+fuzz-run: fuzz
+	@for bin in $(FUZZ_BIN); do \
+	    name=$${bin##*/fuzz_}; \
+	    work=$(FUZZ_OUT)/work/$$name; \
+	    mkdir -p $$work; \
+	    echo "== fuzz_$$name"; \
+	    ./$$bin $$work $(FUZZ_DIR)/corpus/$$name \
+	        -max_total_time=$(FUZZ_TIME) -print_final_stats=1 || exit 1; \
+	done
 
 clean:
 	rm -rf $(BUILD_DIR)

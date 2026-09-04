@@ -1,0 +1,2 @@
+/home/u/p/src/main.c:12:9: warning: variable 'n' is not initialized [cppcoreguidelines-init-variables]
+1 warning generated.
