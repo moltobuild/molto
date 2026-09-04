@@ -2,6 +2,7 @@
 
 [![Linux](https://github.com/moltobuild/molto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/moltobuild/molto/actions/workflows/ci.yml)
 [![Windows](https://github.com/moltobuild/molto/actions/workflows/windows.yml/badge.svg?branch=master)](https://github.com/moltobuild/molto/actions/workflows/windows.yml)
+[![macOS](https://github.com/moltobuild/molto/actions/workflows/macos.yml/badge.svg?branch=master)](https://github.com/moltobuild/molto/actions/workflows/macos.yml)
 [![Release](https://github.com/moltobuild/molto/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/moltobuild/molto/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -17,6 +18,12 @@ reports what RFC-0017 defined as supported — `src/` and `tests/` compile, molt
 builds a project, molto builds molto, and the suite passes on a Windows runner.
 It is still a watch rather than a gate, and moving it into `ci.yml` is the last
 step of that RFC.
+
+**macOS** is not a gate, and it is red on purpose — where Windows was three
+weeks ago. It reports how far that port has got (RFC-0018), and it turns green
+when the suite does. That is the point of putting a badge here before it can be
+green: a platform is not supported until something says so, and this is the
+something.
 
 **Release** is what a tag runs: the static Linux binary, the cross-compiled
 Windows one, the sums that cover both, and each of them exercised on the

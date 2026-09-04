@@ -1,0 +1,222 @@
+name: macOS
+
+# Deliberately not part of `ci.yml`, for the reason `windows.yml` gives: this
+# file measures how far Molto's macOS port has got, and `ci.yml` is what has to
+# be green. When this one is green too it moves there, and that move is the
+# definition of "supported" in RFC-0018.
+#
+# It is not a gate. Nothing requires it, and a pull request merges with it red
+# -- which is the whole reason it can afford to be red. The README carries its
+# badge, so the state of the port is a thing anyone can see without opening a
+# run, and that badge is why `continue-on-error` is on the individual steps and
+# never on the job. A run whose every job is excused reports success, and a
+# green badge over a tree that does not build is worse than no badge.
+#
+# Two things about this file are not copied from `windows.yml`, and both follow
+# from what macOS is:
+#
+#   - **One job, not two halves.** Windows asks "does it compile at all" on a
+#     Linux runner with a cross toolchain, because that costs a minute against
+#     ten and needs no Windows queue. Cross-compiling to Darwin needs the Apple
+#     SDK, which does not travel, so there is nowhere cheaper to ask the
+#     question than here.
+#   - **No install step.** `make`, `clang`, `zip`, `unzip` and `tar` are all in
+#     the runner image. The `make` is GNU 3.81, which is what Xcode's command
+#     line tools ship; the bootstrap Makefile uses nothing newer, and if that
+#     ever stops being true this job should say so rather than reach for
+#     Homebrew -- what a person on a Mac has is what this measures.
+#
+# The order the steps ask their questions in comes from RFC-0017's table, which
+# this port inherits: compile, link, *find a compiler*, build a program, build
+# itself, then the suite. Every one of those layers hid a failure from the one
+# above it on Windows, and a job that only compiled would have gone green with
+# all of them inside it.
+#
+# Read out of the source before this job ever ran, so its first number can be
+# checked against an expectation (RFC-0018, *Where the cost actually is*):
+#
+#   - `<threads.h>` in `src/util/thread.c`, which Apple's SDK does not ship --
+#     the same wall mingw was, landing on the interface that port created.
+#   - `st_mtim` in `src/services/fs_service.c`, which Darwin spells
+#     `st_mtimespec`.
+#   - `-Wl,-soname,` in `src/services/frontend_native.c`, which ld64 does not
+#     know. A link error, and lucky to be one.
+#   - `lib%s.so.%lu.%lu.%lu` in `src/build/library.c`, which is the one no
+#     compiler will mention: clang maps `-shared` to `-dynamiclib`, so the link
+#     succeeds and produces a dylib under a name nothing will load.
+#
+# Anything this job reports beyond those four is what the sweep missed, and on
+# Windows that was the interesting half.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Runs on macOS
+    # Pinned rather than `macos-latest`: arm64, which is what a Mac is now, and
+    # a runner label that does not change what it means underneath a badge.
+    # RFC-0018 declines to promise x86_64 for the same reason RFC-0017 declines
+    # to promise ARM64 Windows -- nobody has measured it.
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      # The same two `ci.yml` hands its own suite, and for the same reason.
+      # Some tests do not fake a compiler at all: they write C++ that uses
+      # <string>, build it, and run what comes out. Without these, every one of
+      # them fails with `could not run 'pickup'` and the tally counts pickup's
+      # macOS port instead of Molto's -- which would make a red here
+      # unattributable.
+      C_COMPILER: clang
+      CPP_COMPILER: clang++
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: What this is being built with
+        run: |
+          clang --version
+          make --version | head -1
+          uname -m
+
+      # `-k` is what makes this a measurement rather than a tripwire. Without
+      # it make stops at the first translation unit that fails and the port is
+      # reported as one error out of an unknown number.
+      #
+      # `CC=clang` because the bootstrap Makefile reaches for `gcc-12` when
+      # nobody names a compiler, and on a Mac `gcc` is a symlink to clang
+      # anyway -- so naming clang says what is really happening.
+      #
+      # The step still exits with make's status, so the job stays honest; the
+      # tally is printed first, and `continue-on-error` on the step is what
+      # lets the next one run. Job-level `continue-on-error` does not do that:
+      # it spares the workflow, not the steps after a red one.
+      - name: Compile molto for macOS
+        id: sources
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build CC=clang 2>&1 | tee compile.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh compile.log "molto for macOS"
+          exit $status
+
+      # Only once `src/` compiles, and that `if` is not caution. The test
+      # binary links every object under `src/`, so this step rebuilds them all
+      # before it reaches a single file under `tests/` -- which on Windows meant
+      # the same errors were counted twice and the job announced a number that
+      # did not exist. A measurement that counts the same thing twice is worse
+      # than no measurement, because it looks like data.
+      - name: Compile its suite for macOS
+        if: steps.sources.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          make -k build/molto_tests CC=clang 2>&1 | tee suite.log
+          status=${PIPESTATUS[0]}
+          ./.github/tally.sh suite.log "its suite for macOS"
+          exit $status
+
+      # The architecture is printed and not asserted: what is being checked is
+      # that a Mach-O came out, and RFC-0018 promises one architecture without
+      # promising which runner label keeps offering it.
+      - name: And it really is a Mach-O binary
+        if: steps.sources.outcome == 'success'
+        continue-on-error: true
+        run: |
+          file build/molto*
+          file build/molto | grep -q 'Mach-O 64-bit executable'
+
+      # Before the suite, deliberately. A job that stops at the first failure
+      # reports whatever it reached, and "does it build a program at all" is
+      # the headline this job exists to answer -- worth more, while the port is
+      # in progress, than knowing which of eight hundred cases went red.
+      - name: It builds and runs a project
+        continue-on-error: true
+        run: |
+          set +e
+          here=$PWD
+          (
+            set -e
+            molto="$here/build/molto"
+            "$molto" --version
+            # `-t` and not a bare `mktemp -d`: BSD mktemp wants a template or
+            # a prefix, and the bare form -- which is what the Windows job
+            # uses, on msys2's GNU coreutils -- is a usage error here.
+            cd "$(mktemp -d -t molto)"
+            "$molto" new smoke_test
+            cd smoke_test
+            "$molto" run | tee output
+            grep -q "Hello, world!" output
+          )
+          status=$?
+          # The tally counts compiler errors, and this step asks a question no
+          # compiler answers. A molto that builds and cannot build anything is
+          # the failure this job exists for, so it counts itself.
+          [ $status -eq 0 ] || echo 1 >> "$here/tally.count"
+          exit $status
+
+      # The claim nobody would otherwise be checking. Everything above builds
+      # molto with the bootstrap Makefile, which is not how molto is built --
+      # `ci.yml` has a `self-host` job for that and it runs on Ubuntu only. So
+      # "molto builds molto" and "molto runs on macOS" would both be true and
+      # would never have met.
+      - name: And molto builds molto with molto
+        continue-on-error: true
+        run: |
+          set +e
+          ./build/molto build
+          status=$?
+          [ $status -eq 0 ] || echo 1 >> tally.count
+          exit $status
+
+      # Reported rather than skipped: skipping edits the tests to hide them,
+      # while this leaves every failure printed and counted, so the tally is a
+      # number to watch move.
+      #
+      # It counts toward the verdict, and it has to. The badge is a claim that
+      # macOS is supported, which RFC-0018 defines as the suite passing and not
+      # as the tree compiling. The first Windows run that ever reached this
+      # step reported 680 passed and 163 failed with every gate above it green.
+      #
+      # `-v` names each test as it runs. Without it a crash leaves a row of
+      # dots, and working out which case died means counting them against the
+      # order the file registers in.
+      - name: Run the suite (watched, not yet a gate)
+        continue-on-error: true
+        run: |
+          set +e
+          make test CC=clang TEST_ARGS=-v 2>&1 | tee run.log
+          status=${PIPESTATUS[0]}
+          failed=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) failed.*/\1/p' run.log | tail -1)
+          if [ -n "$failed" ] && [ "$failed" -gt 0 ]; then
+            echo "$failed" >> tally.count
+            echo "### The suite on macOS" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "$failed tests still fail." >> "$GITHUB_STEP_SUMMARY"
+          elif [ $status -ne 0 ]; then
+            # It failed without reporting a tally: the binary did not run, or
+            # it died partway. Counted as one so the verdict cannot read that
+            # as nothing wrong.
+            echo 1 >> tally.count
+          fi
+          exit $status
+
+      # The job ends the way the port stands. This step and the
+      # `continue-on-error` above it come off together, when the tally reaches
+      # zero and this file moves into `ci.yml`.
+      - name: Where the port stands
+        run: |
+          if [ ! -f tally.count ]; then
+            echo "no tally was produced, which is its own kind of red"
+            exit 1
+          fi
+          total=$(awk '{ sum += $1 } END { print sum + 0 }' tally.count)
+          echo "$total between here and a supported platform"
+          test "$total" -eq 0
