@@ -134,6 +134,123 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     return ok ? exit_ok : exit_build_failure;
 }
 
+/* Every object the project compiled except the one holding its `main`: a test
+   binary brings its own entry point, and linking the app's would be two. */
+[[nodiscard]] static int library_objects_of(const str_list *objects, const char *main_object,
+                                            bool has_main, str_list *out) {
+    for(size_t i = 0; i < str_list_count(objects); i++) {
+        const char *object = str_list_get(objects, i);
+        if(has_main && strcmp(object, main_object) == 0)
+            continue;
+        if(!str_list_push(out, object))
+            return exit_build_failure;
+    }
+    return exit_ok;
+}
+
+/* A development dependency's own sources, planned as a pass of their own —
+   each against its own options, exactly as a runtime dependency's are. Their
+   objects join the test link rather than the project's, which is the whole
+   separation RFC-0008 asks for. */
+[[nodiscard]] static int plan_the_dev_packages(const char *root, const build_pass_env *env,
+                                               build_plan *plan, str_list *lib_objects) {
+    if(!build_document_sources(&plan->doc, root, doc_targets_dev_packages,
+                               &plan->dev_package_sources))
+        return exit_build_failure;
+    if(str_list_count(&plan->dev_package_sources) == 0)
+        return exit_ok;
+
+    plan->dev_package_units = build_units_from_document(&plan->doc, doc_targets_dev_packages,
+                                                        &plan->dev_package_sources, plan->labels);
+    if(plan->dev_package_units == NULL)
+        return exit_build_failure;
+    return build_plan_add(plan, env, plan->dev_package_units,
+                          str_list_count(&plan->dev_package_sources), lib_objects);
+}
+
+/* The test sources, planned through the same path the project's own take, so
+   they get the parallel build, the dependency tracking and the up-to-date
+   checks instead of a second implementation of all three. */
+[[nodiscard]] static int plan_the_tests(const char *root, const build_pass_env *env,
+                                        build_plan *plan, str_list *test_objects) {
+    if(!build_document_sources(&plan->doc, root, doc_targets_tests, &plan->test_sources))
+        return exit_build_failure;
+    if(str_list_count(&plan->test_sources) == 0)
+        return exit_ok;
+
+    plan->test_units =
+        build_units_from_document(&plan->doc, doc_targets_tests, &plan->test_sources, plan->labels);
+    if(plan->test_units == NULL)
+        return exit_build_failure;
+    return build_plan_add(plan, env, plan->test_units, str_list_count(&plan->test_sources),
+                          test_objects);
+}
+
+/* A deleted test leaves behind an object and an executable that `molto test`
+   would happily keep running. Prune both (RFC-0004). */
+static void prune_what_a_deleted_test_left(wsdb *db, const char *root, const char *profile_dir,
+                                           const str_list *test_objects,
+                                           const str_list *test_binaries) {
+    char prefix[PATH_BUFFER_SIZE];
+    if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_TESTS "/", root,
+                      profile_dir))
+        wsdb_prune(db, test_objects, prefix);
+    if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/", root,
+                      profile_dir))
+        wsdb_prune(db, test_binaries, prefix);
+}
+
+/* Link what was compiled into the binaries `molto test` will run: one per test
+   source, or one for all of them, which is `[test].mode` and the only thing the
+   two modes disagree about. */
+[[nodiscard]] static int link_the_suite(const char *root, const char *profile_dir,
+                                        const project_ctx *ctx, const resolved_toolchain *chain,
+                                        const build_plan *plan, const str_list *lib_objects,
+                                        str_list *test_objects, bool force, wsdb *db,
+                                        build_report *report, str_list *test_binaries_out) {
+    const test_link_context context = {
+        .root = root,
+        .profile_dir = profile_dir,
+        .ctx = ctx,
+        .chain = chain,
+        .test_units = plan->test_units,
+        .lib_objects = lib_objects,
+        .any_cpp = plan->any_cpp,
+        .force = force,
+        .db = db,
+        .report = report,
+    };
+    return ctx->test.mode == test_mode_single
+               ? link_tests_single(&context, &plan->test_sources, test_objects, test_binaries_out)
+               : link_tests_per_file(&context, &plan->test_sources, test_objects,
+                                     test_binaries_out);
+}
+
+/*
+ * Everything this command owns, released in one place.
+ *
+ * Four ways out and a different subset freed on three of them is how one of
+ * them came to leak the compilation database and leave the workspace unsaved:
+ * the path it needs is one no real project produces, so nobody ever took it and
+ * nothing ever said so. One function that every exit goes through cannot drift
+ * like that.
+ *
+ * `result` passes through so a caller can `return finish_tests(code, ...)` and
+ * have one statement mean both.
+ */
+static int finish_tests(int result, build_plan *plan, compile_db *cdb, const char *root,
+                        str_list *objects, str_list *lib_objects, str_list *test_objects,
+                        wsdb *db) {
+    build_plan_free(plan);
+    build_publish_compile_db(cdb, root);
+    compile_db_destroy(cdb);
+    str_list_free(test_objects);
+    str_list_free(lib_objects);
+    str_list_free(objects);
+    build_warn_if_not_saved(db);
+    return result;
+}
+
 int build_tests(const char *root, build_profile profile, const char *platform,
                 bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
                 project_env *env_out) {
@@ -158,7 +275,11 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
     project_ctx ctx;
     resolved_toolchain chain;
     str_list objects;
+    str_list lib_objects;
+    str_list test_objects;
     str_list_init(&objects);
+    str_list_init(&lib_objects);
+    str_list_init(&test_objects);
     bool any_compiled = false;
     build_plan plan;
     build_plan_init(&plan);
@@ -169,23 +290,17 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
     int result = build_plan_project(root, profile, platform, refresh_toolchain, db, &options, &ctx,
                                     &chain, &objects, &plan);
-    if(result != exit_ok) {
-        build_plan_free(&plan);
-        build_publish_compile_db(options.cdb, root);
-        compile_db_destroy(options.cdb);
-        str_list_free(&objects);
-        build_warn_if_not_saved(db);
-        return result;
-    }
+    if(result != exit_ok)
+        return finish_tests(result, &plan, options.cdb, root, &objects, &lib_objects, &test_objects,
+                            db);
     if(env_out != NULL)
         *env_out = ctx.env;
 
     char profile_dir_storage[PATH_BUFFER_SIZE];
     if(!build_segment(profile, platform, profile_dir_storage, sizeof profile_dir_storage)) {
         (void)fs_report_long_path(root);
-        build_plan_free(&plan);
-        str_list_free(&objects);
-        return exit_build_failure;
+        return finish_tests(exit_build_failure, &plan, options.cdb, root, &objects, &lib_objects,
+                            &test_objects, db);
     }
     const char *profile_dir = profile_dir_storage;
 
@@ -204,17 +319,11 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
        links: the tests supply their own entry point. */
     char main_source[PATH_BUFFER_SIZE];
     char main_object[PATH_BUFFER_SIZE];
-    char src_dir[PATH_BUFFER_SIZE];
     if(!fs_format_path(main_source, sizeof main_source, "%s/" DIR_SRC "/main.c", root) ||
-       !build_object_path_for(root, profile_dir, main_source, main_object, sizeof main_object) ||
-       !fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
+       !build_object_path_for(root, profile_dir, main_source, main_object, sizeof main_object)) {
         (void)fs_report_long_path(root);
-        build_plan_free(&plan);
-        build_publish_compile_db(options.cdb, root);
-        compile_db_destroy(options.cdb);
-        str_list_free(&objects);
-        build_warn_if_not_saved(db);
-        return exit_build_failure;
+        return finish_tests(exit_build_failure, &plan, options.cdb, root, &objects, &lib_objects,
+                            &test_objects, db);
     }
     bool has_main = fs_path_exists(main_source);
 
@@ -230,49 +339,14 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
      * lists it used to widen are read by the frontend, which has already run.
      */
 
-    /* Library objects = every src object except the app's main object. */
-    str_list lib_objects;
-    str_list_init(&lib_objects);
-    for(size_t i = 0; i < str_list_count(&objects) && result == exit_ok; i++) {
-        const char *object = str_list_get(&objects, i);
-        if(has_main && strcmp(object, main_object) == 0)
-            continue;
-        if(!str_list_push(&lib_objects, object))
-            result = exit_build_failure;
-    }
+    if(result == exit_ok)
+        result = library_objects_of(&objects, main_object, has_main, &lib_objects);
 
-    /* A development dependency's own sources are compiled in their own pass,
-       each against its own options, exactly as a runtime one's are — and their
-       objects join the test link rather than the project's. */
-    if(result == exit_ok && !build_document_sources(&plan.doc, root, doc_targets_dev_packages,
-                                                    &plan.dev_package_sources))
-        result = exit_build_failure;
-    if(result == exit_ok && str_list_count(&plan.dev_package_sources) > 0) {
-        plan.dev_package_units = build_units_from_document(&plan.doc, doc_targets_dev_packages,
-                                                           &plan.dev_package_sources, plan.labels);
-        result = plan.dev_package_units == NULL
-                     ? exit_build_failure
-                     : build_plan_add(&plan, &env, plan.dev_package_units,
-                                      str_list_count(&plan.dev_package_sources), &lib_objects);
-    }
+    if(result == exit_ok)
+        result = plan_the_dev_packages(root, &env, &plan, &lib_objects);
 
-    if(result == exit_ok &&
-       !build_document_sources(&plan.doc, root, doc_targets_tests, &plan.test_sources))
-        result = exit_build_failure;
-
-    /* Compiled through the same path as the project's own sources, so tests get
-       the parallel build, the dependency tracking and the up-to-date checks
-       instead of a second implementation of all three. */
-    str_list test_objects;
-    str_list_init(&test_objects);
-    if(result == exit_ok && str_list_count(&plan.test_sources) > 0) {
-        plan.test_units = build_units_from_document(&plan.doc, doc_targets_tests,
-                                                    &plan.test_sources, plan.labels);
-        result = plan.test_units == NULL
-                     ? exit_build_failure
-                     : build_plan_add(&plan, &env, plan.test_units,
-                                      str_list_count(&plan.test_sources), &test_objects);
-    }
+    if(result == exit_ok)
+        result = plan_the_tests(root, &env, &plan, &test_objects);
 
     /* Everything is planned, so the report can finally say how much there is —
        and only now does anything compile. The four passes run in the order
@@ -283,45 +357,13 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
         result = build_run_plan(&plan, report, &any_compiled);
     }
 
-    if(result == exit_ok) {
-        const test_link_context context = {
-            .root = root,
-            .profile_dir = profile_dir,
-            .ctx = &ctx,
-            .chain = &chain,
-            .test_units = plan.test_units,
-            .lib_objects = &lib_objects,
-            .any_cpp = plan.any_cpp,
-            .force = any_compiled,
-            .db = db,
-            .report = report,
-        };
-        result =
-            ctx.test.mode == test_mode_single
-                ? link_tests_single(&context, &plan.test_sources, &test_objects, test_binaries_out)
-                : link_tests_per_file(&context, &plan.test_sources, &test_objects,
-                                      test_binaries_out);
-    }
+    if(result == exit_ok)
+        result = link_the_suite(root, profile_dir, &ctx, &chain, &plan, &lib_objects, &test_objects,
+                                any_compiled, db, report, test_binaries_out);
 
-    /* A deleted test leaves behind an object and an executable that `molto test`
-       would happily keep running. Prune both (RFC-0004). */
-    if(result == exit_ok) {
-        char prefix[PATH_BUFFER_SIZE];
-        if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/" DIR_TESTS "/",
-                          root, profile_dir))
-            wsdb_prune(db, &test_objects, prefix);
-        if(fs_format_path(prefix, sizeof prefix, "%s/" DIR_BUILD "/%s/" DIR_TESTS "/", root,
-                          profile_dir))
-            wsdb_prune(db, test_binaries_out, prefix);
-    }
+    if(result == exit_ok)
+        prune_what_a_deleted_test_left(db, root, profile_dir, &test_objects, test_binaries_out);
 
-    build_plan_free(&plan);
-    build_publish_compile_db(options.cdb, root);
-    compile_db_destroy(options.cdb);
-    str_list_free(&test_objects);
-    str_list_free(&lib_objects);
-    str_list_free(&objects);
-
-    build_warn_if_not_saved(db);
-    return result;
+    return finish_tests(result, &plan, options.cdb, root, &objects, &lib_objects, &test_objects,
+                        db);
 }
