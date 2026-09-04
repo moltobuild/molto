@@ -11,12 +11,12 @@ A modern packaging ecosystem for C and C++.
 optimisation combinations, sanitizers, a static binary, and the style check. It
 has to be green.
 
-**Windows** is not a gate yet, and it is red on purpose. It reports how far the
-port has got (RFC-0017): `src/` and `tests/` both compile for Windows, molto
-builds a project and builds itself there, and its own suite does not finish. It
-turns green when the suite does, and that is the point of putting it here — a
-platform is not supported until something says so, and this is the something.
-pickup's equivalent badge went green on 2026-09-02; this one has not yet.
+**Windows** went green on 2026-09-04, and that is what the badge is for: it was
+red for as long as the port was unfinished, and nobody had to be asked. It
+reports what RFC-0017 defined as supported — `src/` and `tests/` compile, molto
+builds a project, molto builds molto, and the suite passes on a Windows runner.
+It is still a watch rather than a gate, and moving it into `ci.yml` is the last
+step of that RFC.
 
 **Release** is what a tag runs: the static Linux binary, the cross-compiled
 Windows one, the sums that cover both, and each of them exercised on the
