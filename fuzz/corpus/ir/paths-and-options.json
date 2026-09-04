@@ -1,0 +1,1 @@
+{"schema":3,"projects":[{"name":"app","version":"0.1.0","root":"/project/root","origin":"native","targets":[{"name":"app","kind":"executable","depends_on":["lib"],"sources":[{"path":"src/main.c","language":"c"}],"options":[{"value":"-O2","scope":"target"}]},{"name":"lib","kind":"static","sources":[{"path":"../outside/x.c","language":"c"}]}]}]}

@@ -161,6 +161,40 @@ jobs:
       - name: Measure it
         run: make coverage
 
+  # Every input under fuzz/corpus, replayed.
+  #
+  # This is the half of fuzzing that is a test: it runs what is committed, takes
+  # seconds, and fails the same way every time — which is what makes a crash
+  # found once a crash that cannot come back unnoticed. Each of those inputs was
+  # either chosen as a seed or filed after a search found it, so this is the
+  # regression suite for parsers that read text Molto did not write.
+  #
+  # The search itself is not here, and deliberately. A search is not a test: it
+  # finds something or it does not, a minute of it on a pull request finds
+  # nothing an hour of it has not already found, and putting it on the critical
+  # path would fail whichever pull request happened to be open when it did find
+  # something — never the one that caused it. It runs nightly instead, in
+  # fuzz.yml, where it can search for long enough to be worth running. What it
+  # finds is filed here, and this step inherits it.
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # libFuzzer is clang's runtime and ships in libclang-rt, which the clang
+      # package does not pull in on its own — without it the link fails on a
+      # missing libclang_rt.fuzzer.a and says nothing about why.
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y \
+            "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get install -y -o Acquire::Retries=3 \
+            clang-${LLVM_VERSION} libclang-rt-${LLVM_VERSION}-dev
+      - name: Replay the corpus
+        run: make fuzz-corpus FUZZ_CC=clang-${LLVM_VERSION}
+
   # The shape the release ships, built on every push rather than only at a tag.
   # A release artifact that CI never builds is one that breaks between releases
   # and is found out by whoever downloads it.

@@ -1,0 +1,8 @@
+src/main.c: In function 'main':
+src/main.c:4:12: warning: unused variable 'x' [-Wunused-variable]
+    4 |     int x = 0;
+      |         ^
+src/main.c:7:5: error: 'y' undeclared (first use in this function)
+    7 |     y = 1;
+      |     ^
+src/main.c:7:5: note: each undeclared identifier is reported only once

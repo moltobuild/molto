@@ -1,0 +1,13 @@
+{
+    "preset": "molto",
+    "style": {
+        "indent_width": 4,
+        "use_tabs": false,
+        "line_width": 100,
+        "brace_style": "attach",
+        "pointer_alignment": "right",
+        "sort_includes": true,
+        "space_before_paren": false,
+        "column_limit_comments": true
+    }
+}

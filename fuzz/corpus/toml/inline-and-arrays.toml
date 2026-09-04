@@ -1,0 +1,27 @@
+[package]
+name = "demo"
+version = "0.1.0"
+
+[target]
+std = "c17"
+flags = ["-Wall", "-Wextra"]
+defines = ["FOO=1", "BAR=2"]
+
+[deps]
+sqlite = "3.53.4"
+greet = { path = "../greet" }
+http = { git = "https://example.invalid/h.git", tag = "v1.2.3" }
+
+[deps.http.opts]
+jobs = 4
+tls = true
+
+[[tool]]
+kind = "linter"
+name = "clang-tidy"
+path = "/usr/bin/clang-tidy"
+
+[[tool]]
+kind = "formatter"
+name = "clang-format"
+path = "/usr/bin/clang-format"

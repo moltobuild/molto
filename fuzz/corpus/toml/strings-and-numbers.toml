@@ -1,0 +1,9 @@
+# a comment
+[a.b.c]
+literal = 'C:\path\not\escaped'
+basic = "tab\there \"quoted\" \\ backslash \u00e9"
+signed = -1_000
+zero = 0
+yes = true
+no = false
+empty = ""
