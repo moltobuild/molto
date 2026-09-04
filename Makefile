@@ -54,7 +54,7 @@ MOLTEST_SRC := $(shell find $(MOLTEST_DIR)/src -name '*.c')
 LIB_OBJ  := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 MAIN_OBJ := $(MAIN_SRC:%.c=$(BUILD_DIR)/%.o)
 
-.PHONY: all build run test clean
+.PHONY: all build run test coverage clean
 
 all: build
 
@@ -89,6 +89,43 @@ $(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(MOLTEST_DIR)/include $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) \
 	    -o $@ $(LDFLAGS)
+
+# What the suite covers.
+#
+# 863 tests is a number that says nothing about what is not executed, and the
+# lines no test reaches are where the next bug is. Built apart from the normal
+# objects because `--coverage` changes what the compiler emits, and a tree half
+# instrumented measures itself wrong.
+#
+# gcov and nothing else: the aggregation is a shell script over its output, so
+# this runs anywhere the tree already builds. lcov and genhtml are worth having
+# to read a specific file line by line, and are not needed to answer the
+# question this target exists for — which files does the suite not enter.
+COVERAGE_OUT    := $(BUILD_DIR)/coverage
+COVERAGE_OBJ    := $(LIB_SRC:%.c=$(COVERAGE_OUT)/obj/%.o)
+COVERAGE_BIN    := $(COVERAGE_OUT)/molto_tests
+COVERAGE_CFLAGS := $(CFLAGS) --coverage -O0 -g
+COVERAGE_REPORT := .github/coverage.sh
+# The gcov that matches CC. An older one refuses the notes a newer gcc wrote,
+# and says "version 'B23', prefer 'B14'" — which sounds like a corrupt file and
+# is a mismatched pair. Derived rather than assumed, because a machine with
+# three gccs on it has a /usr/bin/gcov belonging to only one of them.
+GCOV ?= $(patsubst gcc%,gcov%,$(notdir $(CC)))
+
+coverage: $(COVERAGE_BIN)
+	./$(COVERAGE_BIN) $(TEST_ARGS)
+	@$(COVERAGE_REPORT) $(COVERAGE_OUT)/obj $(GCOV)
+
+$(COVERAGE_OUT)/obj/%.o: %.c Project.toml
+	@mkdir -p $(dir $@)
+	$(CC) $(COVERAGE_CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(COVERAGE_OBJ:.o=.d)
+
+$(COVERAGE_BIN): $(COVERAGE_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
+	@mkdir -p $(dir $@)
+	$(CC) $(COVERAGE_CFLAGS) -I$(MOLTEST_DIR)/include $(COVERAGE_OBJ) $(MOLTEST_SRC) \
+	    $(TEST_SRC) -o $@ $(LDFLAGS) --coverage
 
 clean:
 	rm -rf $(BUILD_DIR)
