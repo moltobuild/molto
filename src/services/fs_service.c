@@ -81,8 +81,24 @@ static int64_t filetime_to_unix_ns(const FILETIME *time) {
     struct stat info;
     if(stat(path, &info) != 0)
         return false;
-    if(mtime_ns != NULL)
-        *mtime_ns = (int64_t)info.st_mtim.tv_sec * NANOS_PER_SECOND + (int64_t)info.st_mtim.tv_nsec;
+    if(mtime_ns != NULL) {
+        /* Two spellings of the same field. POSIX.1-2008 named it `st_mtim` and
+           Linux has it; Darwin arrived at nanoseconds first, called it
+           `st_mtimespec`, and never added the other name.
+
+           The tempting fix is `st_mtime`, which both have. It is the same
+           mistake Windows made this function for: whole seconds meant two
+           writes inside one second were simultaneous, and a rebuild that
+           nanoseconds would have triggered did not happen. Reaching for the
+           portable name here would reintroduce it on a platform that has the
+           resolution and only spells it differently. */
+#ifdef __APPLE__
+        const struct timespec written = info.st_mtimespec;
+#else
+        const struct timespec written = info.st_mtim;
+#endif
+        *mtime_ns = (int64_t)written.tv_sec * NANOS_PER_SECOND + (int64_t)written.tv_nsec;
+    }
     if(size != NULL)
         *size = (uint64_t)info.st_size;
     return true;

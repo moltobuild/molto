@@ -13,9 +13,12 @@
  * callers actually use, and nothing more: a pool of workers, a drawer, and the
  * two ways of waiting.
  *
- * On POSIX every function here is one C11 call, so nothing about how Linux
- * behaves changes. On Windows they are the Win32 primitives directly, rather
- * than winpthreads, so the binary needs no threading runtime beside it.
+ * Apple has the same gap for the same reason — C11 threads are optional and
+ * neither vendor implemented them — so the POSIX side is pthreads, which Linux
+ * and macOS both have and which is what glibc builds its C11 threads on top of
+ * anyway. On Windows these are the Win32 primitives directly, rather than
+ * winpthreads, so the binary needs no threading runtime beside it. Three
+ * platforms, two implementations.
  *
  * Each handle is one pointer. The alternative — the platform's own struct
  * behind an `#ifdef` — would put <windows.h> in a header every caller
