@@ -1,0 +1,108 @@
+name: Fuzz
+
+# The search, which is not a test and does not belong on a pull request.
+#
+# `ci.yml` runs the other half: it replays every input under fuzz/corpus, takes
+# seconds, and fails the same way every time. That is the regression suite. This
+# file is the part that goes looking, and it is here rather than there for three
+# reasons, only the first of which is the clock:
+#
+#   - it cost six minutes of every pull request and the replay costs seventeen
+#     seconds, so the gate was six percent gate and ninety-four percent waiting;
+#   - a minute per target finds nothing that an hour has not already found, so
+#     the budget a pull request can afford is the budget at which fuzzing does
+#     not work;
+#   - and a search on the critical path fails whichever pull request happens to
+#     be open when it finds something, which is never the one that caused it.
+#
+# Nightly, it gets five minutes a target instead of one, and the corpus it
+# builds is kept — so tomorrow's run starts where tonight's left off rather than
+# re-walking the shallow end of the same parser every night. That is the whole
+# reason a fuzzer improves with time, and it is what a per-run corpus throws
+# away.
+
+on:
+  schedule:
+    # 03:37 UTC. Not on the hour: GitHub schedules every cron in the fleet at
+    # once, and a job asking for :00 waits behind everyone else's.
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds each target searches for"
+        required: false
+        default: "300"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  LLVM_VERSION: "19"
+
+jobs:
+  # One job per target, and that is not only for the wall clock. A finding names
+  # the parser in the job title, so "fuzz (toml) failed" is the whole report
+  # before anyone opens a log — and one target crashing does not take the other
+  # five down with it, which is what `fail-fast: false` is for.
+  search:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [toml, json, semver, diagnostic, depfile, ir]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # libFuzzer is clang's runtime and ships in libclang-rt, which the clang
+      # package does not pull in on its own — without it the link fails on a
+      # missing libclang_rt.fuzzer.a and says nothing about why.
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          sudo add-apt-repository -y \
+            "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main"
+          sudo apt-get install -y -o Acquire::Retries=3 \
+            clang-${LLVM_VERSION} libclang-rt-${LLVM_VERSION}-dev
+
+      # What last night reached. The key carries the run number so every run
+      # writes a new entry, and restore-keys hands back the most recent one —
+      # the usual shape for a cache that is meant to grow rather than to be hit
+      # exactly.
+      #
+      # A miss costs nothing but depth: the run starts from the committed seeds,
+      # which is where the very first one started.
+      - name: Last night's corpus
+        uses: actions/cache@v4
+        with:
+          path: build/fuzz/work/${{ matrix.target }}
+          key: fuzz-${{ matrix.target }}-${{ github.run_number }}
+          restore-keys: fuzz-${{ matrix.target }}-
+
+      - name: Search
+        run: |
+          make fuzz-run \
+            FUZZ_CC=clang-${LLVM_VERSION} \
+            FUZZ_TARGETS=${{ matrix.target }} \
+            FUZZ_TIME=${{ github.event.inputs.seconds || '300' }}
+
+      # Only reached when the search failed, and then it is the whole point: the
+      # input that crashed is the bug report, and it has to leave the runner to
+      # become one. Fix the parser, then commit that file into
+      # fuzz/corpus/<target>/ — which is what turns one finding into a case the
+      # pull request gate replays from then on.
+      - name: What it found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings-${{ matrix.target }}
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+            oom-*
+          if-no-files-found: ignore

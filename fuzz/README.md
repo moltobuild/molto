@@ -25,14 +25,34 @@ arrived, which is a resolution that is not reproducible.
 ## Running them
 
 ```sh
-make fuzz-corpus          # replay what is committed. A test: fast, deterministic
-make fuzz-run             # search. FUZZ_TIME=<seconds> per target, default 60
+make fuzz-corpus                        # replay what is committed
+make fuzz-run                           # search. FUZZ_TIME=<seconds> per target
+make fuzz-run FUZZ_TARGETS=toml FUZZ_TIME=1800
 make fuzz FUZZ_CC=clang-19
 ```
 
-`fuzz-corpus` is a gate. `fuzz-run` is a search: it writes what it generates
-under `build/`, never into `fuzz/corpus`, so the corpus in the repository stays
-what a person put there.
+`fuzz-corpus` is a test — fast, deterministic, and the gate every pull request
+runs. `fuzz-run` is a search, and the two are not interchangeable: a search
+finds something or it does not, and a minute of it finds nothing an hour has not
+already found. It writes what it generates under `build/`, never into
+`fuzz/corpus`, so the corpus in the repository stays what a person put there.
+
+## Where each half runs
+
+| | Where | Budget |
+|---|---|---|
+| `fuzz-corpus` | `ci.yml`, every pull request | seconds |
+| `fuzz-run` | `fuzz.yml`, nightly and on demand | 5 minutes a target, one job each |
+
+The search is not on a pull request on purpose. It would fail whichever pull
+request happened to be open when it found something — never the one that caused
+it — and the budget a pull request can afford is the budget at which fuzzing
+does not work. Nightly it also **keeps its corpus** between runs, so each night
+starts where the last one stopped instead of re-walking the shallow end of the
+same parser.
+
+Touched a parser and want it searched now? `workflow_dispatch` on the Fuzz
+workflow takes a `seconds` input.
 
 ## When it finds something
 

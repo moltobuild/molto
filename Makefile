@@ -154,6 +154,12 @@ FUZZ_CFLAGS := $(CFLAGS) -g -O1 -fno-omit-frame-pointer -fsanitize=$(FUZZ_SANITI
 # How long each target runs under `fuzz-run`. Seconds, per target.
 FUZZ_TIME ?= 60
 
+# Which targets `fuzz-run` searches with. All of them by default; naming one
+# spends the whole budget on the parser that was just touched, and lets a
+# scheduled run give each its own job — so a finding says which parser without
+# anyone reading a log.
+FUZZ_TARGETS ?= $(patsubst $(FUZZ_DIR)/fuzz_%.c,%,$(FUZZ_SRC))
+
 fuzz: $(FUZZ_BIN)
 
 $(FUZZ_OUT)/obj/%.o: %.c Project.toml
@@ -187,12 +193,11 @@ fuzz-corpus: fuzz
 # what a person put there — seeds and filed crashes, not ninety thousand bytes
 # of mutation nobody chose to keep.
 fuzz-run: fuzz
-	@for bin in $(FUZZ_BIN); do \
-	    name=$${bin##*/fuzz_}; \
+	@for name in $(FUZZ_TARGETS); do \
 	    work=$(FUZZ_OUT)/work/$$name; \
 	    mkdir -p $$work; \
 	    echo "== fuzz_$$name"; \
-	    ./$$bin $$work $(FUZZ_DIR)/corpus/$$name \
+	    $(FUZZ_OUT)/bin/fuzz_$$name $$work $(FUZZ_DIR)/corpus/$$name \
 	        -max_total_time=$(FUZZ_TIME) -print_final_stats=1 || exit 1; \
 	done
 
