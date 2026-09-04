@@ -47,11 +47,8 @@ static bool ends_with(const char *text, const char *suffix) {
 MOLTEST_FAKE(fake_lint_compiler) {
     const char *log = moltest_fake_setting("log");
     FILE *file;
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        for (int i = 1; i < argc; i++)
-            fprintf(file, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_log_argv(log, NULL, argc, argv);
 
     const char *src = NULL, *dep = NULL;
     for (int i = 1; i < argc; i++) {

@@ -58,11 +58,8 @@ static bool reindent(const char *text, char *out, size_t size) {
 MOLTEST_FAKE(fake_clang_format) {
     const char *log = moltest_fake_setting("log");
     FILE *file;
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        for (int i = 1; i < argc; i++)
-            fprintf(file, "%s%s", argv[i], i + 1 < argc ? " " : "\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_log_argv(log, NULL, argc, argv);
 
     enum { mode_print, mode_check, mode_write } mode = mode_print;
     const char *path = NULL;

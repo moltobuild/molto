@@ -350,6 +350,29 @@ the choice cheap. **What naming a shared library on Windows should mean at all
 — `.dll`, an import library, and nothing resembling a soname — is still open,
 and is a separate question from placing the links.**
 
+#### And that question now has an answer: not yet, and deliberately
+
+Molto **does not build a shared library on Windows**, and `molto build` for a
+package whose manifest asks for one is unsupported there for now.
+`build_makes_a_shared_library_with_the_two_links_beside_it` is skipped on that
+platform with the reason written into it, rather than passing on an arrangement
+that means nothing there.
+
+This is the one failure in the port that was never a bug. Every other one was
+POSIX assumed where the platform differs — a name mistaken for a filename, a
+second read as a nanosecond, a shell asked to run what a process could. This
+one is a *model* that does not carry over: `libgreet.so.1.2.3`, a soname and
+two links describe how an ELF loader finds a version, and Windows resolves that
+question elsewhere and differently. There is no flag to translate.
+
+Building DLLs properly is its own work, and the size of it is why it is not
+smuggled in here: what marks a symbol as exported, whether an import library is
+produced and installed beside the artifact, and what a manifest says to ask for
+one. That is an RFC-0007 amendment with a design in it, not a patch to
+`build_service`. Declaring it unsupported costs a skipped test and one honest
+sentence; pretending otherwise would cost a green tick over a platform where
+`[artifacts] type = "shared"` silently does something else.
+
 ### The suite is the next tranche, and it is not mechanical
 
 Thirty-five files under `tests/` still carry POSIX of their own: `mkdtemp` at

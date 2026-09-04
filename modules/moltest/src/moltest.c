@@ -9,6 +9,7 @@
 #include <process.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -672,6 +673,93 @@ static const char *moltest_own_path(int argc, char **argv, char *out, size_t siz
     (void)size;
 #endif
     return argc > 0 ? argv[0] : NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Appending to a file two processes share                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Append `size` bytes to `path`, placing them at the end of the file as one
+ * operation.
+ *
+ * `fopen(path, "ab")` is not that on both platforms. POSIX `O_APPEND` moves to
+ * the end and writes under one lock, so two processes appending at once
+ * interleave their writes and lose neither. Windows' C runtime spells append
+ * as a seek followed by a write, which are two operations with a gap between
+ * them: both processes seek to the same offset and the second write lands on
+ * top of the first.
+ *
+ * `FILE_APPEND_DATA` granted without `FILE_WRITE_DATA` is the Windows spelling
+ * of the POSIX guarantee, and asking for it is the whole reason this is not a
+ * `fopen`.
+ */
+static bool moltest_append_bytes(const char *path, const char *bytes, size_t size) {
+#ifdef _WIN32
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    DWORD written = 0;
+    const bool ok = WriteFile(file, bytes, (DWORD)size, &written, NULL) && written == size;
+    (void)CloseHandle(file);
+    return ok;
+#else
+    const int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0)
+        return false;
+    const ssize_t written = write(fd, bytes, size);
+    const bool ok = written >= 0 && (size_t)written == size;
+    return close(fd) == 0 && ok;
+#endif
+}
+
+bool moltest_append_line(const char *path, const char *line) {
+    if (path == NULL || line == NULL)
+        return false;
+
+    const size_t length = strlen(line);
+    char *bytes = malloc(length + 1);
+    if (bytes == NULL)
+        return false;
+    memcpy(bytes, line, length);
+    bytes[length] = '\n';
+
+    const bool ok = moltest_append_bytes(path, bytes, length + 1);
+    free(bytes);
+    return ok;
+}
+
+bool moltest_log_argv(const char *path, const char *prefix, int argc, char **argv) {
+    if (path == NULL)
+        return false;
+
+    /* Measured before it is built, so a long compile line is recorded whole:
+       an assertion about the last flag on it is an assertion about a buffer
+       size otherwise. */
+    size_t size = prefix != NULL ? strlen(prefix) : 0;
+    for (int i = 1; i < argc; i++)
+        size += strlen(argv[i]) + 1;
+
+    char *line = malloc(size + 1);
+    if (line == NULL)
+        return false;
+    size_t used = 0;
+    if (prefix != NULL) {
+        memcpy(line, prefix, strlen(prefix));
+        used = strlen(prefix);
+    }
+    for (int i = 1; i < argc; i++) {
+        if (prefix != NULL || i > 1)
+            line[used++] = ' ';
+        memcpy(line + used, argv[i], strlen(argv[i]));
+        used += strlen(argv[i]);
+    }
+    line[used] = '\0';
+
+    const bool ok = moltest_append_line(path, line);
+    free(line);
+    return ok;
 }
 
 #ifdef _WIN32

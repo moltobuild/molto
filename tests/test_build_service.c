@@ -486,10 +486,8 @@ MOLTEST_FAKE(fake_racing_compiler) {
     }
 
     const char *log = moltest_fake_setting("log");
-    if (log != NULL && (file = fopen(log, "ab")) != NULL) {
-        fprintf(file, "x\n");
-        (void)fclose(file);
-    }
+    if (log != NULL)
+        (void)moltest_append_line(log, "x");
     return 0;
 }
 
@@ -1145,6 +1143,20 @@ MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
  * 1.9.0 under a program that never relinks.
  */
 MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
+#ifdef _WIN32
+    /* Skipped by decision, not by accident, and not because the system will
+       not cooperate -- the arrangement below would run here. What does not
+       exist is the thing being arranged for: a shared library on Windows is a
+       DLL with an import library beside it, no version in the name and no
+       links to make, and molto does not build one yet. RFC-0017 records that,
+       and why it is its own piece of work rather than a translation of these
+       flags.
+
+       Reported rather than deleted, so the day the DLL arrives this is the
+       test waiting for it. */
+    SKIP("a shared library on Windows is a DLL, which molto does not build yet "
+         "(RFC-0017)");
+#else
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_shared", root, sizeof root));
     ASSERT_TRUE(library_project(root, "shared", "1.2.3"));
@@ -1182,6 +1194,7 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
     }
 
     remove_tree(root);
+#endif
 }
 
 /* A guess would put the wrong number in a soname, which is the one place a

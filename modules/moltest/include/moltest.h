@@ -422,4 +422,32 @@ void moltest_set_reporter(const moltest_reporter *reporter);
 [[nodiscard]] bool moltest_fake_program(const char *path, const char *spec, char *made,
                                         size_t size);
 
+/*
+ * Append `line`, and a newline, to `path` as one operation.
+ *
+ * For the log a fake keeps of what it was called with, which is often not a
+ * file it has to itself: `lint` runs a compiler pass and a linter pass over
+ * the same source at the same time, and both fakes write to the same log.
+ *
+ * `fopen(path, "ab")` does not survive that on Windows. Its C runtime spells
+ * append as a seek to the end followed by a write, and between the two the
+ * other process seeks to the same offset — so one line lands on top of the
+ * other and a fake that ran leaves no trace that it did. POSIX places the
+ * write at the end under one lock and has no such gap.
+ *
+ * False when the line could not be written, which a fake should treat the way
+ * it treats any other failed write.
+ */
+[[nodiscard]] bool moltest_append_line(const char *path, const char *line);
+
+/*
+ * Record what a fake was called with: `prefix`, when given, then `argv[1]`
+ * onward separated by spaces, as one line in `path`.
+ *
+ * The line is measured before it is built, so a compile line of any length is
+ * recorded whole — an assertion about the last flag on it would otherwise be
+ * an assertion about a buffer size.
+ */
+[[nodiscard]] bool moltest_log_argv(const char *path, const char *prefix, int argc, char **argv);
+
 #endif /* MOLTEST_H */
