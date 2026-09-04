@@ -212,14 +212,18 @@ static int frontend_exit_code(frontend_result answer) {
     return exit_build_failure;
 }
 
-/* Load the manifest, resolve what it depends on, and work out every unit the
-   project's own build would compile — without compiling any of them. `objects`
-   is caller-initialised and caller-freed; everything the units borrow belongs
-   to `plan`. Shared by build_project and build_tests. */
-[[nodiscard]] int build_plan_project(const char *root, build_profile profile, const char *platform,
-                                     bool refresh_toolchain, wsdb *db, const pass_options *options,
-                                     project_ctx *ctx_out, resolved_toolchain *chain_out,
-                                     str_list *objects_out, build_plan *plan) {
+/*
+ * The manifest, and the two answers that make a directory unbuildable before
+ * anything has been resolved: a host library asked for across a platform
+ * boundary, and no src/ at all.
+ *
+ * Together because they are the same kind of answer — this cannot be built
+ * here, and nothing that follows would make it so. `src_dir` is composed here
+ * because checking it is what composes it, and the caller needs it again for
+ * the one message that names it.
+ */
+[[nodiscard]] static int read_the_manifest(const char *root, const char *platform,
+                                           project_ctx *ctx_out, char *src_dir, size_t src_size) {
     int result = build_load_project(root, ctx_out);
     if(result == exit_ok && platform != NULL && ctx_out->target.host_count > 0) {
         /*
@@ -245,8 +249,7 @@ static int frontend_exit_code(frontend_result answer) {
     if(result != exit_ok)
         return result;
 
-    char src_dir[PATH_BUFFER_SIZE];
-    if(!fs_format_path(src_dir, sizeof src_dir, "%s/" DIR_SRC, root)) {
+    if(!fs_format_path(src_dir, src_size, "%s/" DIR_SRC, root)) {
         (void)fs_report_long_path(root);
         return exit_build_failure;
     }
@@ -254,18 +257,23 @@ static int frontend_exit_code(frontend_result answer) {
         fprintf(stderr, "molto: no " DIR_SRC " directory in '%s'\n", root);
         return exit_build_failure;
     }
+    return exit_ok;
+}
 
-    /* Dependencies first: what they contribute has to be in [target] before a
-       compile line is built out of it, and their sources have to be in the
-       list before the toolchain question is asked — a dependency written in
-       C++ decides which driver this build needs as much as the project's own
-       code does. */
-    char deps_err[512] = "";
-    if(!build_prepare_and_lock(root, ctx_out, &plan->deps, &plan->dev, deps_err, sizeof deps_err)) {
-        fprintf(stderr, "molto: %s\n", deps_err);
-        return exit_dependency_failure;
-    }
-
+/*
+ * What the project is, as a document: described by a frontend, then folded with
+ * everything `resolve` found, then held to the path rule.
+ *
+ * One function because the transforms are an order and not a list. RFC-0015
+ * asks for what the dependencies are, then what they export to the targets,
+ * then the targets they are themselves — and the last only after the fold, so
+ * that a package is described carrying its own recipe and nothing the consumer
+ * resolved. A caller that could reorder them is a caller that can build a
+ * package against the wrong flags.
+ */
+[[nodiscard]] static int describe_the_project(const char *root, build_profile profile,
+                                              const char *platform, project_ctx *ctx_out,
+                                              build_plan *plan) {
     /* The frontend describes the project; the engine below consumes what it
        said. The manifest is read twice for now — once here and once by
        build_load_project above, which is still where the compile line's options come
@@ -321,7 +329,14 @@ static int frontend_exit_code(frontend_result answer) {
         fprintf(stderr, "molto: %s\n", frontend_err);
         return exit_build_failure;
     }
+    return exit_ok;
+}
 
+/* What the dependencies contribute: their interface folded into `[target]`,
+   which the link line still reads, and their own sources as units of their own
+   — a package's code is a `Target` of kind `object` like any other. */
+[[nodiscard]] static int take_the_packages(const char *root, project_ctx *ctx_out,
+                                           build_plan *plan) {
     /* The interface of the dependencies folds into `[target]`, which is what
        the link line still reads. What each of them compiles itself with is a
        target of its own in the document now, so this pass is built the same way
@@ -335,12 +350,16 @@ static int frontend_exit_code(frontend_result answer) {
                                                     &plan->package_sources, plan->labels);
     if(plan->package_units == NULL)
         return exit_build_failure;
+    return exit_ok;
+}
 
-    if(str_list_count(&plan->sources) == 0) {
-        fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
-        return exit_build_failure;
-    }
-
+/* Which compiler to use, settled once per build and only once the sources are
+   known: C++ anywhere in them — the project's own code or a dependency's —
+   makes a C++ driver part of the question. */
+[[nodiscard]] static int resolve_the_toolchain(const build_plan *plan, project_ctx *ctx_out,
+                                               const char *platform, wsdb *db,
+                                               bool refresh_toolchain,
+                                               resolved_toolchain *chain_out) {
     /* Which compiler to use is settled once per build, after the sources are
        known: a project with C++ in it needs a toolchain that has a C++ driver,
        and that is part of the question. */
@@ -349,8 +368,48 @@ static int frontend_exit_code(frontend_result answer) {
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->sources, i));
     for(size_t i = 0; i < str_list_count(&plan->package_sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->package_sources, i));
-    result =
-        toolchain_resolve(&ctx_out->target, platform, needs_cpp, db, refresh_toolchain, chain_out);
+    return toolchain_resolve(&ctx_out->target, platform, needs_cpp, db, refresh_toolchain,
+                             chain_out);
+}
+
+/* Load the manifest, resolve what it depends on, and work out every unit the
+   project's own build would compile — without compiling any of them. `objects`
+   is caller-initialised and caller-freed; everything the units borrow belongs
+   to `plan`. Shared by build_project and build_tests. */
+[[nodiscard]] int build_plan_project(const char *root, build_profile profile, const char *platform,
+                                     bool refresh_toolchain, wsdb *db, const pass_options *options,
+                                     project_ctx *ctx_out, resolved_toolchain *chain_out,
+                                     str_list *objects_out, build_plan *plan) {
+    char src_dir[PATH_BUFFER_SIZE];
+    int result = read_the_manifest(root, platform, ctx_out, src_dir, sizeof src_dir);
+    if(result != exit_ok)
+        return result;
+
+    /* Dependencies first: what they contribute has to be in [target] before a
+       compile line is built out of it, and their sources have to be in the
+       list before the toolchain question is asked — a dependency written in
+       C++ decides which driver this build needs as much as the project's own
+       code does. */
+    char deps_err[512] = "";
+    if(!build_prepare_and_lock(root, ctx_out, &plan->deps, &plan->dev, deps_err, sizeof deps_err)) {
+        fprintf(stderr, "molto: %s\n", deps_err);
+        return exit_dependency_failure;
+    }
+
+    result = describe_the_project(root, profile, platform, ctx_out, plan);
+    if(result != exit_ok)
+        return result;
+
+    result = take_the_packages(root, ctx_out, plan);
+    if(result != exit_ok)
+        return result;
+
+    if(str_list_count(&plan->sources) == 0) {
+        fprintf(stderr, "molto: no source files found under '%s'\n", src_dir);
+        return exit_build_failure;
+    }
+
+    result = resolve_the_toolchain(plan, ctx_out, platform, db, refresh_toolchain, chain_out);
     if(result != exit_ok)
         return result;
 
