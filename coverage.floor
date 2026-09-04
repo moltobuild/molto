@@ -1,0 +1,15 @@
+# The share of lines in src/ the suite has to keep reaching, in percent.
+#
+# Not a target somebody picked — 90% would be that, and a number nobody agreed
+# to is a number that gets waived the first time it is inconvenient. This is a
+# fact the tree already earned, and the only thing it forbids is going
+# backwards: new code arrives with a test, or this line is lowered on purpose
+# and the commit that lowers it says why.
+#
+# Raise it when the real figure has moved comfortably past it. `make coverage`
+# prints both.
+#
+# 79.9 on the runner against 80.0 here: a machine with a compiler runs tests a
+# machine without one skips, so the two disagree slightly and the floor sits
+# under both rather than chasing either.
+79.5
