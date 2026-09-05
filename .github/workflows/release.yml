@@ -33,12 +33,76 @@ env:
   MINGW_SHA256: "a6a7812ee736f25345fec3842224b4c12cc795751ea2117f684f8ad59dc7022f"
 
 jobs:
-  # Both binaries, and the sums that cover them, are made in one place. The
-  # Windows one is cross-compiled here rather than built on a Windows runner
-  # because a cross build is deterministic, fast, and needs no MSYS2 — and
-  # because what a Windows runner is actually needed for is the next job.
+  # The one binary that cannot be made anywhere else.
+  #
+  # Linux and Windows are both produced on the Ubuntu runner below, because a
+  # cross build is deterministic, fast and needs no queue. macOS has no such
+  # option: cross-compiling to Darwin needs the Apple SDK, which does not
+  # travel. So this job exists to hand the next one a file it could not have
+  # built, and its result is an input rather than a check.
+  #
+  # `macos-14` is arm64, which is what a Mac is now. RFC-0018's non-goals
+  # decline to promise x86_64 for the reason RFC-0017 declines to promise ARM64
+  # Windows: nobody has measured it, and a name in a filename is a promise.
+  macos:
+    name: Build the macOS binary
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Not static, and it cannot be: Apple ships no static libSystem and does
+      # not support a fully static executable. So this binary links against
+      # libSystem, which is part of the operating system and is therefore
+      # always there -- a different guarantee from the other two rather than a
+      # weaker version of the same one, and the release notes say so rather
+      # than letting parity be assumed.
+      - name: Build it
+        run: |
+          make build CC=clang
+          file build/molto
+          file build/molto | grep -q 'Mach-O 64-bit executable arm64'
+
+      # The Windows half asserts that nothing has to be unpacked beside the
+      # binary. This is the same question asked of Mach-O: everything it needs
+      # must come from /usr/lib, which is the OS. A Homebrew path in here is a
+      # binary that runs on this runner and not on the machine it is published
+      # for.
+      - name: And it needs nothing beside it
+        run: |
+          otool -L build/molto | tail -n +2 | awk '{ print $1 }' | tee linked
+          ! grep -vE '^/usr/lib/' linked
+
+      - name: It builds and runs a project
+        env:
+          C_COMPILER: clang
+          CPP_COMPILER: clang++
+        run: |
+          molto="$PWD/build/molto"
+          "$molto" --version
+          cd "$(mktemp -d -t molto)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: macos-binary
+          path: build/molto
+          retention-days: 1
+
+  # The other two binaries, and the sums that cover all three. The Windows one
+  # is cross-compiled here rather than built on a Windows runner because a
+  # cross build is deterministic, fast, and needs no MSYS2 — and because what a
+  # Windows runner is actually needed for is the job after next.
+  #
+  # It waits for the Mac because the sums have to cover everything that is
+  # published, and a second SHA256SUMS written somewhere else is two files that
+  # can disagree.
   build:
     name: Build what gets published
+    needs: macos
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -130,11 +194,17 @@ jobs:
             | grep -oiE '[A-Za-z0-9_-]+\.dll' | sort -u | tee imports
           ! grep -viE '^(api-ms-win-crt-[a-z0-9-]+\.dll|KERNEL32\.dll)$' imports
 
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: macos-binary
+          path: macos
+
       - name: Name them, hash them, and describe them
         run: |
           mkdir -p dist
           cp build/molto "dist/molto-${VERSION}-x86_64-linux"
           cp build-windows/molto.exe "dist/molto-${VERSION}-x86_64-windows.exe"
+          cp macos/molto "dist/molto-${VERSION}-arm64-macos"
           ./build/molto metadata -o "dist/molto-${VERSION}.cdx.json"
           cd dist
           sha256sum molto-* > SHA256SUMS
@@ -161,14 +231,11 @@ jobs:
           \`molto-${VERSION}-x86_64-windows.exe\`, x86-64, Windows 10 or later.
           Statically linked against UCRT: there is nothing to put beside it.
 
-          **Windows is not a supported platform yet, and this binary does not
-          claim it is.** RFC-0017 sets four bars for that word and the fourth —
-          the full suite green on a Windows runner — is not met. What is
-          measured to work, in CI, on a Windows runner, every push:
-
-          - \`new\`, \`build\` and \`run\` on a project, which is also asserted
-            against this exact binary before it is published
-          - molto building molto with molto
+          Measured in CI, on a Windows runner, every push: molto's full test
+          suite, \`new\`/\`build\`/\`run\` on a project — asserted against this
+          exact binary before it is published — and molto building molto with
+          molto. The Windows badge on the README went green on 2026-09-04 and
+          is what to read for the state of the port.
 
           Install it with PowerShell. \`Get-FileHash\` and \`Invoke-WebRequest\`
           are built in, so there is nothing to install in order to install it:
@@ -194,9 +261,41 @@ jobs:
 
           Open a new terminal, then \`molto new hello\` and \`molto run\`.
 
-          What is known not to: molto's own test suite does not finish there.
-          The state of the port is the Windows badge on the README, and it is
-          red on purpose until it isn't.
+          ### macOS
+
+          \`molto-${VERSION}-arm64-macos\`, Apple Silicon, and the full suite
+          passes on a macOS runner (RFC-0018).
+
+          \`\`\`sh
+          base=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}
+          curl -fsSLO \$base/molto-${VERSION}-arm64-macos
+          curl -fsSLO \$base/SHA256SUMS
+          shasum -a 256 --check --ignore-missing SHA256SUMS
+          chmod +x molto-${VERSION}-arm64-macos
+          sudo install molto-${VERSION}-arm64-macos /usr/local/bin/molto
+          \`\`\`
+
+          Two things this binary does not claim, both worth knowing before you
+          run it:
+
+          **It is not signed or notarised.** Downloaded with \`curl\` that
+          changes nothing — the command above works as written. Downloaded with
+          a **browser**, macOS attaches a quarantine attribute and refuses to
+          start it with a message about an unverified developer. Remove it, or
+          open the file once from Finder with a right click:
+
+          \`\`\`sh
+          xattr -d com.apple.quarantine molto
+          \`\`\`
+
+          **It is not static, and cannot be.** Apple ships no static libSystem
+          and does not support a fully static executable, so this links against
+          libSystem — which is part of the operating system and therefore
+          always present. Nothing has to be unpacked beside it, and CI asserts
+          that every library it names lives under \`/usr/lib\`.
+
+          Intel Macs are not covered. Nobody has measured one, and RFC-0018
+          declines to promise what has not been measured.
 
           ### Choosing a compiler
 
@@ -270,11 +369,54 @@ jobs:
           "$molto" run | tee output
           grep -q "Hello, world!" output
 
+  # The same question the Windows job asks, on the platform it is about: does
+  # the file that is about to be published do molto's job there?
+  #
+  # The build job already ran this binary on a Mac, and this is not that. What
+  # is checked here is the artifact *after* it has been named, hashed and
+  # carried between two jobs -- the download is the file that was hashed --
+  # which is the property a person downloading it depends on and the one no
+  # amount of testing at build time can establish.
+  macos-check:
+    name: The macOS binary does molto's job
+    needs: build
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: dist
+
+      # `shasum -a 256` and not `sha256sum`: macOS ships Perl's and no GNU
+      # coreutils at all, which is the same difference that kept molto from
+      # verifying any archive dependency there until RFC-0018's port found it.
+      - name: The download is the file that was hashed
+        run: shasum -a 256 --check --ignore-missing SHA256SUMS
+
+      # `C_COMPILER` skips pickup on purpose, for the reason the Windows job
+      # gives: pickup on macOS is its own release with its own bars, and a red
+      # here has to be attributable to this binary.
+      - name: It builds and runs a project
+        env:
+          C_COMPILER: clang
+          CPP_COMPILER: clang++
+        run: |
+          molto="$PWD/molto-${VERSION}-arm64-macos"
+          chmod +x "$molto"
+          test "$("$molto" --version)" = "molto ${VERSION}"
+          cd "$(mktemp -d -t molto)"
+          "$molto" new smoke_test
+          cd smoke_test
+          "$molto" run | tee output
+          grep -q "Hello, world!" output
+
   # A tag is what publishes. A rehearsal proves everything above this line and
   # then stops, which is the whole point of it.
   publish:
     name: Publish
-    needs: [build, windows]
+    needs: [build, windows, macos-check]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -297,5 +439,6 @@ jobs:
             --generate-notes \
             "dist/molto-${VERSION}-x86_64-linux" \
             "dist/molto-${VERSION}-x86_64-windows.exe" \
+            "dist/molto-${VERSION}-arm64-macos" \
             "dist/molto-${VERSION}.cdx.json" \
             dist/SHA256SUMS
