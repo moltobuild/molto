@@ -659,21 +659,30 @@ MOLTEST(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
      * refused. Both spellings name one directory; being inside it is being
      * inside it.
      */
+    char made[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("ir_bounds", made, sizeof made));
+
+    /* Resolved explicitly, and not taken to be what `mkdtemp` returned. That
+       assumption is a Linux assumption: on macOS the temporary directory is
+       handed back as `/tmp/...` and `/tmp` is itself a link, so the name this
+       test calls "the resolved one" would not have been resolved at all — and
+       the test would fail for the very reason it exists to cover. */
     char real[MOLTEST_PATH];
-    ASSERT_TRUE(moltest_temp_dir("ir_bounds", real, sizeof real));
+    if(!fs_real_path(made, real, sizeof real))
+        snprintf(real, sizeof real, "%s", made);
 
     char link[MOLTEST_PATH];
-    snprintf(link, sizeof link, "%s.link", real);
+    snprintf(link, sizeof link, "%s.link", made);
     if(!fs_link(real, link)) {
-        (void)fs_remove_tree(real);
+        (void)fs_remove_tree(made);
         SKIP("this system will not make a link that points at a directory");
     }
 
     char sources[MOLTEST_PATH];
-    snprintf(sources, sizeof sources, "%s/src", real);
+    snprintf(sources, sizeof sources, "%s/src", made);
     ASSERT_TRUE(fs_make_dirs(sources));
     char main_c[MOLTEST_PATH];
-    snprintf(main_c, sizeof main_c, "%s/src/main.c", real);
+    snprintf(main_c, sizeof main_c, "%s/src/main.c", made);
     ASSERT_TRUE(fs_write_file(main_c, "int main(void) { return 0; }\n"));
 
     char build_through_link[MOLTEST_PATH];
@@ -710,7 +719,7 @@ MOLTEST(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
 
     ir_document_free(&doc);
     (void)remove(link);
-    (void)fs_remove_tree(real);
+    (void)fs_remove_tree(made);
 }
 
 MOLTEST(ir_refuses_a_path_that_is_inside_the_workspace_and_links_out_of_it) {
