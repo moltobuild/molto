@@ -67,7 +67,9 @@ static bool link_one_test(const test_link_context *context, const str_list *obje
                           str_list *binaries_out) {
     if(!build_make_parent_dirs(binary))
         return false;
-    if(!build_link_project(cpp, objects, binary, node, &context->ctx->env, context->chain,
+    /* No library names: a test binary is an executable, and the only thing they
+       carry is the name to record inside a shared library. */
+    if(!build_link_project(cpp, objects, binary, node, NULL, &context->ctx->env, context->chain,
                            context->force, context->db, context->root, context->report))
         return false;
     return str_list_push(binaries_out, binary);

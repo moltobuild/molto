@@ -514,8 +514,8 @@ int build_project_with(const char *root, build_profile profile, const char *plat
         char binary[PATH_BUFFER_SIZE];
         char directory[PATH_BUFFER_SIZE];
         char segment[PATH_BUFFER_SIZE];
-        if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, name_err,
-                             sizeof name_err) ||
+        if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, platform, &names,
+                             name_err, sizeof name_err) ||
            !build_segment(profile, platform, segment, sizeof segment) ||
            !build_compose_binary_path(root, segment, names.file, node->kind, binary,
                                       sizeof binary) ||
@@ -535,7 +535,7 @@ int build_project_with(const char *root, build_profile profile, const char *plat
             produced =
                 build_archive_project(&objects, binary, &ctx.env, &chain, any_compiled, db, report);
         } else {
-            produced = build_link_project(any_cpp, &objects, binary, node, &ctx.env, &chain,
+            produced = build_link_project(any_cpp, &objects, binary, node, &names, &ctx.env, &chain,
                                           any_compiled, db, root, report);
             if(produced && node->kind == ir_target_shared)
                 build_place_shared_links(directory, &names, report);

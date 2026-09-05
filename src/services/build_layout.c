@@ -123,10 +123,13 @@ static build_unit_label label_for_target(const ir_document *doc, const ir_target
  * Where the artifact lands, which is the one place that wants a filename
  * rather than a name.
  *
- * `name` comes from `library_names_of` and is portable on purpose -- it is
- * also what the IR records. Only an executable gains anything here, and only
- * on Windows: a library already carries its own extension, and adding `.exe`
- * to `libgreet.a` would name a file no linker looks for.
+ * `name` comes from `library_names_of`, asked with the platform this build is
+ * for. For a shared library that is *not* what the IR records -- the document
+ * carries the package's name and nothing else, because whoever wrote it was
+ * never told which platform this is (RFC-0018). Only an executable gains
+ * anything here, and only on Windows: a library already carries its own
+ * extension, and adding `.exe` to `libgreet.a` would name a file no linker
+ * looks for.
  */
 [[nodiscard]] bool build_compose_binary_path(const char *root, const char *segment,
                                              const char *name, ir_target_kind kind, char *out,

@@ -284,9 +284,9 @@ void build_push_own(diagnostic_list *found, const char *source, diagnostic_sever
 /* Link `objects` into `binary`. False when the link failed, which the report it
    was given already says in full. */
 [[nodiscard]] bool build_link_project(bool any_cpp, const str_list *objects, const char *binary,
-                                      const ir_target *node, const project_env *env,
-                                      const resolved_toolchain *chain, bool force, wsdb *db,
-                                      const char *root, build_report *report);
+                                      const ir_target *node, const library_names *names,
+                                      const project_env *env, const resolved_toolchain *chain,
+                                      bool force, wsdb *db, const char *root, build_report *report);
 
 /* Archive `objects` into a static library. */
 [[nodiscard]] bool build_archive_project(const str_list *objects, const char *archive,
