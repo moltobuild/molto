@@ -160,6 +160,15 @@ typedef struct {
  * link, so the resolved path has to be compared against resolved bounds or a
  * project under a symlinked home is rejected for existing.
  *
+ * Both forms are also what the *lexical* half compares against, and that is not
+ * a detail. Nothing settles which spelling a candidate arrives in: a frontend
+ * resolves the root it was handed, while the caller builds these bounds out of
+ * the path it was given, so the two strings differ wherever any part of the
+ * path is a link. On macOS that is every temporary directory, because `/tmp` is
+ * a symlink to `/private/tmp`; on Linux it is every checkout under a symlinked
+ * home. The two spellings name one directory, and being inside it is being
+ * inside it.
+ *
  * `roots` is heap-allocated because there is one per resolved package and a
  * project may depend on many: a fixed array here would be a cap on a document a
  * machine produced, which RFC-0013 refuses. */
@@ -229,12 +238,20 @@ static bool bounds_prepare(const ir_bounds *bounds, bounds_state *out) {
            prepare_roots(bounds, out);
 }
 
+/* Against each bound in both spellings, for the reason `bounds_state` gives.
+   This does not loosen the rule: `within_bounds_through_links` still has to
+   agree, so a path that leaves an authorised directory through a link is
+   refused exactly as before. What it stops is a project being read as sitting
+   outside its own workspace because someone else resolved the name. */
 static bool within_bounds(const char *resolved, const bounds_state *bounds) {
     if(inside(resolved, bounds->workspace) || inside(resolved, bounds->build_dir) ||
        (bounds->has_cache && inside(resolved, bounds->cache)))
         return true;
+    if(inside(resolved, bounds->real_workspace) || inside(resolved, bounds->real_build_dir) ||
+       (bounds->has_cache && inside(resolved, bounds->real_cache)))
+        return true;
     for(size_t i = 0; i < bounds->root_count; i++) {
-        if(inside(resolved, bounds->roots[i].path))
+        if(inside(resolved, bounds->roots[i].path) || inside(resolved, bounds->roots[i].real))
             return true;
     }
     return false;

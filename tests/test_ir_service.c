@@ -1,5 +1,6 @@
 #include <moltest.h>
 
+#include <molto/services/fs_service.h>
 #include <molto/services/ir_service.h>
 #include <molto/util/json.h>
 #include <molto/util/toml.h>
@@ -633,6 +634,145 @@ MOLTEST(ir_allows_a_path_under_a_root_the_caller_authorised) {
     EXPECT_FALSE(ir_validate(&doc, &BOUNDS, err, sizeof err));
 
     ir_document_free(&doc);
+}
+
+MOLTEST(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
+    /*
+     * The same directory, spelled two ways, and both spellings authorise it.
+     *
+     * A frontend resolves the root it was handed (`frontend_run`,
+     * `frontend_native`) so the document carries the path with every symlink
+     * followed. The caller builds the bounds out of the path it was *given*,
+     * unresolved. When any part of that path is a link the two strings differ,
+     * and the lexical half of the rule reads a project as sitting outside its
+     * own workspace.
+     *
+     * macOS is where this became unmissable — `/tmp` is a symlink to
+     * `/private/tmp`, so every test that built a project under a temporary
+     * directory failed — but it is not macOS's bug. The link below is made
+     * here, on whatever platform is running, and before this was fixed the
+     * assertion failed on Linux too. Anyone whose checkout sits under a
+     * symlinked home was refused the same way.
+     *
+     * What is *not* being relaxed: `within_bounds_through_links` still has to
+     * agree, so a path that leaves the workspace through a link is still
+     * refused. Both spellings name one directory; being inside it is being
+     * inside it.
+     */
+    char made[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("ir_bounds", made, sizeof made));
+
+    /* Resolved explicitly, and not taken to be what `mkdtemp` returned. That
+       assumption is a Linux assumption: on macOS the temporary directory is
+       handed back as `/tmp/...` and `/tmp` is itself a link, so the name this
+       test calls "the resolved one" would not have been resolved at all — and
+       the test would fail for the very reason it exists to cover. */
+    char real[MOLTEST_PATH];
+    if(!fs_real_path(made, real, sizeof real))
+        snprintf(real, sizeof real, "%s", made);
+
+    char link[MOLTEST_PATH];
+    snprintf(link, sizeof link, "%s.link", made);
+    if(!fs_link(real, link)) {
+        (void)fs_remove_tree(made);
+        SKIP("this system will not make a link that points at a directory");
+    }
+
+    char sources[MOLTEST_PATH];
+    snprintf(sources, sizeof sources, "%s/src", made);
+    ASSERT_TRUE(fs_make_dirs(sources));
+    char main_c[MOLTEST_PATH];
+    snprintf(main_c, sizeof main_c, "%s/src/main.c", made);
+    ASSERT_TRUE(fs_write_file(main_c, "int main(void) { return 0; }\n"));
+
+    char build_through_link[MOLTEST_PATH];
+    snprintf(build_through_link, sizeof build_through_link, "%s/build/debug", link);
+    const ir_bounds through_link = {.workspace = link, .build_dir = build_through_link};
+
+    /* The document a frontend produces: its root is resolved. */
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", real, IR_ORIGIN_NATIVE));
+    ir_target *target = ir_add_target(&doc, "app", ir_target_executable);
+    ASSERT_NOT_NULL(target);
+    ASSERT_NOT_NULL(ir_add_source(target, "src/main.c", ir_language_c));
+    ASSERT_TRUE(ir_set_artifact(target, ir_target_executable, "app", NULL));
+
+    char err[512] = "";
+    EXPECT_TRUE(ir_validate(&doc, &through_link, err, sizeof err));
+    EXPECT_STREQ("", err);
+
+    /* One direction only, and deliberately. This is the direction the code
+       produces: the document's paths arrive resolved and the bounds do not.
+       The reverse — an unresolved path held to resolved bounds — would need
+       every candidate put through `realpath` before the lexical test, which is
+       a filesystem call per path and answers nothing for a file that does not
+       exist yet. `within_bounds_through_links` is where the filesystem is
+       asked, and it stays the only place. */
+
+    /* The barrier is still a barrier: a path outside the workspace under both
+       spellings is still refused. */
+    ASSERT_NOT_NULL(ir_add_source(target, "../../etc/shadow", ir_language_c));
+    err[0] = '\0';
+    EXPECT_FALSE(ir_validate(&doc, &through_link, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "outside the workspace"));
+
+    ir_document_free(&doc);
+    (void)remove(link);
+    (void)fs_remove_tree(made);
+}
+
+MOLTEST(ir_refuses_a_path_that_is_inside_the_workspace_and_links_out_of_it) {
+    /*
+     * The other half of the rule, and until now nothing asserted it.
+     *
+     * `..` and an absolute prefix are caught by comparing strings. A symlink is
+     * not: `<ws>/escape/secret.c` is lexically under the workspace by any
+     * reading, and only the filesystem knows it is somewhere else. That is what
+     * `within_bounds_through_links` is for.
+     *
+     * It is asserted here because the lexical half now accepts a bound in
+     * either spelling, which makes this check the only thing standing between a
+     * document and a directory it was never authorised to read. A rule with two
+     * halves and one test is a rule with one half.
+     */
+    char workspace[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("ir_escape_ws", workspace, sizeof workspace));
+    char elsewhere[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("ir_escape_out", elsewhere, sizeof elsewhere));
+
+    char secret[MOLTEST_PATH];
+    snprintf(secret, sizeof secret, "%s/secret.c", elsewhere);
+    ASSERT_TRUE(fs_write_file(secret, "int secret(void) { return 0; }\n"));
+
+    char escape[MOLTEST_PATH];
+    snprintf(escape, sizeof escape, "%s/escape", workspace);
+    if(!fs_link(elsewhere, escape)) {
+        (void)fs_remove_tree(workspace);
+        (void)fs_remove_tree(elsewhere);
+        SKIP("this system will not make a link that points at a directory");
+    }
+
+    char build_dir[MOLTEST_PATH];
+    snprintf(build_dir, sizeof build_dir, "%s/build/debug", workspace);
+    const ir_bounds bounds = {.workspace = workspace, .build_dir = build_dir};
+
+    ir_document doc;
+    ir_document_init(&doc);
+    ASSERT_TRUE(ir_set_project(&doc, "app", "0.1.0", workspace, IR_ORIGIN_NATIVE));
+    ir_target *target = ir_add_target(&doc, "app", ir_target_executable);
+    ASSERT_NOT_NULL(target);
+    ASSERT_NOT_NULL(ir_add_source(target, "escape/secret.c", ir_language_c));
+    ASSERT_TRUE(ir_set_artifact(target, ir_target_executable, "app", NULL));
+
+    char err[512] = "";
+    EXPECT_FALSE(ir_validate(&doc, &bounds, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "links out of it"));
+
+    ir_document_free(&doc);
+    (void)remove(escape);
+    (void)fs_remove_tree(workspace);
+    (void)fs_remove_tree(elsewhere);
 }
 
 MOLTEST(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
