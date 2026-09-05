@@ -195,9 +195,11 @@ family, each value is `off`, `warn` or `error`.
     "backend": "clang-tidy@22.1.8",
     "preset": "molto",
     "exclude": ["src/generated/**"],
+    "headers": true,
     "rules": {
         "bugprone": "error",
         "readability_magic_numbers": "warn",
+        "function_complexity": ["warn", { "threshold": 40 }],
         "modernize": "off"
     }
 }
@@ -213,7 +215,53 @@ The rule names are Molto's, not the backend's:
 | `naming_snake_case` | Identifier naming |
 | `readability_magic_numbers`, `identifier_length` | Individual readability checks |
 | `swappable_parameters`, `spurious_wakeup` | Two `bugprone` checks, named so they can be refused on their own |
+| `thread_safety` | Calls that are not safe to make from two threads |
+| `function_complexity` | How much of a function a reader has to hold at once |
 | `unused`, `shadow`, `uninitialized`, `implicit_conversion`, `sign_compare` | Compiler diagnostics, by name |
+
+`thread_safety` is worth turning on for anything that builds in parallel. It
+finds `getenv`, `readdir`, `strtok` and the rest of the calls that keep their
+answer in a static buffer — the kind of bug that does not reproduce and does not
+crash, it just occasionally returns somebody else's string.
+
+`function_complexity` counts cognitive complexity rather than lines or branches:
+a `switch` with twenty flat cases is long and easy, and three nested loops with
+an early return are short and are not. The threshold is an option because "too
+big" is a project's opinion.
+
+### Rules that take options
+
+Two shapes, and the second is ESLint's:
+
+```json
+{
+    "rules": {
+        "bugprone": "warn",
+        "function_complexity": ["warn", { "threshold": 40 }],
+        "naming_snake_case": ["error", { "constants": "UPPER_CASE" }]
+    }
+}
+```
+
+| Rule | Option | Default |
+|---|---|---|
+| `function_complexity` | `threshold` | `25` |
+| `identifier_length` | `minimum`, `minimum_parameter` | `3` |
+| `naming_snake_case` | `functions`, `variables`, `parameters`, `types`, `structs`, `enums` | `lower_case` |
+| `naming_snake_case` | `constants`, `macros` | any spelling |
+| `naming_snake_case` | `ignore` | `^_.*` |
+
+An option a rule does not take is an error naming both, for the same reason a
+rule the backend cannot express is: a setting written into a generated file that
+the backend then ignores is a setting nobody can tell is not working.
+
+`constants` and `macros` have no default on purpose. Everything else in that
+list is a case nobody argues about — a C function is `lower_case` and so is a
+type — but constants are not: `PACKAGE_KEYS` and `known` are both idiomatic at
+file scope, and `_GNU_SOURCE` cannot be renamed at all because POSIX chose the
+name. A default that fires on idiomatic C is a default that teaches people to
+turn the rule off, so `naming_snake_case` means what nobody disputes and a
+project with an opinion about the rest says so.
 
 A rule Molto cannot express for the selected backend is **an error naming the
 rule and the backend**, never something quietly dropped.
@@ -275,7 +323,23 @@ gets told the failure branch continues.
 
 **`exclude`** — glob patterns matched against the path relative to the project
 root. A star crosses a slash, so `vendor/*` matches `vendor/a/b.c`; a trailing
-`/**` also matches the directory itself.
+`/**` also matches the directory itself. It selects which **sources** are
+analysed; a header reached from a source that was analysed is covered by
+`headers` below.
+
+**`headers`** (`linter.json` only) — whether the project's own headers are
+analysed. `true` unless you say otherwise.
+
+It has to default on. A linter reports what it finds in the file it was handed
+and, in a header, only where it has been told which headers count — so before
+this key existed every `static inline`, every macro body and every bug in a
+header went unread, in this repository 79 files and 7,207 lines of them, and no
+project had declared that. Turning it off is a decision; off by accident is what
+this ended.
+
+"The project's own" and not "all of them": a dependency's headers arrive through
+the same `-I` as yours, and a report about somebody else's code is one nobody
+can act on.
 
 **`backend`** — pins a name and, optionally, a version: `clang-tidy@22.1.8`.
 Molto **verifies** the pin against what pickup reports; it does not install.
