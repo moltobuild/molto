@@ -179,6 +179,93 @@ MOLTEST(lint_config_refuses_a_severity_that_is_not_off_warn_or_error) {
                                    &config, err, sizeof err));
 }
 
+/*
+ * The long form of a rule, which is the shape ESLint chose.
+ *
+ * An array rather than an object with a `severity` key, because anyone who has
+ * written one of these files already knows this one, and a second spelling of a
+ * familiar idea is a thing to learn for nothing.
+ */
+MOLTEST(lint_config_reads_a_rule_with_options) {
+    lint_config config;
+    lint_config_defaults(&config);
+    char err[256] = "";
+
+    ASSERT_TRUE(lint_config_parse("{\"rules\": {"
+                                  "\"bugprone\": \"warn\","
+                                  "\"function_complexity\": [\"error\", {\"threshold\": 40}],"
+                                  "\"naming_snake_case\": [\"warn\", {\"functions\": \"lower_case\"}]"
+                                  "}}",
+                                  &config, err, sizeof err));
+    ASSERT_EQ(3, (int)config.rule_count);
+
+    /* The short form still means what it meant, and carries nothing. */
+    EXPECT_EQ(lint_severity_warn, config.rules[0].severity);
+    EXPECT_EQ(0, (int)config.rules[0].option_count);
+
+    EXPECT_EQ(lint_severity_error, config.rules[1].severity);
+    ASSERT_EQ(1, (int)config.rules[1].option_count);
+    EXPECT_STREQ("threshold", config.rules[1].options[0].name);
+    /* A number arrives as text: `40` and `"lower_case"` are the same kind of
+       thing the moment they reach a backend's configuration file. */
+    EXPECT_STREQ("40", config.rules[1].options[0].value);
+
+    EXPECT_STREQ("functions", config.rules[2].options[0].name);
+    EXPECT_STREQ("lower_case", config.rules[2].options[0].value);
+}
+
+/* Both halves of the array are checked, and the message names what was written
+   rather than describing what was expected. */
+MOLTEST(lint_config_refuses_a_rule_array_that_is_not_severity_and_options) {
+    lint_config config;
+    char err[256] = "";
+
+    lint_config_defaults(&config);
+    EXPECT_FALSE(lint_config_parse("{\"rules\": {\"bugprone\": [\"fatal\", {}]}}", &config, err,
+                                   sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "fatal"));
+
+    lint_config_defaults(&config);
+    err[0] = '\0';
+    EXPECT_FALSE(lint_config_parse("{\"rules\": {\"bugprone\": [\"warn\"]}}", &config, err,
+                                   sizeof err));
+
+    lint_config_defaults(&config);
+    err[0] = '\0';
+    EXPECT_FALSE(lint_config_parse("{\"rules\": {\"bugprone\": [\"warn\", \"threshold\"]}}",
+                                   &config, err, sizeof err));
+
+    lint_config_defaults(&config);
+    err[0] = '\0';
+    EXPECT_FALSE(lint_config_parse("{\"rules\": {\"bugprone\": [\"warn\", {\"t\": [1]}]}}",
+                                   &config, err, sizeof err));
+}
+
+/*
+ * Headers are read unless a file says otherwise.
+ *
+ * The default is the fix: for as long as this key did not exist, clang-tidy was
+ * told nothing about headers and therefore reported nothing in them, and no
+ * project had declared that. Off is a decision; off by accident is what ended.
+ */
+MOLTEST(lint_config_reads_the_project_s_headers_by_default) {
+    lint_config config;
+    lint_config_defaults(&config);
+    EXPECT_TRUE(config.headers);
+
+    char err[256] = "";
+    ASSERT_TRUE(lint_config_parse("{\"headers\": false}", &config, err, sizeof err));
+    EXPECT_FALSE(config.headers);
+
+    lint_config_defaults(&config);
+    ASSERT_TRUE(lint_config_parse("{\"preset\": \"none\"}", &config, err, sizeof err));
+    EXPECT_TRUE(config.headers);
+
+    lint_config_defaults(&config);
+    err[0] = '\0';
+    EXPECT_FALSE(lint_config_parse("{\"headers\": \"yes\"}", &config, err, sizeof err));
+}
+
 MOLTEST(lint_config_reports_too_many_rules_as_an_error) {
     char document[4096] = "{\"rules\": {";
     size_t used = strlen(document);

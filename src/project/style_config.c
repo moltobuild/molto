@@ -16,6 +16,7 @@
 #define KEY_BACKEND "backend"
 #define KEY_PRESET "preset"
 #define KEY_EXCLUDE "exclude"
+#define KEY_HEADERS "headers"
 
 /* format.json. */
 #define KEY_STYLE "style"
@@ -69,6 +70,10 @@ void style_config_defaults(style_config *out) {
 void lint_config_defaults(lint_config *out) {
     memset(out, 0, sizeof *out);
     out->preset = style_preset_molto;
+    /* On, because a linter that reads no headers is a linter with a blind spot
+       nobody declared. Turning it off is a decision a project can take; having
+       it off by accident is what this default ends. */
+    out->headers = true;
 }
 
 bool style_excludes_match(const style_excludes *excludes, const char *relative_path) {
@@ -346,6 +351,94 @@ static bool read_severity(const char *text, lint_severity *out) {
 
 /* The severity map names rules Molto does not know in advance, so this walks
    the members rather than asking for keys. */
+/*
+ * One rule's options: the object in `["warn", { "threshold": 30 }]`.
+ *
+ * Values are read as text whatever JSON called them, because a backend takes
+ * text: `30` and `"lower_case"` become the same kind of thing the moment they
+ * reach a configuration file. What they mean is checked where they are
+ * translated, which is the only place that knows what the rule accepts.
+ */
+static bool read_rule_options(json_value object, lint_rule *rule, const char *name, char *err,
+                              size_t err_size) {
+    const size_t count = json_count(object);
+    if(count > LINT_MAX_RULE_OPTIONS) {
+        set_err(err, err_size, LINTER_FILENAME, "too many options for rule", name);
+        return false;
+    }
+    for(size_t i = 0; i < count; i++) {
+        const char *key = json_key_at(object, i);
+        json_value value = json_member_at(object, i);
+        const char *text = json_string(value);
+        char number[LINT_OPTION_VALUE_MAX];
+        long long parsed = 0;
+        if(text == NULL && json_number(value, &parsed)) {
+            (void)snprintf(number, sizeof number, "%lld", parsed);
+            text = number;
+        }
+        if(key == NULL || text == NULL) {
+            set_err(err, err_size, LINTER_FILENAME,
+                    "an option must be a string or a number, in rule", name);
+            return false;
+        }
+        if(!fs_format_path(rule->options[i].name, LINT_OPTION_NAME_MAX, "%s", key) ||
+           !fs_format_path(rule->options[i].value, LINT_OPTION_VALUE_MAX, "%s", text)) {
+            set_err(err, err_size, LINTER_FILENAME, "option name or value too long, in rule", name);
+            return false;
+        }
+    }
+    rule->option_count = count;
+    return true;
+}
+
+/* The severity itself, wherever it was written. Named in the message rather
+   than described, because "not \"fatal\"" is something a reader can act on and
+   "in rule bugprone" leaves them looking for which word was wrong. */
+static bool read_stated_severity(const char *severity, lint_rule *rule, const char *name, char *err,
+                                 size_t err_size) {
+    if(severity == NULL) {
+        set_err(err, err_size, LINTER_FILENAME, "expected a severity in rule", name);
+        return false;
+    }
+    if(!read_severity(severity, &rule->severity)) {
+        set_err(err, err_size, LINTER_FILENAME,
+                "severity must be \"off\", \"warn\" or \"error\", not", severity);
+        return false;
+    }
+    return true;
+}
+
+/*
+ * A rule's value, in either of its two shapes.
+ *
+ * `"warn"` is the short one and covers almost everything. `["warn", {...}]` is
+ * the long one, and it is an array rather than an object with a `severity` key
+ * because that is the shape ESLint chose and the shape anyone who has written
+ * one of these files already knows.
+ */
+static bool read_rule_value(json_value value, lint_rule *rule, const char *name, char *err,
+                            size_t err_size) {
+    if(json_type_of(value) == json_type_array) {
+        if(json_count(value) != 2 || json_type_of(json_at(value, 1)) != json_type_object) {
+            set_err(err, err_size, LINTER_FILENAME, "expected [severity, { options }] for rule",
+                    name);
+            return false;
+        }
+        const char *severity = json_string(json_at(value, 0));
+        if(!read_stated_severity(severity, rule, name, err, err_size))
+            return false;
+        return read_rule_options(json_at(value, 1), rule, name, err, err_size);
+    }
+
+    const char *severity = json_string(value);
+    if(severity == NULL) {
+        set_err(err, err_size, LINTER_FILENAME,
+                "expected \"off\", \"warn\", \"error\" or [severity, { options }] for rule", name);
+        return false;
+    }
+    return read_stated_severity(severity, rule, name, err, err_size);
+}
+
 static bool read_rules(json_value root, lint_config *out, char *err, size_t err_size) {
     json_value rules = json_get(root, KEY_RULES);
     if(!json_is_valid(rules))
@@ -362,22 +455,17 @@ static bool read_rules(json_value root, lint_config *out, char *err, size_t err_
     }
     for(size_t i = 0; i < count; i++) {
         const char *name = json_key_at(rules, i);
-        const char *severity = json_string(json_member_at(rules, i));
-        if(name == NULL || severity == NULL) {
-            set_err(err, err_size, LINTER_FILENAME,
-                    "expected \"off\", \"warn\" or \"error\" for rule",
-                    name != NULL ? name : KEY_RULES);
+        json_value value = json_member_at(rules, i);
+        if(name == NULL) {
+            set_err(err, err_size, LINTER_FILENAME, "a rule with no name", KEY_RULES);
             return false;
         }
         if(!fs_format_path(out->rules[i].name, LINT_RULE_NAME_MAX, "%s", name)) {
             set_err(err, err_size, LINTER_FILENAME, "rule name too long", name);
             return false;
         }
-        if(!read_severity(severity, &out->rules[i].severity)) {
-            set_err(err, err_size, LINTER_FILENAME,
-                    "severity must be \"off\", \"warn\" or \"error\", not", severity);
+        if(!read_rule_value(value, &out->rules[i], name, err, err_size))
             return false;
-        }
     }
     out->rule_count = count;
     return true;
@@ -389,13 +477,15 @@ bool lint_config_parse(const char *json, lint_config *out, char *err, size_t err
     if(doc == NULL)
         return false;
 
-    static const char *const known[] = {KEY_BACKEND, KEY_PRESET, KEY_EXCLUDE, KEY_RULES};
+    static const char *const known[] = {KEY_BACKEND, KEY_PRESET, KEY_EXCLUDE, KEY_HEADERS,
+                                        KEY_RULES};
     bool ok = refuse_unknown_keys(root, LINTER_FILENAME, known, sizeof known / sizeof known[0], err,
                                   err_size) &&
               read_string(root, KEY_BACKEND, LINTER_FILENAME, out->backend, sizeof out->backend,
                           err, err_size) &&
               read_preset(root, LINTER_FILENAME, &out->preset, err, err_size) &&
               read_excludes(root, LINTER_FILENAME, &out->paths, err, err_size) &&
+              read_bool(root, KEY_HEADERS, LINTER_FILENAME, &out->headers, err, err_size) &&
               read_rules(root, out, err, err_size);
 
     json_free(doc);

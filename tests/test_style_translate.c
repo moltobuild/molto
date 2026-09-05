@@ -217,7 +217,7 @@ MOLTEST(translate_does_not_repeat_a_check_the_preset_already_enabled) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     /* clang-tidy tolerated the duplicate, which is why it went unnoticed; a
@@ -239,7 +239,7 @@ MOLTEST(translate_still_subtracts_a_check_the_preset_enabled) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     /* Turning one off is the case where the check must be emitted again: the
@@ -258,7 +258,7 @@ MOLTEST(translate_makes_a_preset_check_fatal_when_a_rule_raises_it) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     /* Not appending it to Checks must not cost it its severity: the rule was
@@ -281,7 +281,7 @@ MOLTEST(translate_builds_the_check_lists_from_the_rules) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     /* An off rule is subtracted with a minus, and only the error ones are
@@ -290,6 +290,184 @@ MOLTEST(translate_builds_the_check_lists_from_the_rules) {
     EXPECT_NOT_NULL(strstr(text, "readability-magic-numbers"));
     EXPECT_NOT_NULL(strstr(text, "-modernize-*"));
     EXPECT_NOT_NULL(strstr(text, "WarningsAsErrors: 'bugprone-*'"));
+}
+
+/*
+ * The headers, which nothing looked at until this key existed.
+ *
+ * clang-tidy reports what it finds in the file it was handed and, in a header,
+ * only where `HeaderFilterRegex` says. Molto emitted `Checks` and
+ * `WarningsAsErrors` and nothing else, so every `static inline`, every macro
+ * body and every bug in a header went unread -- 79 files and 7,207 lines in
+ * this repository alone, silently.
+ */
+MOLTEST(translate_asks_the_backend_to_read_the_project_s_own_headers) {
+    lint_config config;
+    lint_config_defaults(&config);
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    /* Anchored at the project and not `.*`: a dependency's headers arrive
+       through the same `-I` as the project's own, and a report about somebody
+       else's code is one nobody can act on. */
+    EXPECT_NOT_NULL(strstr(text, "HeaderFilterRegex: '^/w/app/'"));
+}
+
+/* A path is not a regular expression. A dot in a directory name would match any
+   character, so `/w/app.v2` would also claim `/w/appXv2`. */
+MOLTEST(translate_escapes_a_project_path_before_it_becomes_a_pattern) {
+    lint_config config;
+    lint_config_defaults(&config);
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app.v2+x", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "HeaderFilterRegex: '^/w/app\\.v2\\+x/'"));
+}
+
+/* Off is a decision a project can take, and then the filter is absent rather
+   than empty: an empty pattern is one clang-tidy would have to interpret. */
+MOLTEST(translate_leaves_the_headers_alone_when_asked_to) {
+    lint_config config;
+    lint_config_defaults(&config);
+    config.headers = false;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NULL(strstr(text, "HeaderFilterRegex"));
+}
+
+/*
+ * The rule that did nothing.
+ *
+ * `readability-identifier-naming` is enabled by a check name and configured by
+ * options, and with none it reports nothing whatsoever. So `naming_snake_case`
+ * was a rule a project could set to `error`, run, and never see fail -- worse
+ * than a missing rule, because the file said it was on.
+ */
+MOLTEST(translate_tells_the_naming_rule_what_snake_case_means) {
+    lint_config config;
+    lint_config_defaults(&config);
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "naming_snake_case");
+    config.rules[0].severity = lint_severity_error;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "readability-identifier-naming.FunctionCase: 'lower_case'"));
+    EXPECT_NOT_NULL(strstr(text, "readability-identifier-naming.TypedefCase: 'lower_case'"));
+
+    /* And what it does not mean. Omitting these is not silence: clang-tidy
+       answers the question with the next rule down, so a file-scope constant
+       with no `StaticConstantCase` is judged as a variable -- which reports
+       every `static const char *const TABLE[]` in idiomatic C. Saying
+       `aNy_CasE` is how "no opinion" is said rather than implied. */
+    EXPECT_NOT_NULL(strstr(text, "readability-identifier-naming.StaticConstantCase: 'aNy_CasE'"));
+    EXPECT_NOT_NULL(strstr(text, "readability-identifier-naming.MacroDefinitionCase: 'aNy_CasE'"));
+}
+
+/* A project with an opinion overrides the default, and only the one it named. */
+MOLTEST(translate_prefers_what_the_file_said_over_the_default) {
+    lint_config config;
+    lint_config_defaults(&config);
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "function_complexity");
+    config.rules[0].severity = lint_severity_warn;
+    snprintf(config.rules[0].options[0].name, LINT_OPTION_NAME_MAX, "%s", "threshold");
+    snprintf(config.rules[0].options[0].value, LINT_OPTION_VALUE_MAX, "%s", "40");
+    config.rules[0].option_count = 1;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NOT_NULL(
+        strstr(text, "readability-function-cognitive-complexity.Threshold: '40'"));
+    EXPECT_NULL(strstr(text, "Threshold: '25'"));
+}
+
+/* An option a rule does not take is an error naming both, for the reason
+   RFC-0005 gives for a rule a backend cannot express: a setting written into a
+   generated file that the backend then ignores is a setting nobody can tell is
+   not working. */
+MOLTEST(translate_refuses_an_option_the_rule_does_not_take) {
+    lint_config config;
+    lint_config_defaults(&config);
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "bugprone");
+    config.rules[0].severity = lint_severity_warn;
+    snprintf(config.rules[0].options[0].name, LINT_OPTION_NAME_MAX, "%s", "threshold");
+    snprintf(config.rules[0].options[0].value, LINT_OPTION_VALUE_MAX, "%s", "40");
+    config.rules[0].option_count = 1;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    EXPECT_FALSE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                           sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "bugprone"));
+    EXPECT_NOT_NULL(strstr(err, "threshold"));
+}
+
+/* A rule that is off is not configured. clang-tidy would take the option and
+   still report nothing, which reads as a broken rule rather than a disabled
+   one to whoever comes looking. */
+MOLTEST(translate_does_not_configure_a_rule_it_just_subtracted) {
+    lint_config config;
+    lint_config_defaults(&config);
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "naming_snake_case");
+    config.rules[0].severity = lint_severity_off;
+    config.rule_count = 1;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NULL(strstr(text, "CheckOptions"));
+}
+
+/* The two rules this file gained, and the concepts they name. `concurrency-*`
+   matters here in particular: molto compiles under a pool of workers, so a call
+   that is not safe to make from two threads is not a hypothetical. */
+MOLTEST(translate_names_the_two_rules_a_threaded_c_project_wants) {
+    lint_config config;
+    lint_config_defaults(&config);
+    snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "thread_safety");
+    config.rules[0].severity = lint_severity_warn;
+    snprintf(config.rules[1].name, LINT_RULE_NAME_MAX, "%s", "function_complexity");
+    config.rules[1].severity = lint_severity_warn;
+    config.rule_count = 2;
+
+    resolved_tool backend = linter_backend();
+    char text[4096] = "";
+    char err[256] = "";
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text, err,
+                                          sizeof err));
+
+    EXPECT_NOT_NULL(strstr(text, "concurrency-*"));
+    EXPECT_NOT_NULL(strstr(text, "readability-function-cognitive-complexity"));
+    /* And its default threshold, because a complexity check with no number is
+       a check with clang-tidy's number rather than molto's. */
+    EXPECT_NOT_NULL(strstr(text, "readability-function-cognitive-complexity.Threshold: '25'"));
 }
 
 MOLTEST(translate_refuses_a_rule_it_cannot_express) {
@@ -302,7 +480,7 @@ MOLTEST(translate_refuses_a_rule_it_cannot_express) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    EXPECT_FALSE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    EXPECT_FALSE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                            err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "no_such_rule"));
     EXPECT_NOT_NULL(strstr(err, "clang-tidy"));
@@ -352,7 +530,7 @@ MOLTEST(translate_can_refuse_one_check_without_giving_up_its_family) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     /* A family is too coarse a unit to turn one noisy check off: without these
@@ -376,7 +554,7 @@ MOLTEST(translate_opens_the_check_list_by_clearing_the_backend_default) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     EXPECT_NOT_NULL(strstr(text, "Checks: '-*,clang-diagnostic-*,bugprone-*"));
@@ -396,7 +574,7 @@ MOLTEST(translate_clears_the_default_even_with_no_preset_and_no_rules) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     EXPECT_NOT_NULL(strstr(text, "Checks: '-*'"));
@@ -416,7 +594,7 @@ MOLTEST(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     EXPECT_NOT_NULL(strstr(text, "clang-analyzer-security.*"));
@@ -444,7 +622,7 @@ MOLTEST(translate_asks_the_analyzer_only_for_what_says_something_about_c) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     EXPECT_NOT_NULL(strstr(text, "clang-analyzer-core.*"));
@@ -472,7 +650,7 @@ MOLTEST(translate_turns_a_rule_off_check_by_check) {
     resolved_tool backend = linter_backend();
     char text[4096] = "";
     char err[256] = "";
-    ASSERT_TRUE(style_translate_lint_text(&config, &backend, text, sizeof text,
+    ASSERT_TRUE(style_translate_lint_text("/w/app", &config, &backend, text, sizeof text,
                                           err, sizeof err));
 
     EXPECT_NOT_NULL(strstr(text, "-clang-analyzer-core.*"));

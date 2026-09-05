@@ -52,7 +52,7 @@
                                                size_t err_size);
 
 /* Render `config` as the text of a clang-tidy configuration. */
-[[nodiscard]] bool style_translate_lint_text(const lint_config *config,
+[[nodiscard]] bool style_translate_lint_text(const char *root, const lint_config *config,
                                              const resolved_tool *backend, char *out,
                                              size_t out_size, char *err, size_t err_size);
 
