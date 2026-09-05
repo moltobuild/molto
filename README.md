@@ -19,15 +19,17 @@ builds a project, molto builds molto, and the suite passes on a Windows runner.
 It is still a watch rather than a gate, and moving it into `ci.yml` is the last
 step of that RFC.
 
-**macOS** is not a gate, and it is red on purpose — where Windows was three
-weeks ago. It reports how far that port has got (RFC-0018), and it turns green
-when the suite does. That is the point of putting a badge here before it can be
-green: a platform is not supported until something says so, and this is the
-something.
+**macOS** went green on 2026-09-05, three weeks after Windows and by the same
+route: a job that measured the port honestly while it was red, until it wasn't.
+It reports what RFC-0018 defined as supported — `src/` and `tests/` compile,
+molto builds a project, molto builds molto, and the suite passes on an arm64
+macOS runner. Like Windows, it is still a watch rather than a gate.
 
 **Release** is what a tag runs: the static Linux binary, the cross-compiled
-Windows one, the sums that cover both, and each of them exercised on the
-platform it is for before any of it is published. Filtered to `event=push`, so
+Windows one, the macOS one — which has to be built on a Mac, because Darwin
+cannot be cross-compiled without Apple's SDK — the sums that cover all three,
+and each of them exercised on the platform it is for before any of it is
+published. Filtered to `event=push`, so
 a rehearsal — the workflow can be asked for on demand, without a tag — never
 reads as the state of a release.
 
@@ -62,17 +64,34 @@ states the features the code needs and pickup resolves them.
 
 ## Install
 
-A static x86-64 Linux binary is attached to every
-[release](https://github.com/moltobuild/molto/releases). It carries no glibc
-requirement and there is nothing to unpack.
+One line, and it installs `pickup` beside molto so there is a compiler to
+build with:
+
+```sh
+curl -fsSL https://moltobuild.dev/install.sh | sh
+```
+
+Every [release](https://github.com/moltobuild/molto/releases) also attaches the
+binaries directly, with a `SHA256SUMS` beside them:
+
+| | |
+|---|---|
+| `molto-<version>-x86_64-linux` | Static. No glibc requirement, nothing to unpack |
+| `molto-<version>-x86_64-windows.exe` | Windows 10 or later, static against UCRT |
+| `molto-<version>-arm64-macos` | Apple Silicon. Not static — macOS cannot be — and not signed |
 
 ```sh
 base=https://github.com/moltobuild/molto/releases/latest/download
 curl -fsSLO $base/SHA256SUMS
-curl -fsSLO $base/molto-0.16.0-x86_64-linux
+curl -fsSLO $base/molto-0.43.0-x86_64-linux
 sha256sum --check --ignore-missing SHA256SUMS
-sudo install molto-0.16.0-x86_64-linux /usr/local/bin/molto
+sudo install molto-0.43.0-x86_64-linux /usr/local/bin/molto
 ```
+
+On macOS the checker is `shasum -a 256` — there is no `sha256sum` there. And a
+binary fetched with a **browser** rather than `curl` picks up a quarantine
+attribute, because this one is not notarised: `xattr -d com.apple.quarantine
+molto` clears it, or open it once from Finder with a right click.
 
 **Then get a compiler.** Molto does not choose one: it asks
 [`pickup`](https://github.com/moltobuild/pickup), which installs one under

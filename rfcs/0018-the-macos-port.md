@@ -291,6 +291,31 @@ builds a shared library yet on this platform. `-Wl,-soname` and
 `build_makes_a_shared_library_with_the_two_links_beside_it` is among the 44 —
 it will be the one that says what a dylib costs.
 
+### The binary
+
+**2026-09-05.** Published from a tag, beside the Linux and Windows ones, as
+`molto-<version>-arm64-macos`.
+
+It needed a job of its own rather than a step, and that is the one structural
+difference from every other platform here: Linux and Windows are both produced
+on the Ubuntu runner because a cross build is deterministic and needs no queue,
+and Darwin cannot be cross-compiled without Apple's SDK. So the Mac builds
+first and hands its file to the job that names, hashes and describes all three
+— one `SHA256SUMS`, because two written in different places are two files that
+can disagree.
+
+Two claims it does not make, both stated in the release notes rather than left
+to be discovered:
+
+- **Not static.** Apple ships no static libSystem and does not support a fully
+  static executable. It links against libSystem, which is part of the operating
+  system, and CI asserts that every library `otool -L` names lives under
+  `/usr/lib` — the same question the Windows half asks about DLLs.
+- **Not signed or notarised.** Fetched with `curl` that changes nothing.
+  Fetched with a browser, macOS attaches a quarantine attribute and refuses to
+  start it. Signing needs an Apple Developer account and secrets in CI, and it
+  stays in *Reserved / Future* below until someone decides that is worth it.
+
 ## Non-Goals
 
 Molto does not ship universal binaries as part of this. `arm64` is what the
