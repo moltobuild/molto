@@ -15,11 +15,18 @@
  * from it is one nothing else can consume. Molto is not the audience for these
  * names — the rest of the system is.
  *
- * All three names live in one place because they are one fact spelled three
- * ways: the file, the name recorded inside it, and the name a linker looks for
- * at `-lfoo`. Composed separately they would eventually disagree, and a soname
- * that names a file which does not exist is a library that installs and then
- * cannot be loaded.
+ * All four live in one place because they are one fact spelled four ways: the
+ * file, the name recorded inside it, the name a linker looks for at `-lfoo`,
+ * and the option that puts the second one there. Composed separately they would
+ * eventually disagree, and a soname that names a file which does not exist is a
+ * library that installs and then cannot be loaded.
+ *
+ * And they are one fact *per platform*, which is why nothing here is decided
+ * before a platform is known. Linux writes `libfoo.so.1.2.3` and records
+ * `libfoo.so.1`; macOS writes `libfoo.1.2.3.dylib` and records
+ * `libfoo.1.dylib` — the version moved to the middle of the name, so this is
+ * not an extension to swap. The option differs too: `-Wl,-soname` is a GNU ld
+ * spelling and Apple's ld64 answers `unknown options: -soname`.
  *
  * Every name is relative to the profile's build directory, which is the only
  * anchor an artifact path has (RFC-0013).
@@ -39,10 +46,21 @@ typedef struct {
     /* The unversioned name a `-lcalculator` resolves through, and the one a
        build against this library uses. Empty except for `shared`. */
     char devlink[LIBRARY_NAME_MAX];
+    /* The whole linker option that records `soname` inside the file, ready to
+       push onto a command line: `-Wl,-soname,libfoo.so.1` on a GNU linker,
+       `-Wl,-install_name,libfoo.1.dylib` on Apple's. Composed here because this
+       is the only place that knows the platform and the name at once, which
+       spares every caller from knowing either. Empty except for `shared`. */
+    char name_option[LIBRARY_NAME_MAX + 24];
 } library_names;
 
 /*
  * The names for one artifact kind.
+ *
+ * `platform` is the target triple this build is for, or NULL for the machine
+ * running. It is a parameter and not a compile-time test because the answer is
+ * about the target and not about the host: a `--target aarch64-darwin` from a
+ * Linux box must name a dylib, and an `#ifdef` would name a `.so`.
  *
  * False with a message in `err` when the kind cannot be named: `source`
  * describes a package for a registry to serve rather than something to build
@@ -51,7 +69,8 @@ typedef struct {
  * soname, which is the one place a wrong number is an ABI promise.
  */
 [[nodiscard]] bool library_names_of(artifact_kind kind, const char *package, const char *version,
-                                    library_names *out, char *err, size_t err_size);
+                                    const char *platform, library_names *out, char *err,
+                                    size_t err_size);
 
 /*
  * The archiver that turns objects into a `.a`.
