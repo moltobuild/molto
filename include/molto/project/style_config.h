@@ -28,6 +28,9 @@
 #define STYLE_EXCLUDE_MAX 128
 #define LINT_MAX_RULES 32
 #define LINT_RULE_NAME_MAX 64
+#define LINT_MAX_RULE_OPTIONS 8
+#define LINT_OPTION_NAME_MAX 32
+#define LINT_OPTION_VALUE_MAX 64
 
 /* A curated starting point the explicit keys are layered on top of. */
 typedef enum {
@@ -80,15 +83,52 @@ typedef enum {
     lint_severity_error,
 } lint_severity;
 
+/* One setting of one rule: `{ "threshold": 30 }` on `function_complexity`.
+   The name is Molto's, the same as everything else here — a backend's own
+   spelling would tie a project to that backend as surely as writing its
+   configuration by hand. */
+typedef struct {
+    char name[LINT_OPTION_NAME_MAX];
+    char value[LINT_OPTION_VALUE_MAX];
+} lint_option;
+
+/*
+ * A rule, and what it was told.
+ *
+ * Two shapes in `linter.json`, because most rules need nothing said about them:
+ *
+ *     "bugprone": "warn"
+ *     "function_complexity": ["warn", { "threshold": 30 }]
+ *
+ * A rule that takes options and is given none is not silent: it uses the
+ * defaults the rule's own name implies. `naming_snake_case` means snake case,
+ * and a rule whose name already says what it wants should not need saying
+ * twice.
+ */
 typedef struct {
     char name[LINT_RULE_NAME_MAX];
     lint_severity severity;
+    lint_option options[LINT_MAX_RULE_OPTIONS];
+    size_t option_count;
 } lint_rule;
 
 typedef struct {
     char backend[STYLE_BACKEND_MAX];
     style_preset preset;
     style_excludes paths;
+    /*
+     * Whether the project's own headers are analysed. True unless a file says
+     * otherwise, and it has to be, because the alternative is what molto did
+     * until this key existed: clang-tidy reports only what it finds in the
+     * file it was handed unless it is told which headers count, so every
+     * `static inline`, every macro and every bug in a header went unread. In
+     * this repository that was 79 files and 7,207 lines.
+     *
+     * "The project's own" and not "all of them": a dependency's headers arrive
+     * through the same `-I` as the project's, and a lint report about somebody
+     * else's code is a report nobody can act on.
+     */
+    bool headers;
     lint_rule rules[LINT_MAX_RULES];
     size_t rule_count;
 } lint_config;
