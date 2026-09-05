@@ -238,6 +238,18 @@ static const struct {
        them. */
     {"swappable_parameters", "bugprone-easily-swappable-parameters"},
     {"spurious_wakeup", "bugprone-spuriously-wake-up-functions"},
+    /* Calls that are not safe to make from more than one thread -- `getenv`,
+       `strerror`, `localtime` and the rest of the ones that return a pointer
+       into a static buffer. Molto compiles under a pool of workers, so this is
+       not a hypothetical family here: `process_service` and `source_service`
+       both run there. */
+    {"thread_safety", "concurrency-*"},
+    /* How much a reader has to hold in their head. Cognitive complexity rather
+       than line count or cyclomatic: a `switch` with twenty flat cases is long
+       and easy, and three nested loops with an early return are short and are
+       not. The threshold is an option, because "too big" is a project's
+       opinion and not a fact. */
+    {"function_complexity", "readability-function-cognitive-complexity"},
     {"unused", "clang-diagnostic-unused*"},
     {"shadow", "clang-diagnostic-shadow"},
     {"uninitialized", "clang-diagnostic-uninitialized"},
@@ -245,6 +257,100 @@ static const struct {
     {"sign_compare", "clang-diagnostic-sign-compare"},
 };
 #define RULE_CHECK_COUNT (sizeof rule_checks / sizeof rule_checks[0])
+
+/* clang-tidy's spelling of "any spelling will do". */
+#define CASE_ANY "aNy_CasE"
+
+/*
+ * The settings a rule accepts, and what it does when told nothing.
+ *
+ * `fallback` is the reason this table has a column the rule table does not.
+ * `readability-identifier-naming` is enabled by a check name and configured by
+ * options, and with none it reports nothing at all -- so `naming_snake_case`
+ * was a rule a project could set to `error` and never see fail. A rule named
+ * for what it wants should not have to be told again, so the defaults here are
+ * what the name already says.
+ *
+ * `CASE_ANY` is how "this project has no opinion" is *said*. Leaving the option
+ * out instead does not mean that: clang-tidy answers the question with the next
+ * one down -- a file-scope constant with no `StaticConstantCase` is judged as a
+ * variable -- so an omission is not silence, it is the wrong rule applied. That
+ * is not a detail; it is thirty-six lines of this repository reported for
+ * looking exactly as C is written.
+ *
+ * The option names are Molto's. `FunctionCase` is clang-tidy's spelling of an
+ * idea every linter has, and writing it into `linter.json` would tie a project
+ * to clang-tidy exactly as writing `.clang-tidy` by hand would.
+ */
+static const struct {
+    const char *rule;
+    const char *option; /* what linter.json calls it */
+    const char *key;    /* what clang-tidy calls it */
+    const char *fallback;
+} rule_options[] = {
+    {"naming_snake_case", "functions", "readability-identifier-naming.FunctionCase", "lower_case"},
+    {"naming_snake_case", "variables", "readability-identifier-naming.VariableCase", "lower_case"},
+    {"naming_snake_case", "parameters", "readability-identifier-naming.ParameterCase",
+     "lower_case"},
+    {"naming_snake_case", "types", "readability-identifier-naming.TypedefCase", "lower_case"},
+    {"naming_snake_case", "structs", "readability-identifier-naming.StructCase", "lower_case"},
+    {"naming_snake_case", "enums", "readability-identifier-naming.EnumCase", "lower_case"},
+    /*
+     * Available, and with no default, which is a decision rather than an
+     * oversight.
+     *
+     * Everything above is a case nobody argues about: a C function is
+     * `lower_case` and so is a type. Constants and macros are not that. This
+     * repository writes `PACKAGE_KEYS` and `known` at the same scope, and
+     * `_GNU_SOURCE` beside `make_one_dir` -- and of those four, one cannot be
+     * renamed at all because POSIX chose the name. Whichever default were
+     * picked here would report thirty-odd lines of idiomatic C, and a default
+     * that fires on idiomatic C teaches people to turn the rule off.
+     *
+     * So `naming_snake_case` means what nobody disputes, and a project with an
+     * opinion about the rest says so. Two keys for `constants` because
+     * clang-tidy asks the question twice and a project should not have to know
+     * that it does.
+     */
+    {"naming_snake_case", "macros", "readability-identifier-naming.MacroDefinitionCase", CASE_ANY},
+    {"naming_snake_case", "constants", "readability-identifier-naming.StaticConstantCase",
+     CASE_ANY},
+    {"naming_snake_case", "constants", "readability-identifier-naming.GlobalConstantCase",
+     CASE_ANY},
+    /* The escape hatch every C project needs. A name the standard or the
+       platform chose cannot be renamed to satisfy a linter: `_GNU_SOURCE` is
+       the one this repository has, and asking a project to turn the whole rule
+       off over a name it does not own is how a rule stops being used. */
+    {"naming_snake_case", "ignore", "readability-identifier-naming.MacroDefinitionIgnoredRegexp",
+     "^_.*"},
+    {"function_complexity", "threshold", "readability-function-cognitive-complexity.Threshold",
+     "25"},
+    {"identifier_length", "minimum", "readability-identifier-length.MinimumVariableNameLength",
+     "3"},
+    {"identifier_length", "minimum_parameter",
+     "readability-identifier-length.MinimumParameterNameLength", "3"},
+};
+#define RULE_OPTION_COUNT (sizeof rule_options / sizeof rule_options[0])
+
+/* What `linter.json` said about one option of one rule, or NULL for nothing. */
+static const char *stated_value(const lint_rule *rule, const char *option) {
+    for(size_t i = 0; i < rule->option_count; i++) {
+        if(strcmp(rule->options[i].name, option) == 0)
+            return rule->options[i].value;
+    }
+    return NULL;
+}
+
+/* Whether any option in this table belongs to `rule`. An option named for a
+   rule that does not take one is refused, rather than written into a file the
+   backend then ignores. */
+static bool rule_takes(const char *rule, const char *option) {
+    for(size_t i = 0; i < RULE_OPTION_COUNT; i++) {
+        if(strcmp(rule_options[i].rule, rule) == 0 && strcmp(rule_options[i].option, option) == 0)
+            return true;
+    }
+    return false;
+}
 
 static const char *checks_for(const char *rule) {
     for(size_t i = 0; i < RULE_CHECK_COUNT; i++) {
@@ -327,6 +433,14 @@ static bool compose_check_lists(const lint_config *config, char *checks, size_t 
             return false;
         }
 
+        for(size_t j = 0; j < rule->option_count; j++) {
+            if(!rule_takes(rule->name, rule->options[j].name)) {
+                set_err(err, err_size, "linter.json: rule '%s' takes no option '%s'", rule->name,
+                        rule->options[j].name);
+                return false;
+            }
+        }
+
         /* `off` always emits: a minus subtracts what the preset enabled, so it
            carries meaning even when the plain check is already listed. */
         const bool subtract = rule->severity == lint_severity_off;
@@ -346,8 +460,79 @@ static bool compose_check_lists(const lint_config *config, char *checks, size_t 
     return true;
 }
 
-bool style_translate_lint_text(const lint_config *config, const resolved_tool *backend, char *out,
-                               size_t out_size, char *err, size_t err_size) {
+/*
+ * The settings block, for every rule that is on and takes one.
+ *
+ * Emitted for a rule the file did not configure as well as one it did, which is
+ * the whole point: a check enabled without its options is a check that runs and
+ * says nothing, and that is not what turning a rule on means.
+ *
+ * An `off` rule contributes none. Configuring what has been subtracted would be
+ * a file that argues with itself, and clang-tidy would take the option and
+ * still report nothing -- which reads, to whoever comes looking, as a broken
+ * rule rather than a disabled one.
+ */
+static bool compose_check_options(const lint_config *config, char *out, size_t out_size, char *err,
+                                  size_t err_size) {
+    size_t used = 0;
+    out[0] = '\0';
+    for(size_t i = 0; i < config->rule_count; i++) {
+        const lint_rule *rule = &config->rules[i];
+        if(rule->severity == lint_severity_off)
+            continue;
+        for(size_t j = 0; j < RULE_OPTION_COUNT; j++) {
+            if(strcmp(rule_options[j].rule, rule->name) != 0)
+                continue;
+            const char *stated = stated_value(rule, rule_options[j].option);
+            const char *value = stated != NULL ? stated : rule_options[j].fallback;
+            if(!append(out, out_size, &used, "  %s: '%s'\n", rule_options[j].key, value)) {
+                set_err(err, err_size, "linter.json: the translated options are too long");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/*
+ * A regular expression matching the project's own headers and nobody else's.
+ *
+ * clang-tidy reports what it finds in the file it was handed and, in a header,
+ * only when the header's path matches this. Without it every `static inline`,
+ * every macro body and every bug in a header goes unread -- which in this
+ * repository was 79 files.
+ *
+ * Anchored at the project root rather than `.*`, because a dependency's headers
+ * arrive through the same `-I` as the project's own and a report about someone
+ * else's code is one nobody can act on. The root is escaped: a path is not a
+ * regular expression, and a `.` in a directory name would otherwise match any
+ * character.
+ */
+static bool header_filter(const char *root, char *out, size_t out_size) {
+    size_t used = 0;
+    if(out_size == 0)
+        return false;
+    out[used++] = '^';
+    for(const char *at = root; *at != '\0'; at++) {
+        if(strchr(".^$|()[]{}*+?\\", *at) != NULL) {
+            if(used + 2 >= out_size)
+                return false;
+            out[used++] = '\\';
+        }
+        if(used + 1 >= out_size)
+            return false;
+        out[used++] = *at;
+    }
+    if(used + 2 >= out_size)
+        return false;
+    out[used++] = '/';
+    out[used] = '\0';
+    return true;
+}
+
+bool style_translate_lint_text(const char *root, const lint_config *config,
+                               const resolved_tool *backend, char *out, size_t out_size, char *err,
+                               size_t err_size) {
     if(!check_backend(config->backend, BACKEND_CLANG_TIDY, backend, "linter.json", err, err_size))
         return false;
 
@@ -356,12 +541,26 @@ bool style_translate_lint_text(const lint_config *config, const resolved_tool *b
     if(!compose_check_lists(config, checks, sizeof checks, fatal, sizeof fatal, err, err_size))
         return false;
 
+    char options[CONFIG_TEXT_MAX];
+    if(!compose_check_options(config, options, sizeof options, err, err_size))
+        return false;
+
     size_t used = 0;
     out[0] = '\0';
     bool ok =
         append(out, out_size, &used, "# Generated by molto from linter.json. Do not edit.\n") &&
         append(out, out_size, &used, "Checks: '%s'\n", checks) &&
         append(out, out_size, &used, "WarningsAsErrors: '%s'\n", fatal);
+    if(ok && config->headers) {
+        char filter[STYLE_CONFIG_PATH_MAX * 2];
+        if(!header_filter(root, filter, sizeof filter)) {
+            set_err(err, err_size, "linter.json: the path to this project does not fit a filter");
+            return false;
+        }
+        ok = append(out, out_size, &used, "HeaderFilterRegex: '%s'\n", filter);
+    }
+    if(ok && options[0] != '\0')
+        ok = append(out, out_size, &used, "CheckOptions:\n%s", options);
     if(!ok)
         set_err(err, err_size, "linter.json: the translated configuration is too long");
     return ok;
@@ -401,6 +600,6 @@ bool style_translate_format(const char *root, const style_config *config,
 bool style_translate_lint(const char *root, const lint_config *config, const resolved_tool *backend,
                           char *out_path, size_t out_path_size, char *err, size_t err_size) {
     char text[CONFIG_TEXT_MAX];
-    return style_translate_lint_text(config, backend, text, sizeof text, err, err_size) &&
+    return style_translate_lint_text(root, config, backend, text, sizeof text, err, err_size) &&
            write_generated(root, LINT_CONFIG, text, out_path, out_path_size, err, err_size);
 }
