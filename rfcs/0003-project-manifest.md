@@ -176,8 +176,126 @@ needs a toolchain that has a C++ driver, which is part of what gets resolved:
 a machine with `gcc-12` but no `g++-12` cannot build C++ with it, and that is
 reported rather than discovered at link time.
 
-A cross-compilation `triple` (and per-OS override tables such as
-`[target.linux]`) are **reserved** for a future revision.
+A cross-compilation `triple` is **reserved** for a future revision. The per-OS
+override tables are specified below and are not yet built.
+
+### Per-OS overrides: `[target.linux]`, `[target.macos]`, `[target.windows]`
+
+**Decided, not implemented.** Written down here so the decision is not taken
+twice.
+
+`[target]` states what is true of every host. Beside it, a table named for an
+operating system states what is true of that one:
+
+```toml
+[target]
+std     = "c2x"
+flags   = ["-Wall", "-Wextra", "-Wpedantic"]
+defines = ["MOLTO"]
+
+[target.windows]
+link    = ["ws2_32", "bcrypt"]
+defines = ["WIN32_LEAN_AND_MEAN"]
+
+[target.macos]
+flags   = ["-framework", "CoreFoundation"]
+exclude = ["src/platform_linux.c"]
+```
+
+**Per OS and not per triple.** What differs between `x86_64-windows` and
+`aarch64-windows` is almost never a flag, a define or a source file; what
+differs is the operating system. Keying on the triple would mean writing the
+same Windows section once per architecture, and a project that gained a third
+would silently not get it.
+
+#### The merge rules
+
+Three rules, and the third is the one that took the longest to settle.
+
+1. **Lists append.** `link`, `defines`, `include`, `flags` and `exclude` in a
+   per-OS table are added to what `[target]` said, not put in its place. The
+   per-platform case is additive in practice — `-lws2_32` only on Windows, a
+   framework only on macOS, `_GNU_SOURCE` only on Linux — and replacement has a
+   failure nobody sees: the day a flag is added to `[target]`, the platforms
+   that overrode that key silently stop receiving it.
+
+2. **Scalars replace.** `std`, `cpp_std` and `compiler` are one value, so a
+   per-OS table naming one is naming *the* one.
+
+3. **Nothing is removed.** There is no syntax for taking an entry out of what
+   `[target]` said, and this is a decision rather than an omission.
+
+   A flag that does not apply to one platform does not belong in `[target]`. It
+   belongs in the tables of the platforms that want it. That is more verbose and
+   it is unambiguous, and the ambiguity it avoids is real: every compact
+   encoding of "remove" collides with the syntax of the thing being encoded. A
+   leading `-` cannot mean "remove", because a leading `-` is what a flag *is* —
+   `[profile.release].flags = ["-flto"]` already writes it that way, and
+   `[target].flags` is documented above as `raw, verbatim`. Requiring flags to
+   be written without their dash to free the character up would make
+   `[target].flags` and `[profile.*].flags` two different languages in one file,
+   and it would still not work: `-fno-plt`, `-Wno-unused` and every other
+   negative flag would be indistinguishable from a request to remove the
+   positive one.
+
+   If a case appears that genuinely cannot be expressed by moving the entry into
+   the platforms that want it, removal earns its own spelling then — and it must
+   use a character no compiler flag can begin with, so that a flag is always
+   written as itself.
+
+#### What belongs in here, and what does not
+
+The line is who knows the answer.
+
+`-lws2_32`, `-framework CoreFoundation`, `-D_GNU_SOURCE`, `src/platform_win.c`:
+a person decides these and only that person knows them. They belong in the
+manifest.
+
+`libgreet.1.dylib`, `-Wl,-install_name,...`, `.exe`: these are derived from the
+package name, its version and the platform, and molto composes them (RFC-0018,
+RFC-0007). Nobody should be typing them, a manifest that could would be a
+manifest that can declare a soname contradicting its own version, and the
+mechanism that let it would also let a manifest remove `-fPIC` or `-o`.
+
+A useful test: **if molto can derive it from the manifest and the platform, it
+does not go in the manifest.**
+
+#### `exclude` is the one that is missing most
+
+`source_discovery` takes every `.c` under `src/` and there is no way to say
+otherwise. A `src/platform_win.c` that includes `<windows.h>` therefore breaks
+the Linux build, and the only way out is to wrap the whole file in an `#ifdef`.
+
+Molto does this to itself: its 45 `_WIN32` sites live inside 8 shared files
+rather than in per-platform ones, and that is the workaround rather than a
+preference. Per-OS source selection is what would let a C project be laid out
+the way C projects are laid out.
+
+#### Where the merge happens, and what it must not reach
+
+At manifest read, in `project_ctx`, before a document exists. The IR carries the
+result and never the operation: a subtraction node in a document is something
+RFC-0013 has no place for, and a document that can remove what another part of
+it added is a document whose command line cannot be read off it.
+
+A document keyed on the **target** is fine — molto already writes to
+`build/<platform>/<profile>`, so a document has always described a build for a
+platform. What must never reach it is the **host's** answer to a question about
+the target, which is the mistake `artifact.path` refuses for `.exe`.
+
+#### Non-goals
+
+**No `[target.<os>.deps]`.** RFC-0017's strictest bar is that `Molto.lock` for
+one project is byte-identical on every platform, and dependencies that vary by
+platform break it. Flags, defines, includes, links and excludes do not reach
+resolution, so they are safe; a dependency list is not.
+
+#### Until it exists
+
+An unknown table is ignored in silence today, so a manifest writing
+`[target.macos]` right now gets nothing and is told nothing. That is the same
+fail-open the `[plugins]` note in *Reserved Sections* describes, and it has the
+same answer: this cannot ship before the manifest can declare a schema.
 
 ### Naming capabilities instead of compilers
 
