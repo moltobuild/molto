@@ -80,8 +80,19 @@ static bool make_zip(const sandbox *at, char *out, size_t size) {
     return process_run(argv) == 0;
 }
 
-static bool digest_of(const char *file, char *out, size_t size) {
-    const char *argv[] = { "sha256sum", "--binary", file, NULL };
+/*
+ * The digest, from something that is not molto.
+ *
+ * Deliberately an external tool: molto computes this itself to verify what a
+ * recipe names, and a test that asked molto for the expected value would pass
+ * with a broken implementation on both sides.
+ *
+ * Two spellings because there is no one tool. GNU coreutils calls it
+ * `sha256sum` — Linux, and MSYS2 on Windows — and macOS ships Perl's `shasum`
+ * instead and no `sha256sum` at all. Both print the same shape, `<64 hex>` then
+ * the filename, so only the command differs.
+ */
+static bool digest_from(const char *const *argv, char *out, size_t size) {
     char captured[256] = "";
     if (process_capture(argv, captured, sizeof captured) != 0)
         return false;
@@ -90,6 +101,14 @@ static bool digest_of(const char *file, char *out, size_t size) {
         return false;
     snprintf(out, size, "%.*s", (int)length, captured);
     return true;
+}
+
+static bool digest_of(const char *file, char *out, size_t size) {
+    const char *coreutils[] = { "sha256sum", "--binary", file, NULL };
+    if (digest_from(coreutils, out, size))
+        return true;
+    const char *perl[] = { "shasum", "-a", "256", "-b", file, NULL };
+    return digest_from(perl, out, size);
 }
 
 /* Reads a [source] table out of recipe text. */
@@ -434,6 +453,73 @@ MOLTEST(source_refuses_a_coordinate_that_could_escape_the_cache) {
     EXPECT_FALSE(source_cache_path("sqlite", "", "any", path, sizeof path));
     EXPECT_FALSE(source_cache_path("", "3.53.4", "any", path, sizeof path));
     EXPECT_TRUE(source_cache_path("sqlite", "3.53.4", "any", path, sizeof path));
+
+    sandbox_close(&at);
+}
+
+MOLTEST(source_verifies_an_archive_where_sha256sum_is_not_the_tool) {
+    /*
+     * The verification molto does before it trusts a byte, on a machine that
+     * does not have GNU coreutils.
+     *
+     * `checksum_of` shelled out to `sha256sum` alone. macOS ships Perl's
+     * `shasum` and no `sha256sum` at all, and `verify` fails closed — so every
+     * archive dependency there was refused for being unverifiable rather than
+     * fetched. Not a degraded path: the whole dependency path, on a platform
+     * molto claims to support.
+     *
+     * Proven by taking the tool away rather than by waiting for a Mac. A
+     * `sha256sum` that exits non-zero is planted first on PATH, which is what a
+     * missing one amounts to here, and the fetch has to succeed anyway.
+     */
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char tarball[PATH_MAX_LEN];
+    char digest[80];
+    ASSERT_TRUE(make_tarball(&at, tarball, sizeof tarball));
+
+    /* The other tool has to be here, or this proves nothing: with both gone the
+       fetch would fail for the reason the test is trying to rule out. */
+    const char *const perl[] = { "shasum", "-a", "256", "-b", tarball, NULL };
+    if (!digest_from(perl, digest, sizeof digest))
+        SKIP("this machine has no shasum, so the fallback cannot be observed");
+
+    char blocked[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(blocked, sizeof blocked, "%s/no-coreutils", at.root));
+    ASSERT_TRUE(fs_make_dirs(blocked));
+    char planted[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(planted, sizeof planted, "%s/sha256sum", blocked));
+    ASSERT_TRUE(moltest_fake_program(planted, "exit 1\n", NULL, 0));
+
+    const char *const previous_path = getenv("PATH");
+    /* `;` on Windows, because a colon there belongs to a drive letter. */
+#ifdef _WIN32
+    static const char separator = ';';
+#else
+    static const char separator = ':';
+#endif
+    char shadowed[2048];
+    snprintf(shadowed, sizeof shadowed, "%s%c%s", blocked, separator,
+             previous_path == NULL ? "" : previous_path);
+    char restore[2048] = "";
+    snprintf(restore, sizeof restore, "%s", previous_path == NULL ? "" : previous_path);
+    ASSERT_EQ(0, setenv("PATH", shadowed, 1));
+
+    source_spec spec;
+    memset(&spec, 0, sizeof spec);
+    spec.origin = source_origin_archive;
+    snprintf(spec.location, sizeof spec.location, "file://%s", tarball);
+    snprintf(spec.sha256, sizeof spec.sha256, "%s", digest);
+
+    char out[PATH_MAX_LEN] = "";
+    char err[256] = "";
+    const bool fetched = source_fetch(&spec, "pkg", "1.0", "any", out, sizeof out, err, sizeof err);
+    (void)setenv("PATH", restore, 1);
+
+    if (!fetched)
+        FAIL(err);
+    EXPECT_TRUE(fs_path_exists(out));
 
     sandbox_close(&at);
 }
