@@ -174,7 +174,12 @@ static int hold_a_pipe_open(void *out_code) {
    listed, and counted the same way both times it is asked, so whatever else
    the test binary happens to hold open cancels out. */
 static unsigned long inherited_descriptors(void) {
-    const char *const argv[] = { "sh", "-c", "ls /proc/self/fd | wc -l", NULL };
+    /* `/dev/fd` is the fallback and not the first choice: it is what macOS has,
+       which has no `/proc` at all, and Linux and MSYS2 both answer through
+       `/proc/self/fd` today. Asking for the one that already works first means
+       this cannot change what the two green platforms report. */
+    const char *const argv[] = { "sh", "-c",
+                                 "( ls /proc/self/fd 2>/dev/null || ls /dev/fd ) | wc -l", NULL };
     char out[64] = "";
     if(process_capture_all(argv, NULL, 0, out, sizeof out, NULL) != 0)
         return 0;
