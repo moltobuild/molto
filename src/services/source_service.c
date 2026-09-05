@@ -333,8 +333,7 @@ static bool run(const char *const argv[], char *err, size_t err_size, const char
     return true;
 }
 
-static bool checksum_of(const char *file, char *out, size_t size) {
-    const char *argv[] = {"sha256sum", "--binary", file, NULL};
+static bool checksum_with(const char *const argv[], char *out, size_t size) {
     char captured[256] = "";
     if(process_capture(argv, captured, sizeof captured) != 0)
         return false;
@@ -346,10 +345,36 @@ static bool checksum_of(const char *file, char *out, size_t size) {
     return true;
 }
 
+/*
+ * The digest, from whichever tool the machine has.
+ *
+ * The note above says curl, tar and git are present wherever a build is. This
+ * is the one that is not: GNU coreutils calls it `sha256sum` — Linux, and MSYS2
+ * on Windows — while macOS ships Perl's `shasum` and no `sha256sum` at all.
+ *
+ * What that cost while it stood: `verify` fails closed, so on a Mac every
+ * archive dependency was refused for being unverifiable rather than fetched.
+ * Not a slow path or a warning — the whole dependency path, on a platform molto
+ * claims to support. The suite said so in six places and every one of them read
+ * like a test problem.
+ *
+ * Both print the same shape, `<64 hex>` then the filename, so only the command
+ * differs.
+ */
+static bool checksum_of(const char *file, char *out, size_t size) {
+    const char *coreutils[] = {"sha256sum", "--binary", file, NULL};
+    if(checksum_with(coreutils, out, size))
+        return true;
+    const char *perl[] = {"shasum", "-a", "256", "-b", file, NULL};
+    return checksum_with(perl, out, size);
+}
+
 static bool verify(const char *file, const char *expected, char *err, size_t err_size) {
     char actual[SOURCE_DIGEST_MAX] = "";
     if(!checksum_of(file, actual, sizeof actual))
-        return fail(err, err_size, "could not hash the downloaded archive");
+        return fail(err, err_size,
+                    "could not hash the downloaded archive: neither sha256sum nor shasum "
+                    "answered, and molto will not accept bytes it cannot check");
     if(strcmp(actual, expected) != 0) {
         if(err != NULL && err_size > 0)
             snprintf(err, err_size, "the archive hashes to %s, and the recipe expects %s", actual,
