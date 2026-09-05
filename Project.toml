@@ -10,7 +10,7 @@
 # molto — not because molto is unable.
 [package]
 name = "molto"
-version = "0.42.0"
+version = "0.43.0"
 description = "A package manager and build system for C and C++"
 repository = "https://github.com/moltobuild/molto"
 # The key states a licence; LICENSE and NOTICE at the root grant it. Apache-2.0
