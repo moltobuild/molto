@@ -1157,6 +1157,20 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
     SKIP("a shared library on Windows is a DLL, which molto does not build yet "
          "(RFC-0017)");
 #else
+    /* Written out in full on both sides rather than composed, because what is
+       under test is conformance to a convention: Linux appends the version
+       after the extension and macOS puts it before, so neither name can be
+       derived from the other and a test that built them would agree with a
+       bug. `test_library.c` checks the naming itself, for every platform, from
+       any platform. */
+#ifdef __APPLE__
+    static const char *const real = "libgreet.1.2.3.dylib";
+    static const char *const links[] = {"libgreet.1.dylib", "libgreet.dylib"};
+#else
+    static const char *const real = "libgreet.so.1.2.3";
+    static const char *const links[] = {"libgreet.so.1", "libgreet.so"};
+#endif
+
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_shared", root, sizeof root));
     ASSERT_TRUE(library_project(root, "shared", "1.2.3"));
@@ -1164,10 +1178,9 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
     ASSERT_EQ(exit_ok, build_project(root, profile_debug, NULL, false, 0, NULL, 0));
 
     char library[512];
-    snprintf(library, sizeof library, "%s/build/debug/libgreet.so.1.2.3", root);
+    snprintf(library, sizeof library, "%s/build/debug/%s", root, real);
     EXPECT_TRUE(fs_path_exists(library));
 
-    const char *const links[] = {"libgreet.so.1", "libgreet.so"};
     for(size_t i = 0; i < sizeof links / sizeof links[0]; i++) {
         char path[512];
         snprintf(path, sizeof path, "%s/build/debug/%s", root, links[i]);
@@ -1186,11 +1199,11 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
            bytes rather than a note saying where they are — so the assertion
            applies where links carry targets and is silent where they do not.
            None of this is settled for Windows anyway: what a shared library
-           should be *called* there is open in RFC-0017, and `libgreet.so.1.2.3`
-           is not the answer. */
+           should be *called* there is open in RFC-0017, and neither of the two
+           POSIX answers is it. */
         char target[256] = "";
         if(fs_link_target(path, target, sizeof target))
-            EXPECT_STREQ("libgreet.so.1.2.3", target);
+            EXPECT_STREQ(real, target);
     }
 
     remove_tree(root);

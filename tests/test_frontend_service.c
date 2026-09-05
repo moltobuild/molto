@@ -1085,6 +1085,72 @@ MOLTEST(frontend_native_produces_a_document_that_validates) {
     sandbox_teardown(&box);
 }
 
+MOLTEST(a_shared_library_is_named_by_its_kind_and_not_by_a_filename) {
+    /*
+     * What the document says a shared library is, which is deliberately not
+     * what it will be called.
+     *
+     * `frontend_native` takes a root and a profile. It is never told which
+     * platform this build is for, so any filename it writes is the host's
+     * answer to a question about the target -- and a shared library is called
+     * something different on each: `libgreet.so.1.2.3`, `libgreet.1.2.3.dylib`,
+     * `greet.dll`, with the version in a different place in the first two.
+     * There is nothing portable to write down, so the document writes the
+     * package's name and the kind, and `build_service` composes the filename
+     * where the platform is known (RFC-0018).
+     *
+     * The same rule `artifact.path` already applies to `.exe`.
+     */
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_a.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"greet\"\nversion = \"1.2.3\"\n"
+                                   "artifact = \"shared\"\n",
+                                   tests, 1));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+
+    const ir_target *target = NULL;
+    for(size_t i = 0; i < doc.target_count; i++) {
+        if(strcmp(doc.targets[i].name, "greet") == 0)
+            target = &doc.targets[i];
+    }
+    ASSERT_NOT_NULL(target);
+    EXPECT_EQ(ir_target_shared, target->kind);
+    ASSERT_TRUE(target->has_artifact);
+    EXPECT_STREQ("greet", target->artifact.path);
+
+    bool pic = false;
+    for(size_t i = 0; i < target->option_count; i++) {
+        if(strcmp(target->options[i].value, "-fPIC") == 0)
+            pic = true;
+    }
+    /* -fPIC stays: it is a *compile* flag, it reaches compile_commands.json,
+       and a file analysed without it is a different translation unit. */
+    EXPECT_TRUE(pic);
+
+    /* And the name to record inside the library does not, on any platform.
+       `-Wl,-soname` used to be written here unconditionally, which is GNU ld's
+       spelling; Apple's ld64 answers `unknown options: -soname` and the build
+       died at the link with the compile already green. */
+    for(size_t i = 0; i < target->link_count; i++) {
+        if(strstr(target->links[i].value, "soname") != NULL ||
+           strstr(target->links[i].value, "install_name") != NULL) {
+            char note[512];
+            snprintf(note, sizeof note, "the document names a library to the linker: %s",
+                     target->links[i].value);
+            FAIL(note);
+        }
+    }
+
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
+}
+
 MOLTEST(frontend_native_puts_src_on_the_include_path_last) {
     /* Every Molto build has `src/` on the include path and no manifest says
        so, which is what lets a source include a sibling by name. It is stated

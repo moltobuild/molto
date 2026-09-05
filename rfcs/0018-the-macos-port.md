@@ -237,6 +237,52 @@ Two failures are not that bug and are still open:
 `test_process_service.c::a_capture_does_not_leak_its_pipe_into_another_child`,
 and the `digest_of` failures in `test_source_service.c`.
 
+### What a shared library is called, and where that is decided
+
+Rule 2 said a `.dylib` in the IR would be a host's answer written into a
+portable document. Building it settled *why* in a way the rule only gestured at:
+**`frontend_native` is handed a root and a profile and is never told which
+platform the build is for.** So the document could not carry the filename even
+if it wanted to — the `libgreet.so.1.2.3` in there was the host's answer by
+accident, and a `--target aarch64-darwin` from a Linux box would have written it
+too.
+
+That also resolved a tension between two rules this port ran into:
+
+- RFC-0013 says everything reaching a command line is in the document.
+- RFC-0007/0013 says the document is portable.
+
+A soname satisfies neither for a shared library. The resolution is that they
+apply to different halves: `-fPIC` is a **compile** flag, it reaches
+`compile_commands.json`, and a file analysed without it is a different
+translation unit — so it stays in the document. `-Wl,-soname` is a **link**
+flag, it never reached `compile_commands.json`, and nothing was gained by
+writing it down — so it is composed at the link step, where the platform is
+known.
+
+What landed:
+
+| | |
+|---|---|
+| `artifact.path` for a shared library | the package's name; `kind` says the rest |
+| `library_names_of` | takes the target platform, and is not an `#ifdef` |
+| Linux | `libgreet.so.1.2.3`, records `libgreet.so.1` via `-Wl,-soname` |
+| macOS | `libgreet.1.2.3.dylib`, records `libgreet.1.dylib` via `-Wl,-install_name` |
+
+A parameter rather than a compile-time test for one reason beyond correctness:
+it makes every platform's naming checkable **from** every platform, so those
+cases are unit tests that run on Linux rather than findings that wait for a
+runner.
+
+The recorded name is a bare filename on both, never an `@rpath` and never a
+path: it has to be findable after the library is copied somewhere, and a path
+would write this build's directory inside an artifact whose purpose is to be
+copied elsewhere.
+
+Windows is still open, and this narrows it to one question rather than three: a
+DLL's *name* now has somewhere to be decided, and what remains is that molto
+does not build one.
+
 ### The tranche after that
 
 The link and meaning layers are still unmeasured, because nothing in the suite

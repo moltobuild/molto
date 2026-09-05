@@ -392,23 +392,26 @@ static ir_target_kind target_kind_of(artifact_kind artifact) {
 /*
  * What being a shared library adds to this target's own command lines.
  *
- * Both go on the target rather than being applied by the engine, because a
+ * `-fPIC` goes on the target rather than being applied by the engine, because a
  * document is meant to say everything that reaches a command line (RFC-0013).
- * Added by the engine instead they would be invisible to `molto ir` and absent
+ * Added by the engine instead it would be invisible to `molto ir` and absent
  * from `compile_commands.json`, where an editor reads what a file is compiled
  * with — and a file analysed without `-fPIC` is analysed as a different
  * translation unit than the one that was built.
+ *
+ * The soname used to be here beside it and is not any more. It is a *link*
+ * option, so it never reached `compile_commands.json` and nothing above applied
+ * to it; what it did do was write `-Wl,-soname` into a document that has no way
+ * to know it is wrong, because `frontend_native` is handed a root and a profile
+ * and is never told which platform the build is for. Apple's ld64 answers
+ * `unknown options: -soname`, and a `--target aarch64-darwin` from a Linux box
+ * would have said it too. It is composed at the link step now, where the
+ * platform is known (RFC-0018).
  */
-static bool push_library_scope(ir_target *target, artifact_kind artifact,
-                               const library_names *names) {
+static bool push_library_scope(ir_target *target, artifact_kind artifact) {
     if(artifact != artifact_shared)
         return true;
-    char soname[LIBRARY_NAME_MAX + 16];
-    const int written = snprintf(soname, sizeof soname, "-Wl,-soname,%s", names->soname);
-    if(written < 0 || (size_t)written >= sizeof soname)
-        return false;
-    return ir_add_option(&target->options, &target->option_count, "-fPIC", ir_scope_target) &&
-           ir_add_option(&target->links, &target->link_count, soname, ir_scope_target);
+    return ir_add_option(&target->options, &target->option_count, "-fPIC", ir_scope_target);
 }
 
 bool frontend_native(const char *root, const char *profile, ir_document *out, char *err,
@@ -453,11 +456,33 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
 
     /* Before anything is collected, because a version that cannot name a shared
        library is a manifest problem and should be reported as one rather than
-       after a directory walk that was never going to matter. */
+       after a directory walk that was never going to matter.
+
+       Asked without a platform, and only the answer's *existence* is used: what
+       is being checked here is that the manifest can be named at all. Which
+       filename it produces on a Mac is not this function's to know. */
     library_names names;
-    if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, &names, err, err_size))
+    if(!library_names_of(ctx.artifact, ctx.project_name, ctx.version, NULL, &names, err, err_size))
         goto failed;
     const ir_target_kind kind = target_kind_of(ctx.artifact);
+
+    /*
+     * The name the document carries, which is not the name on disk.
+     *
+     * A shared library is called something different on every platform, and
+     * unlike `.a` — which mingw and macOS both use — there is nothing shared to
+     * write down: not the extension, and not even where the version sits.
+     * `frontend_native` is not told which platform this build is for, so a
+     * filename here would be the host's answer to a question about the target,
+     * which is the mistake `artifact.path` already refuses for `.exe`.
+     *
+     * `kind` says it is a shared library and `build_service` composes the
+     * filename where the platform is known. Nothing downstream reads this to
+     * find the file: `build_service` works the name out from the manifest
+     * again, deliberately, so that a document cannot name its own output.
+     */
+    const char *const document_name =
+        ctx.artifact == artifact_shared ? ctx.project_name : names.file;
 
     str_list sources;
     str_list_init(&sources);
@@ -482,12 +507,11 @@ bool frontend_native(const char *root, const char *profile, ir_document *out, ch
     err[0] = '\0';
     const bool described = target != NULL && push_sources(target, absolute, &ctx, &sources) &&
                            fill_common(target, &ctx, which, err, err_size) &&
-                           fill_src_include(target) &&
-                           push_library_scope(target, ctx.artifact, &names) &&
+                           fill_src_include(target) && push_library_scope(target, ctx.artifact) &&
                            /* The artifact is relative to the profile's build directory, which is
                               where the engine puts it and is the only anchor an artifact path has
                               (RFC-0013). */
-                           ir_set_artifact(target, kind, names.file, NULL);
+                           ir_set_artifact(target, kind, document_name, NULL);
     str_list_free(&sources);
     if(!described) {
         /* Only when nothing said anything. A host library that could not be

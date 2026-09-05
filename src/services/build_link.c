@@ -63,7 +63,7 @@ static bool push_links(str_list *argv, const ir_target *node, ir_scope scope) {
  * opinion. */
 static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *objects,
                             const char *binary, const ir_target *node,
-                            const resolved_toolchain *chain) {
+                            const resolved_toolchain *chain, const library_names *names) {
     const char *driver = compile_flags_driver(chain, any_cpp);
     if(driver == NULL) {
         fprintf(stderr, "molto: '%s' needs a C++ compiler and none was resolved\n", binary);
@@ -74,8 +74,15 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
        is a shared library, and a second way of saying it could disagree with
        the first. The soname that goes with it is a LinkOption the frontend
        wrote, and arrives with the rest of them below. */
-    if(ok && node->kind == ir_target_shared)
+    if(ok && node->kind == ir_target_shared) {
         ok = str_list_push(argv, ARG_SHARED);
+        /* And the name to record inside it, composed by `library_names_of` for
+           the platform this build targets. It is not read off the node: the
+           document is not told which platform it is for, so it cannot hold this
+           and used to hold GNU ld's spelling of it on every machine. */
+        if(ok && names != NULL && names->name_option[0] != '\0')
+            ok = str_list_push(argv, names->name_option);
+    }
     for(size_t i = 0; ok && i < str_list_count(objects); i++)
         ok = str_list_push(argv, str_list_get(objects, i));
     if(ok)
@@ -141,12 +148,12 @@ static void report_link_diagnostics(const link_env *where, const char *output, b
    a stale/missing binary, or a changed link command (per the WSDB). Records the
    link command in the WSDB. Returns false only if a needed link failed. */
 bool build_link_project(bool any_cpp, const str_list *objects, const char *binary,
-                        const ir_target *node, const project_env *env,
+                        const ir_target *node, const library_names *names, const project_env *env,
                         const resolved_toolchain *chain, bool force, wsdb *db, const char *root,
                         build_report *report) {
     str_list argv;
     str_list_init(&argv);
-    if(!build_link_argv(&argv, any_cpp, objects, binary, node, chain)) {
+    if(!build_link_argv(&argv, any_cpp, objects, binary, node, chain, names)) {
         str_list_free(&argv);
         return false;
     }
