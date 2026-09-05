@@ -80,8 +80,19 @@ static bool make_zip(const sandbox *at, char *out, size_t size) {
     return process_run(argv) == 0;
 }
 
-static bool digest_of(const char *file, char *out, size_t size) {
-    const char *argv[] = { "sha256sum", "--binary", file, NULL };
+/*
+ * The digest, from something that is not molto.
+ *
+ * Deliberately an external tool: molto computes this itself to verify what a
+ * recipe names, and a test that asked molto for the expected value would pass
+ * with a broken implementation on both sides.
+ *
+ * Two spellings because there is no one tool. GNU coreutils calls it
+ * `sha256sum` — Linux, and MSYS2 on Windows — and macOS ships Perl's `shasum`
+ * instead and no `sha256sum` at all. Both print the same shape, `<64 hex>` then
+ * the filename, so only the command differs.
+ */
+static bool digest_from(const char *const *argv, char *out, size_t size) {
     char captured[256] = "";
     if (process_capture(argv, captured, sizeof captured) != 0)
         return false;
@@ -90,6 +101,14 @@ static bool digest_of(const char *file, char *out, size_t size) {
         return false;
     snprintf(out, size, "%.*s", (int)length, captured);
     return true;
+}
+
+static bool digest_of(const char *file, char *out, size_t size) {
+    const char *coreutils[] = { "sha256sum", "--binary", file, NULL };
+    if (digest_from(coreutils, out, size))
+        return true;
+    const char *perl[] = { "shasum", "-a", "256", "-b", file, NULL };
+    return digest_from(perl, out, size);
 }
 
 /* Reads a [source] table out of recipe text. */
