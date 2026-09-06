@@ -1,6 +1,7 @@
 #include <molto/services/source_service.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/services/paths_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/recipe_service.h>
 
@@ -201,10 +202,7 @@ static bool cache_root(char *out, size_t size) {
     if(override != NULL && override[0] != '\0')
         return fs_format_path(out, size, "%s", override);
 
-    const char *home = getenv("HOME");
-    if(home == NULL || home[0] == '\0')
-        return false;
-    return fs_format_path(out, size, "%s/.molto/cache", home);
+    return paths_molto_subdir("cache", out, size);
 }
 
 bool source_cache_root(char *out, size_t size) { return cache_root(out, size); }
@@ -533,7 +531,9 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
 
     char destination[SOURCE_PATH_MAX];
     if(!source_cache_path(name, version, target, destination, sizeof destination))
-        return fail(err, err_size, "HOME is not set, so there is nowhere to cache a source");
+        return fail(err, err_size,
+                    "this machine has no home directory, so there is nowhere to cache a "
+                    "source; set MOLTO_HOME or MOLTO_CACHE to a directory molto may use");
 
     if(is_complete(destination)) {
         snprintf(out, out_size, "%s", destination);
