@@ -2,6 +2,7 @@
 
 #include <molto/exit_code.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/paths_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/resolve_service.h>
 #include <molto/services/toolchain_service.h>
@@ -75,12 +76,7 @@ static bool plugin_program(const char *name, char *out, size_t size) {
 
 /* --- where to look --- */
 
-bool plugin_dir(char *out, size_t size) {
-    const char *home = getenv("HOME");
-    if(home == NULL || home[0] == '\0')
-        return false;
-    return fs_format_path(out, size, "%s/.molto/plugins/bin", home);
-}
+bool plugin_dir(char *out, size_t size) { return paths_molto_subdir("plugins/bin", out, size); }
 
 static bool is_executable(const char *path) { return access(path, X_OK) == 0; }
 
@@ -179,10 +175,7 @@ int plugin_run(const char *path, int argc, char **argv) {
 
 /* The recipe directory itself, which the install has to create. */
 static bool recipe_dir(char *out, size_t size) {
-    const char *home = getenv("HOME");
-    if(home == NULL || home[0] == '\0')
-        return false;
-    return fs_format_path(out, size, "%s/.molto/plugins/recipes", home);
+    return paths_molto_subdir("plugins/recipes", out, size);
 }
 
 /* One of the two encodings a recipe may be stored in. */
