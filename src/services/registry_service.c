@@ -25,13 +25,42 @@ static bool fail(char *err, size_t err_size, const char *message) {
 
 /* --- the header file curl reads the credential from --- */
 
-/* Created 0600 in $TMPDIR so the token is never an argument: every process on
-   the machine can read another's argv, and none can read this. */
+/*
+ * Where a file that must not be read by anyone else can be written.
+ *
+ * `$TMPDIR` is the Unix answer and `/tmp` was the fallback, which is right on
+ * a Unix and false everywhere else: molto on Windows is a native binary, and
+ * `/tmp` is a path that its `open` cannot resolve. So every publish from cmd
+ * or PowerShell failed at the first authenticated request with "could not
+ * store the credential for curl to read" — a message about a directory,
+ * printed nowhere near one.
+ *
+ * `TEMP` and `TMP` are what Windows sets, and asking for them after `$TMPDIR`
+ * rather than instead of it means a shell that defines the Unix one still
+ * wins, which is what someone running under MSYS2 meant.
+ */
+static const char *temporary_directory(void) {
+    static const char *const NAMES[] = {"TMPDIR", "TEMP", "TMP"};
+    for(size_t i = 0; i < sizeof NAMES / sizeof NAMES[0]; i++) {
+        const char *value = getenv(NAMES[i]);
+        if(value != NULL && value[0] != '\0')
+            return value;
+    }
+#ifdef _WIN32
+    /* Not `/tmp`: nothing on Windows resolves it. The current directory is a
+       poor place for a secret and a fine one for a file that exists for the
+       length of one request, mode 0600, deleted after. */
+    return ".";
+#else
+    return "/tmp";
+#endif
+}
+
+/* Created 0600 in the temporary directory so the token is never an argument:
+   every process on the machine can read another's argv, and none can read
+   this. */
 static bool write_auth_config(const char *token, char *path, size_t size) {
-    const char *dir = getenv("TMPDIR");
-    if(dir == NULL || dir[0] == '\0')
-        dir = "/tmp";
-    if(!fs_format_path(path, size, "%s/molto-auth-%d", dir, (int)getpid()))
+    if(!fs_format_path(path, size, "%s/molto-auth-%d", temporary_directory(), (int)getpid()))
         return false;
 
     const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL, S_IRUSR | S_IWUSR);
@@ -211,6 +240,114 @@ bool registry_upload_blob(const char *base_url, const char *token, const char *p
 
     return request(base_url, token, "PUT", path, "application/octet-stream", checksum_header,
                    "--data-binary", body, out, err, err_size);
+}
+
+/* Reads `{"url": ..., "headers": {...}}` into the struct curl will be driven
+   from. Every field is required: a signature with a header missing is one that
+   will be refused at the far end, and finding that out here is cheaper. */
+static bool read_signed_upload(const registry_response *response, registry_signed_upload *out,
+                               char *err, size_t err_size) {
+    json_document *doc = json_parse(response->body);
+    if(doc == NULL)
+        return fail(err, err_size, "the registry's answer was not JSON");
+
+    *out = (registry_signed_upload){0};
+    bool ok = true;
+
+    const json_value root = json_root(doc);
+    const char *url = json_string(json_get(root, "url"));
+    if(url == NULL || url[0] == '\0')
+        ok = fail(err, err_size, "the registry signed no URL");
+    else if((size_t)snprintf(out->url, sizeof out->url, "%s", url) >= sizeof out->url)
+        ok = fail(err, err_size, "the signed URL is too long to use");
+
+    const json_value headers = json_get(root, "headers");
+    const size_t count = ok ? json_count(headers) : 0;
+    if(ok && count > REGISTRY_SIGNED_HEADERS_MAX)
+        ok = fail(err, err_size, "the registry signed more headers than molto can send");
+
+    for(size_t i = 0; ok && i < count; i++) {
+        const char *name = json_key_at(headers, i);
+        const char *value = json_string(json_get(headers, name != NULL ? name : ""));
+        if(name == NULL || value == NULL) {
+            ok = fail(err, err_size, "the registry signed a header with no value");
+            break;
+        }
+        char *line = out->headers[out->header_count];
+        if((size_t)snprintf(line, REGISTRY_SIGNED_HEADER_MAX, "%s: %s", name, value) >=
+           REGISTRY_SIGNED_HEADER_MAX) {
+            ok = fail(err, err_size, "a signed header is too long to send");
+            break;
+        }
+        out->header_count++;
+    }
+
+    json_free(doc);
+    return ok;
+}
+
+bool registry_presign_blob(const char *base_url, const char *token, const char *path,
+                           const char *checksum, registry_signed_upload *out, bool *supported,
+                           char *err, size_t err_size) {
+    *supported = true;
+
+    char checksum_header[128];
+    snprintf(checksum_header, sizeof checksum_header, "x-molto-checksum: %s", checksum);
+
+    registry_response response;
+    if(!request(base_url, token, "POST", path, NULL, checksum_header, NULL, NULL, &response, err,
+                err_size))
+        return false;
+
+    /* 501 is the registry saying it cannot sign, not that the publish is
+       wrong. Reported as "no" rather than as an error so the caller can fall
+       back to the upload every registry has had since the beginning. */
+    if(response.status == 501) {
+        *supported = false;
+        return true;
+    }
+    if(response.status != 201) {
+        char message[512];
+        char detail[256];
+        registry_explain(&response, detail, sizeof detail);
+        snprintf(message, sizeof message, "the registry refused to sign the upload (%ld): %s",
+                 response.status, detail);
+        return fail(err, err_size, message);
+    }
+    return read_signed_upload(&response, out, err, err_size);
+}
+
+bool registry_put_signed(const registry_signed_upload *upload, const char *file,
+                         registry_response *out, char *err, size_t err_size) {
+    /* Composed here rather than through `request`: that one exists to talk to
+       the registry -- it builds a URL from a base and a path, and attaches
+       molto's credential. This request has neither. The URL is whole and
+       already carries its own authority, and sending a bearer token to object
+       storage would be handing it to a third party for no reason. */
+    /* curl, --silent, --show-error, --request, PUT, --upload-file, the file,
+       --write-out, the marker, the URL and the NULL that ends the list, plus
+       two entries for every header the signature may cover. */
+    const char *argv[11 + 2 * REGISTRY_SIGNED_HEADERS_MAX];
+    size_t n = 0;
+    argv[n++] = "curl";
+    argv[n++] = "--silent";
+    argv[n++] = "--show-error";
+    argv[n++] = "--request";
+    argv[n++] = "PUT";
+    for(size_t i = 0; i < upload->header_count; i++) {
+        argv[n++] = "--header";
+        argv[n++] = upload->headers[i];
+    }
+    /* Streams from the file rather than reading it in first, which
+       `--data-binary @` does and which a 127 MB archive makes expensive. */
+    argv[n++] = "--upload-file";
+    argv[n++] = file;
+    argv[n++] = "--write-out";
+    argv[n++] = STATUS_MARKER "%{http_code}";
+    argv[n++] = upload->url;
+    argv[n] = NULL;
+
+    return run_curl(argv, out, err, err_size);
 }
 
 bool registry_publish_recipe(const char *base_url, const char *token, const char *path,

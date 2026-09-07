@@ -21,6 +21,7 @@
 
    `recipe` and `file` may be NULL to use the defaults. Returns a
    molto_exit_code. */
-[[nodiscard]] int publish_command_run(const char *recipe, const char *file, bool dry_run);
+[[nodiscard]] int publish_command_run(const char *recipe, const char *file, const char *pack,
+                                      bool dry_run);
 
 #endif /* MOLTO_PUBLISH_COMMAND_H */

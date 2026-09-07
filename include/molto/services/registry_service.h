@@ -53,6 +53,50 @@ typedef struct {
                                         const char *file, const char *checksum,
                                         registry_response *out, char *err, size_t err_size);
 
+/*
+ * An upload the registry signed but will not carry.
+ *
+ * Cloudflare caps the request body a Worker may receive, and a toolchain that
+ * runs on Windows goes past it: it has to be a gzip tarball, because the
+ * `tar.exe` Windows ships opens nothing else, and gzip is about half as dense
+ * as zstd on an LLVM tree. So llvm-mingw is 58.6 MB for linux-x86_64 and
+ * 127.3 MB for windows-x86_64, and only one of the two fits.
+ *
+ * The registry answers instead with a URL the archive can be sent to directly.
+ * `headers` are not advice: each is covered by the signature, so a request
+ * that alters or omits one is refused as a signature mismatch.
+ */
+#define REGISTRY_SIGNED_URL_MAX 2048
+#define REGISTRY_SIGNED_HEADER_MAX 256
+#define REGISTRY_SIGNED_HEADERS_MAX 4
+
+typedef struct {
+    char url[REGISTRY_SIGNED_URL_MAX];
+    /* Each entry is a whole `name: value` line, ready for curl. */
+    char headers[REGISTRY_SIGNED_HEADERS_MAX][REGISTRY_SIGNED_HEADER_MAX];
+    size_t header_count;
+} registry_signed_upload;
+
+/* POST /v1/{kind}s/{name}/{version}/{target}/blob/presign — ask for a URL the
+   archive can be sent to directly.
+
+   `supported` says whether this registry has the endpoint at all. A deployment
+   holding no signing credentials answers 501, which is not a failure but an
+   instruction to use `registry_upload_blob` instead: false is a real failure,
+   and true with `*supported` false is an older or unconfigured registry. */
+[[nodiscard]] bool registry_presign_blob(const char *base_url, const char *token, const char *path,
+                                         const char *checksum, registry_signed_upload *out,
+                                         bool *supported, char *err, size_t err_size);
+
+/* PUT the archive to a signed URL, with the headers the signature covers.
+
+   None of molto's own credentials are sent: the signature is the whole
+   authority and the destination is object storage rather than the registry.
+   Streamed with `--upload-file` rather than `--data-binary`, which reads the
+   file into memory before sending a byte of it. */
+[[nodiscard]] bool registry_put_signed(const registry_signed_upload *upload, const char *file,
+                                       registry_response *out, char *err, size_t err_size);
+
 /* POST /v1/{kind}s — record the artifact, with the recipe.toml as the body. */
 [[nodiscard]] bool registry_publish_recipe(const char *base_url, const char *token,
                                            const char *path, const char *recipe_file,

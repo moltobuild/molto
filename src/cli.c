@@ -124,8 +124,9 @@ static const cli_option login_options[] = {
    immutable once published. */
 static const cli_option publish_options[] = {
     {"--recipe", 0, cli_opt_value, "<path>", "Recipe describing the artifact", "recipe.toml"},
-    {"--file", 'f', cli_opt_value, "<path>", "Archive to publish (the .tar.zst beside the recipe)",
+    {"--file", 'f', cli_opt_value, "<path>", "Archive to publish (the one beside the recipe)",
      NULL},
+    {"--pack", 'p', cli_opt_value, "<dir>", "Pack this directory into the archive first", NULL},
     {"--dry-run", 0, cli_opt_flag, NULL, "Check and hash, but send nothing", NULL},
 };
 
@@ -304,7 +305,7 @@ static int handle_login(const cli_args *args) {
 
 static int handle_publish(const cli_args *args) {
     return publish_command_run(cli_args_option(args, "--recipe"), cli_args_option(args, "--file"),
-                               cli_args_flag(args, "--dry-run"));
+                               cli_args_option(args, "--pack"), cli_args_flag(args, "--dry-run"));
 }
 
 static int handle_metadata(const cli_args *args) {

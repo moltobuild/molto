@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include "private_home.h"
+
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 
@@ -14,10 +16,16 @@
 
 static char previous_home[1024];
 static char sandbox[1024];
+static molto_home_override previous_override;
 
 static void with_private_home(void) {
     const char *home = getenv("HOME");
     snprintf(previous_home, sizeof previous_home, "%s", home == NULL ? "" : home);
+
+    /* Both variables, or the sandbox is decoration: $MOLTO_HOME wins over
+       $HOME, so leaving it set sends every save in this file to the molto home
+       of whoever is running the suite. */
+    molto_home_override_clear(&previous_override);
 
     /* Wherever the platform keeps temporary files, not `/tmp`. Under MSYS2 a
        native binary reads `/tmp` as a path on the current drive, and there is
@@ -42,6 +50,7 @@ static void restore_home(void) {
         setenv("HOME", previous_home, 1);
     else
         unsetenv("HOME");
+    molto_home_override_restore(&previous_override);
 }
 
 MOLTEST(credentials_round_trip_what_was_saved) {

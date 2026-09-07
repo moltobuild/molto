@@ -3,12 +3,14 @@
 #include <molto/exit_code.h>
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
-#include <molto/services/process_service.h>
+#include <molto/services/pack_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/source_service.h>
 #include <molto/util/doc.h>
+#include <molto/util/progress.h>
 #include <molto/util/semver.h>
+#include <molto/util/sha256.h>
 #include <molto/util/toml.h>
 
 #include <dirent.h>
@@ -17,7 +19,22 @@
 #include <string.h>
 
 #define DEFAULT_RECIPE "recipe.toml"
-#define ARCHIVE_SUFFIX ".tar.zst"
+
+/*
+ * What an archive beside a recipe is called.
+ *
+ * `.tar.zst` was the only one, and was right about every artifact published
+ * before a toolchain had to run on Windows. That one cannot be zstd: the
+ * `tar.exe` Windows ships is bsdtar linked against zlib alone, so gzip is the
+ * only packing it opens. Leaving the list at one meant `molto publish` in a
+ * directory holding the gzip artifact reported that there was no archive in
+ * it.
+ *
+ * Two entries and not a pattern, because "any file that looks like a tarball"
+ * is how the wrong bytes get published under a coordinate that cannot be
+ * republished.
+ */
+static const char *const ARCHIVE_SUFFIXES[] = {".tar.zst", ".tar.gz"};
 
 #define COORDINATE_MAX 128
 #define PATH_MAX_LEN 1024
@@ -32,6 +49,10 @@ typedef struct {
        to upload. Absent means "binary", which is what every recipe published
        before the key existed was. */
     bool from_source;
+    /* How the blob is packed, as the recipe declares it. Empty when it says
+       nothing, which is every recipe written before a toolchain had to run on
+       Windows and is read as the default for the target. */
+    char format[COORDINATE_MAX];
 } coordinate;
 
 static void report(const char *message) { fprintf(stderr, "molto: %s\n", message); }
@@ -222,6 +243,12 @@ static bool read_coordinate(const char *path, coordinate *out) {
               read_form(doc, &out->from_source) && check_version(out) && check_tables(doc, out) &&
               check_content(doc, out);
 
+    /* Optional, and read rather than inferred from a filename: the registry
+       stores what the recipe declares, so this is the same statement molto
+       will be held to. Absent means the default for the target. */
+    if(!toml_get_string(doc, "", "format", out->format, sizeof out->format))
+        out->format[0] = '\0';
+
     toml_free(doc);
     return ok;
 }
@@ -231,6 +258,15 @@ static bool read_coordinate(const char *path, coordinate *out) {
 /* The directory `path` lives in, or "." when it names a bare file. */
 static void directory_of(const char *path, char *out, size_t size) {
     const char *slash = strrchr(path, '/');
+    /* Windows spells it the other way, and a native molto is handed native
+       paths: `--recipe C:\publish\recipe.toml` has no forward slash in it at
+       all, so looking for only one answered "." and sent the search for the
+       archive to the current directory instead of to the one the recipe is
+       in. Whichever separator comes last is the one that ends the directory,
+       because Win32 accepts both and a path may carry a mixture. */
+    const char *backslash = strrchr(path, '\\');
+    if(backslash != NULL && (slash == NULL || backslash > slash))
+        slash = backslash;
     if(slash == NULL) {
         snprintf(out, size, ".");
         return;
@@ -243,6 +279,14 @@ static bool ends_with(const char *text, const char *suffix) {
     const size_t text_length = strlen(text);
     const size_t suffix_length = strlen(suffix);
     return text_length >= suffix_length && strcmp(text + text_length - suffix_length, suffix) == 0;
+}
+
+static bool looks_like_an_archive(const char *name) {
+    for(size_t i = 0; i < sizeof ARCHIVE_SUFFIXES / sizeof ARCHIVE_SUFFIXES[0]; i++) {
+        if(ends_with(name, ARCHIVE_SUFFIXES[i]))
+            return true;
+    }
+    return false;
 }
 
 /* The one archive beside the recipe. Two is an error rather than a guess:
@@ -260,7 +304,7 @@ static bool find_archive(const char *recipe_path, char *out, size_t size) {
     char found[PATH_MAX_LEN] = "";
     size_t count = 0;
     for(const struct dirent *entry = readdir(handle); entry != NULL; entry = readdir(handle)) {
-        if(!ends_with(entry->d_name, ARCHIVE_SUFFIX))
+        if(!looks_like_an_archive(entry->d_name))
             continue;
         count++;
         if(count == 1 && !fs_format_path(found, sizeof found, "%s/%s", dir, entry->d_name)) {
@@ -271,7 +315,8 @@ static bool find_archive(const char *recipe_path, char *out, size_t size) {
     (void)closedir(handle);
 
     if(count == 0) {
-        fprintf(stderr, "molto: no %s archive in %s; name one with --file\n", ARCHIVE_SUFFIX, dir);
+        fprintf(stderr, "molto: no %s or %s archive in %s; name one with --file\n",
+                ARCHIVE_SUFFIXES[0], ARCHIVE_SUFFIXES[1], dir);
         return false;
     }
     if(count > 1) {
@@ -283,31 +328,97 @@ static bool find_archive(const char *recipe_path, char *out, size_t size) {
     return true;
 }
 
+/* --- saying that something is happening --- */
+
+/*
+ * Publishing spends minutes in two places and used to print nothing in either.
+ *
+ * Hashing 127 MB and sending it are each long enough that a person watching a
+ * still cursor cannot tell work from a hang -- which is exactly the report
+ * that came back: the command "just sat there". Both have an honest total,
+ * unlike the searches `util/progress.h` was written for, so both get a bar
+ * rather than a spinner: the size of the file is known before the first byte
+ * is read, and curl says how much of it has gone.
+ *
+ * Drawn only on a terminal. A bar in a log file is noise and a bar in a pipe
+ * is corruption of whatever was being piped, which is why the choice is asked
+ * once per step rather than assumed.
+ */
+
+/* Columns of bar. Narrow enough to leave the label and the figure room on an
+   eighty-column terminal, which is the narrowest anyone still uses. */
+#define STEP_BAR_CELLS 24
+
+/* What a step has already shown, so it redraws only when the figure moves. */
+typedef struct {
+    int percent;
+} publish_progress;
+
+static void step_progress(const char *label, int percent) {
+    char bar[PROGRESS_BAR_SIZE(STEP_BAR_CELLS)];
+    (void)progress_bar_render(bar, sizeof bar, (size_t)percent, 100, STEP_BAR_CELLS);
+    progress_erase_line(stderr);
+    fprintf(stderr, "  %-8s %s %3d%%", label, bar, percent);
+    (void)fflush(stderr);
+}
+
+/* Take the row back. The line a step drew is scratch: what the command has to
+   say about the step is printed after it, on a line of its own. */
+static void clear_step(void) {
+    progress_erase_line(stderr);
+    (void)fflush(stderr);
+}
+
 /* --- hashing --- */
 
-/* Shelled out to for the same reason curl is: molto has no crypto, and a
-   sha256 written here would be one more thing to get right and keep right. */
+/*
+ * The digest, computed here.
+ *
+ * This used to run `sha256sum --binary <file>` and read the first field, on
+ * the same reasoning curl is shelled out to: molto has no crypto and one
+ * fewer thing to keep right is worth a dependency. The reasoning held until
+ * the file was named the way Windows names files. GNU coreutils escapes a
+ * backslash inside a filename and marks the line by starting it with one, so
+ *
+ *     sha256sum --binary C:\publish\llvm-mingw.tar.gz
+ *
+ * answers `\aa998685...  C:\\publish\\llvm-mingw.tar.gz`, whose first field
+ * is 65 characters and is therefore "not a digest". Every native Windows path
+ * took that branch. The bug was in the parsing, but the parsing existed only
+ * because the digest was somebody else's to compute.
+ *
+ * So molto computes it. The implementation is a port of pickup's, which the
+ * ecosystem already relied on to verify every toolchain it unpacks.
+ */
+static void hashing_progress(long long done, long long total, void *context) {
+    publish_progress *shown = context;
+    if(total <= 0)
+        return;
+
+    /* Redrawn only when the whole number of percent changes: a 127 MB archive
+       is two thousand chunks, and a line rewritten two thousand times is a
+       line that costs more than it tells. */
+    const int percent = (int)((done * 100) / total);
+    if(percent == shown->percent)
+        return;
+    shown->percent = percent;
+    step_progress("hashing", percent);
+}
+
 static bool checksum_of(const char *file, char *out, size_t size) {
-    const char *argv[] = {"sha256sum", "--binary", file, NULL};
-    char captured[256] = "";
-    const int code = process_capture(argv, captured, sizeof captured);
-
-    if(code == 127) {
-        report("sha256sum is not installed, and molto needs it to publish");
-        return false;
-    }
-    if(code != 0) {
-        fprintf(stderr, "molto: could not hash %s\n", file);
+    if(size < SHA256_HEX_SIZE) {
+        report("the buffer for a digest is too small, which is a bug in molto");
         return false;
     }
 
-    /* "<64 hex>  <name>" — only the digest is wanted. */
-    const size_t digest_length = strcspn(captured, " \t\r\n");
-    if(digest_length != 64 || digest_length >= size) {
-        report("sha256sum did not answer with a digest");
+    publish_progress shown = {.percent = -1};
+    const bool interactive = progress_is_interactive(stderr);
+    if(!sha256_file_watched(file, out, interactive ? hashing_progress : NULL, &shown)) {
+        fprintf(stderr, "molto: could not read %s to hash it\n", file);
         return false;
     }
-    snprintf(out, size, "%.*s", (int)digest_length, captured);
+    if(interactive)
+        clear_step();
     return true;
 }
 
@@ -331,13 +442,32 @@ static bool refused(const char *what, const registry_response *response) {
     return false;
 }
 
-static bool upload(const credentials *creds, const coordinate *at, const char *archive,
-                   const char *checksum) {
-    char path[PATH_MAX_LEN];
-    if(!fs_format_path(path, sizeof path, "/v1/%ss/%s/%s/%s/blob", at->kind, at->name, at->version,
-                       at->target))
-        return fs_report_long_path("the upload path");
-
+/*
+ * The bytes, by whichever of the two roads is open.
+ *
+ * Through the registry is the original road and still the right one for
+ * anything that fits: one request, one authority, and the Worker verifies the
+ * digest as the stream lands. What it cannot do is carry an archive past the
+ * request-body cap Cloudflare puts in front of every Worker -- and a toolchain
+ * that runs on Windows goes past it, because it has to be gzip (the tar.exe
+ * Windows ships opens nothing else) and gzip is about half as dense as zstd on
+ * an LLVM tree. The first one measured was 127.3 MB against 58.6 MB for the
+ * same compiler on Linux, and it came back 413 from a proxy, having spent the
+ * whole upload to find out.
+ *
+ * So the signed road is asked for first. The registry checks everything it
+ * would have checked -- the coordinate is free, the name is the caller's, the
+ * digest is well formed -- and answers a URL that object storage will accept
+ * directly. Nothing about the guarantee moves: the digest is part of the
+ * signature, storage refuses a stream that does not match it, and the recipe
+ * request still measures what landed.
+ *
+ * A registry that cannot sign says so with a 501, which is not a failure. Every
+ * deployment could carry a blob before any of them could sign one, so the
+ * fallback is the older road and not an error message.
+ */
+static bool put_through_registry(const credentials *creds, const char *path, const char *archive,
+                                 const char *checksum) {
     registry_response response;
     char err[512] = "";
     if(!registry_upload_blob(creds->registry, creds->token, path, archive, checksum, &response, err,
@@ -347,6 +477,54 @@ static bool upload(const credentials *creds, const coordinate *at, const char *a
     }
     if(response.status != 201)
         return refused("upload", &response);
+    return true;
+}
+
+static bool put_to_signed_url(const registry_signed_upload *signed_upload, const char *archive) {
+    registry_response response;
+    char err[512] = "";
+    if(!registry_put_signed(signed_upload, archive, &response, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    /* Object storage answers 200 to a PUT it accepted. It is not the registry,
+       so its refusal is not in the registry's error shape and there is nothing
+       to explain in the registry's terms: what it says is what is shown. */
+    if(response.status != 200) {
+        fprintf(stderr, "molto: object storage refused the archive (%ld): %.300s\n",
+                response.status, response.body);
+        return false;
+    }
+    return true;
+}
+
+static bool upload(const credentials *creds, const coordinate *at, const char *archive,
+                   const char *checksum) {
+    char path[PATH_MAX_LEN];
+    if(!fs_format_path(path, sizeof path, "/v1/%ss/%s/%s/%s/blob", at->kind, at->name, at->version,
+                       at->target))
+        return fs_report_long_path("the upload path");
+
+    char presign_path[PATH_MAX_LEN];
+    if(!fs_format_path(presign_path, sizeof presign_path, "%s/presign", path))
+        return fs_report_long_path("the signing path");
+
+    registry_signed_upload signed_upload;
+    bool signing_available = false;
+    char err[512] = "";
+    if(!registry_presign_blob(creds->registry, creds->token, presign_path, checksum, &signed_upload,
+                              &signing_available, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    fprintf(stderr, "  sending  %s\n",
+            signing_available ? "straight to storage, signed by the registry"
+                              : "through the registry");
+    if(!(signing_available ? put_to_signed_url(&signed_upload, archive)
+                           : put_through_registry(creds, path, archive, checksum)))
+        return false;
 
     fprintf(stderr, "  uploaded\n");
     return true;
@@ -375,9 +553,13 @@ static bool record(const credentials *creds, const coordinate *at, const char *r
    upload -- which is also why naming an archive for one is a mistake worth
    reporting rather than an argument to ignore. */
 static int publish_source(const coordinate *at, const char *recipe_path, const char *file,
-                          bool dry_run) {
+                          const char *pack, bool dry_run) {
     if(file != NULL && file[0] != '\0') {
         report("a source recipe has no archive to publish; drop --file");
+        return exit_usage_error;
+    }
+    if(pack != NULL && pack[0] != '\0') {
+        report("a source recipe is the whole artifact; there is nothing to pack");
         return exit_usage_error;
     }
 
@@ -400,10 +582,66 @@ static int publish_source(const coordinate *at, const char *recipe_path, const c
     return exit_ok;
 }
 
+/*
+ * Making the archive, when there is a directory to make it from.
+ *
+ * The packing is the recipe's to declare and the target's to default, which is
+ * the same order the registry reads them in -- so a recipe that says
+ * `format = "tar.gz"` is packed as one, and a windows-* target with no format
+ * key is packed as one anyway, because that is the only thing the tar Windows
+ * ships can open.
+ *
+ * Written beside the recipe under the name pickup looks for, so the publish
+ * that follows finds it the way it finds any other archive.
+ */
+static bool pack_beside_recipe(const coordinate *at, const char *recipe_path, const char *directory,
+                               char *archive, size_t size) {
+    const char *format = at->format[0] != '\0' ? at->format : pack_default_format(at->target);
+    if(!pack_format_is_known(format)) {
+        fprintf(stderr, "molto: the recipe declares format = \"%s\", which molto cannot pack\n",
+                format);
+        return false;
+    }
+
+    char dir[PATH_MAX_LEN];
+    directory_of(recipe_path, dir, sizeof dir);
+
+    char name[COORDINATE_MAX * 4];
+    if(!pack_archive_name(at->name, at->version, at->target, format, name, sizeof name))
+        return fs_report_long_path("the archive name");
+    if(!fs_format_path(archive, size, "%s/%s", dir, name))
+        return fs_report_long_path("the archive path");
+
+    fprintf(stderr, "  packing  %s as %s\n", directory, format);
+
+    char err[256] = "";
+    if(!pack_directory(directory, archive, format, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    fprintf(stderr, "  packed   %s\n", name);
+    if(!pack_is_reproducible())
+        fprintf(stderr,
+                "  note     this tar cannot sort its entries, so packing again may not\n"
+                "           give the same bytes; the digest still describes what was packed\n");
+    return true;
+}
+
 static int publish_binary(const coordinate *at, const char *recipe_path, const char *file,
-                          bool dry_run) {
+                          const char *pack, bool dry_run) {
     char archive[PATH_MAX_LEN];
-    if(file != NULL && file[0] != '\0')
+    if(pack != NULL && pack[0] != '\0') {
+        /* Naming both says two different things about which bytes to publish,
+           and guessing which one was meant is how the wrong ones go up under a
+           coordinate that cannot be republished. */
+        if(file != NULL && file[0] != '\0') {
+            report("--pack makes the archive and --file names one; use one or the other");
+            return exit_usage_error;
+        }
+        if(!pack_beside_recipe(at, recipe_path, pack, archive, sizeof archive))
+            return exit_build_failure;
+    } else if(file != NULL && file[0] != '\0')
         snprintf(archive, sizeof archive, "%s", file);
     else if(!find_archive(recipe_path, archive, sizeof archive))
         return exit_usage_error;
@@ -441,15 +679,15 @@ static int publish_binary(const coordinate *at, const char *recipe_path, const c
     return exit_ok;
 }
 
-int publish_command_run(const char *recipe, const char *file, bool dry_run) {
+int publish_command_run(const char *recipe, const char *file, const char *pack, bool dry_run) {
     const char *recipe_path = recipe != NULL && recipe[0] != '\0' ? recipe : DEFAULT_RECIPE;
 
     coordinate at = {0};
     if(!read_coordinate(recipe_path, &at))
         return exit_invalid_manifest;
 
-    const int code = at.from_source ? publish_source(&at, recipe_path, file, dry_run)
-                                    : publish_binary(&at, recipe_path, file, dry_run);
+    const int code = at.from_source ? publish_source(&at, recipe_path, file, pack, dry_run)
+                                    : publish_binary(&at, recipe_path, file, pack, dry_run);
     if(code != exit_ok || dry_run)
         return code;
 
