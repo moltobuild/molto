@@ -299,10 +299,23 @@ bool registry_presign_blob(const char *base_url, const char *token, const char *
                 err_size))
         return false;
 
-    /* 501 is the registry saying it cannot sign, not that the publish is
-       wrong. Reported as "no" rather than as an error so the caller can fall
-       back to the upload every registry has had since the beginning. */
-    if(response.status == 501) {
+    /*
+     * Two answers mean "not here", and only one of them was being read.
+     *
+     * 501 is a registry that has the endpoint and holds no credentials to sign
+     * with. 404 is a registry deployed before the endpoint existed, which has
+     * no route to answer with at all — and that is the case this fallback was
+     * written for in the first place, since every registry could carry a blob
+     * long before any of them could sign one. Reading only the first left the
+     * second reported as "the registry refused to sign the upload (404)", which
+     * is a refusal molto invented: nothing was refused, the question was not
+     * understood.
+     *
+     * Nothing else can answer 404 here. The route is matched before the
+     * coordinate is looked at, so a 404 is about the path and never about the
+     * artifact.
+     */
+    if(response.status == 501 || response.status == 404) {
         *supported = false;
         return true;
     }
