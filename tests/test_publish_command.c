@@ -253,3 +253,106 @@ MOLTEST(publish_lets_a_toolchain_name_itself_what_it_likes) {
 
     EXPECT_NE(exit_invalid_manifest, publish(toolchain));
 }
+
+/*
+ * Finding the archive beside the recipe.
+ *
+ * `.tar.zst` was the only name a publish would recognise, which was right
+ * about every artifact until one had to run on Windows. That one cannot be
+ * zstd — the `tar.exe` Windows ships is bsdtar linked against zlib and opens
+ * nothing else — so the gzip artifact sat in the directory being told there
+ * was no archive in it.
+ *
+ * These go through the whole command with `--dry-run`: it finds the archive,
+ * hashes it and stops before the credential. What separates "found it" from
+ * "did not" is therefore the exit code, since a publish that cannot find an
+ * archive is a usage error and one that can is not.
+ */
+
+typedef struct {
+    char dir[64];
+    char recipe[128];
+    char archive[160];
+} binary_fixture;
+
+static const char *const BINARY_RECIPE = "schema = 1\n"
+                                         "form = \"binary\"\n"
+                                         "kind = \"toolchain\"\n"
+                                         "name = \"llvm-mingw\"\n"
+                                         "version = \"23.1.0\"\n"
+                                         "target = \"windows-x86_64\"\n"
+                                         "format = \"tar.gz\"\n"
+                                         "\n"
+                                         "[toolchain]\n"
+                                         "vendor = \"clang\"\n"
+                                         "triple = \"x86_64-w64-windows-gnu\"\n"
+                                         "c_driver = \"bin/x86_64-w64-mingw32-clang.exe\"\n";
+
+/* A recipe and one file named `archive_name` beside it. The bytes are not a
+   tarball and do not need to be: nothing here unpacks anything, and what is
+   being tested is which names a publish will pick up. */
+static bool with_archive_named(binary_fixture *at, const char *archive_name) {
+    if (!moltest_temp_dir("molto_publish_bin", at->dir, sizeof at->dir))
+        return false;
+    snprintf(at->recipe, sizeof at->recipe, "%s/recipe.toml", at->dir);
+    snprintf(at->archive, sizeof at->archive, "%s/%s", at->dir, archive_name);
+
+    FILE *recipe = fopen(at->recipe, "w");
+    if (recipe == NULL)
+        return false;
+    fputs(BINARY_RECIPE, recipe);
+    if (fclose(recipe) != 0)
+        return false;
+
+    FILE *archive = fopen(at->archive, "wb");
+    if (archive == NULL)
+        return false;
+    fputs("not really an archive", archive);
+    return fclose(archive) == 0;
+}
+
+static void discard_binary(const binary_fixture *at) {
+    (void)remove(at->recipe);
+    (void)remove(at->archive);
+    (void)rmdir(at->dir);
+}
+
+static int publish_beside(const char *archive_name) {
+    binary_fixture at;
+    if (!with_archive_named(&at, archive_name))
+        return -1;
+    const int code = publish_command_run(at.recipe, NULL, true);
+    discard_binary(&at);
+    return code;
+}
+
+MOLTEST(publish_finds_a_zstd_archive_beside_the_recipe) {
+    EXPECT_NE(exit_usage_error, publish_beside("llvm-mingw-23.1.0-linux-x86_64.tar.zst"));
+}
+
+MOLTEST(publish_finds_a_gzip_archive_beside_the_recipe) {
+    EXPECT_NE(exit_usage_error, publish_beside("llvm-mingw-23.1.0-windows-x86_64.tar.gz"));
+}
+
+/* Neither name, and the publish says so rather than picking something. */
+MOLTEST(publish_reports_a_directory_with_no_archive_in_it) {
+    EXPECT_EQ(exit_usage_error, publish_beside("llvm-mingw-23.1.0-windows-x86_64.zip"));
+}
+
+/* The digest is computed here now rather than asked of `sha256sum`, whose
+   answer for a path containing a backslash begins with one — which made every
+   native Windows path "not a digest". A temporary directory is such a path on
+   Windows and an ordinary one everywhere else, so this covers the case on the
+   platform that has it without pretending to on the platform that does not. */
+MOLTEST(publish_hashes_an_archive_at_whatever_path_it_is_at) {
+    binary_fixture at;
+    ASSERT_TRUE(with_archive_named(&at, "llvm-mingw-23.1.0-windows-x86_64.tar.gz"));
+
+    /* Named explicitly, so the path travels through the same argument a user
+       would pass rather than being composed by the directory walk. */
+    const int code = publish_command_run(at.recipe, at.archive, true);
+    EXPECT_NE(exit_build_failure, code);
+    EXPECT_NE(exit_usage_error, code);
+
+    discard_binary(&at);
+}

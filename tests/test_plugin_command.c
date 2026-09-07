@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include "private_home.h"
+
 #include <molto/cli.h>
 #include <molto/commands/plugin_command.h>
 #include <molto/exit_code.h>
@@ -18,6 +20,7 @@ typedef struct {
     char bin[192];
     char old_home[4096];
     char old_path[4096];
+    molto_home_override old_override;
 } home;
 
 static bool home_setup(home *box) {
@@ -30,6 +33,10 @@ static bool home_setup(home *box) {
     snprintf(box->old_home, sizeof box->old_home, "%s", home_value != NULL ? home_value : "");
     snprintf(box->old_path, sizeof box->old_path, "%s", path_value != NULL ? path_value : "");
 
+    /* $MOLTO_HOME wins over $HOME, so a sandbox that redirects only the
+       second one is not a sandbox on a machine that sets the first. */
+    molto_home_override_clear(&box->old_override);
+
     return fs_make_dirs(box->bin) && setenv("HOME", box->root, 1) == 0
         && setenv("PATH", "", 1) == 0;
 }
@@ -37,6 +44,7 @@ static bool home_setup(home *box) {
 static void home_teardown(home *box) {
     (void)setenv("HOME", box->old_home, 1);
     (void)setenv("PATH", box->old_path, 1);
+    molto_home_override_restore(&box->old_override);
     char command[128];
     (void)fs_remove_tree(box->root);
 }

@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include "private_home.h"
+
 #include <molto/services/frontend_service.h>
 #include <molto/util/thread.h>
 #include <molto/services/fs_service.h>
@@ -30,6 +32,7 @@ typedef struct {
     char recipes[192];   /* ~/.molto/plugins/recipes */
     char project[192];   /* the directory being described */
     char old_home[4096];
+    molto_home_override old_override;
 } sandbox;
 
 static bool sandbox_setup(sandbox *box) {
@@ -44,12 +47,17 @@ static bool sandbox_setup(sandbox *box) {
     const char *home = getenv("HOME");
     snprintf(box->old_home, sizeof box->old_home, "%s", home != NULL ? home : "");
 
+    /* $MOLTO_HOME wins over $HOME, so a sandbox that redirects only
+       the second one is not one on a machine that sets the first. */
+    molto_home_override_clear(&box->old_override);
+
     return fs_make_dirs(box->installed) && fs_make_dirs(box->recipes) &&
            fs_make_dirs(box->project) && setenv("HOME", box->home, 1) == 0;
 }
 
 static void sandbox_teardown(sandbox *box) {
     (void)setenv("HOME", box->old_home, 1);
+    molto_home_override_restore(&box->old_override);
     char command[128];
     (void)fs_remove_tree(box->root);
 }
