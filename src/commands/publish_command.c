@@ -9,8 +9,8 @@
 #include <molto/services/source_service.h>
 #include <molto/util/doc.h>
 #include <molto/util/progress.h>
-#include <molto/util/sha256.h>
 #include <molto/util/semver.h>
+#include <molto/util/sha256.h>
 #include <molto/util/toml.h>
 
 #include <dirent.h>
@@ -513,8 +513,8 @@ static bool upload(const credentials *creds, const coordinate *at, const char *a
     registry_signed_upload signed_upload;
     bool signing_available = false;
     char err[512] = "";
-    if(!registry_presign_blob(creds->registry, creds->token, presign_path, checksum,
-                              &signed_upload, &signing_available, err, sizeof err)) {
+    if(!registry_presign_blob(creds->registry, creds->token, presign_path, checksum, &signed_upload,
+                              &signing_available, err, sizeof err)) {
         report(err);
         return false;
     }

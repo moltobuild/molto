@@ -305,8 +305,7 @@ static int handle_login(const cli_args *args) {
 
 static int handle_publish(const cli_args *args) {
     return publish_command_run(cli_args_option(args, "--recipe"), cli_args_option(args, "--file"),
-                               cli_args_option(args, "--pack"),
-                               cli_args_flag(args, "--dry-run"));
+                               cli_args_option(args, "--pack"), cli_args_flag(args, "--dry-run"));
 }
 
 static int handle_metadata(const cli_args *args) {

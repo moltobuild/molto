@@ -27,8 +27,7 @@ const char *pack_default_format(const char *target) {
 }
 
 bool pack_format_is_known(const char *format) {
-    return format != NULL &&
-           (strcmp(format, FORMAT_ZSTD) == 0 || strcmp(format, FORMAT_GZIP) == 0);
+    return format != NULL && (strcmp(format, FORMAT_ZSTD) == 0 || strcmp(format, FORMAT_GZIP) == 0);
 }
 
 bool pack_archive_name(const char *name, const char *version, const char *target,
