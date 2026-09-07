@@ -44,7 +44,7 @@ static int publish(const char *text) {
     fixture at;
     if (!write_recipe(&at, text))
         return -1;
-    const int code = publish_command_run(at.recipe, NULL, true);
+    const int code = publish_command_run(at.recipe, NULL, NULL, true);
     discard(&at);
     return code;
 }
@@ -120,7 +120,7 @@ MOLTEST(publish_refuses_an_archive_for_a_recipe_that_has_none) {
     fixture at;
     ASSERT_TRUE(write_recipe(&at, SOURCE_RECIPE));
 
-    EXPECT_EQ(exit_usage_error, publish_command_run(at.recipe, "/tmp/nothing.tar.zst", true));
+    EXPECT_EQ(exit_usage_error, publish_command_run(at.recipe, "/tmp/nothing.tar.zst", NULL, true));
     discard(&at);
 }
 
@@ -151,7 +151,7 @@ MOLTEST(publish_reads_a_recipe_that_never_declared_a_form) {
 }
 
 MOLTEST(publish_reports_a_recipe_that_is_not_there) {
-    EXPECT_EQ(exit_invalid_manifest, publish_command_run("/tmp/no_such_recipe.toml", NULL, true));
+    EXPECT_EQ(exit_invalid_manifest, publish_command_run("/tmp/no_such_recipe.toml", NULL, NULL, true));
 }
 
 /* --- what the tables say, and not merely that they are there --- */
@@ -321,7 +321,7 @@ static int publish_beside(const char *archive_name) {
     binary_fixture at;
     if (!with_archive_named(&at, archive_name))
         return -1;
-    const int code = publish_command_run(at.recipe, NULL, true);
+    const int code = publish_command_run(at.recipe, NULL, NULL, true);
     discard_binary(&at);
     return code;
 }
@@ -350,7 +350,7 @@ MOLTEST(publish_hashes_an_archive_at_whatever_path_it_is_at) {
 
     /* Named explicitly, so the path travels through the same argument a user
        would pass rather than being composed by the directory walk. */
-    const int code = publish_command_run(at.recipe, at.archive, true);
+    const int code = publish_command_run(at.recipe, at.archive, NULL, true);
     EXPECT_NE(exit_build_failure, code);
     EXPECT_NE(exit_usage_error, code);
 

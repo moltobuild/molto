@@ -3,6 +3,7 @@
 #include <molto/exit_code.h>
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/pack_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/source_service.h>
@@ -48,6 +49,10 @@ typedef struct {
        to upload. Absent means "binary", which is what every recipe published
        before the key existed was. */
     bool from_source;
+    /* How the blob is packed, as the recipe declares it. Empty when it says
+       nothing, which is every recipe written before a toolchain had to run on
+       Windows and is read as the default for the target. */
+    char format[COORDINATE_MAX];
 } coordinate;
 
 static void report(const char *message) { fprintf(stderr, "molto: %s\n", message); }
@@ -238,6 +243,12 @@ static bool read_coordinate(const char *path, coordinate *out) {
               read_form(doc, &out->from_source) && check_version(out) && check_tables(doc, out) &&
               check_content(doc, out);
 
+    /* Optional, and read rather than inferred from a filename: the registry
+       stores what the recipe declares, so this is the same statement molto
+       will be held to. Absent means the default for the target. */
+    if(!toml_get_string(doc, "", "format", out->format, sizeof out->format))
+        out->format[0] = '\0';
+
     toml_free(doc);
     return ok;
 }
@@ -247,6 +258,15 @@ static bool read_coordinate(const char *path, coordinate *out) {
 /* The directory `path` lives in, or "." when it names a bare file. */
 static void directory_of(const char *path, char *out, size_t size) {
     const char *slash = strrchr(path, '/');
+    /* Windows spells it the other way, and a native molto is handed native
+       paths: `--recipe C:\publish\recipe.toml` has no forward slash in it at
+       all, so looking for only one answered "." and sent the search for the
+       archive to the current directory instead of to the one the recipe is
+       in. Whichever separator comes last is the one that ends the directory,
+       because Win32 accepts both and a path may carry a mixture. */
+    const char *backslash = strrchr(path, '\\');
+    if(backslash != NULL && (slash == NULL || backslash > slash))
+        slash = backslash;
     if(slash == NULL) {
         snprintf(out, size, ".");
         return;
@@ -533,9 +553,13 @@ static bool record(const credentials *creds, const coordinate *at, const char *r
    upload -- which is also why naming an archive for one is a mistake worth
    reporting rather than an argument to ignore. */
 static int publish_source(const coordinate *at, const char *recipe_path, const char *file,
-                          bool dry_run) {
+                          const char *pack, bool dry_run) {
     if(file != NULL && file[0] != '\0') {
         report("a source recipe has no archive to publish; drop --file");
+        return exit_usage_error;
+    }
+    if(pack != NULL && pack[0] != '\0') {
+        report("a source recipe is the whole artifact; there is nothing to pack");
         return exit_usage_error;
     }
 
@@ -558,10 +582,66 @@ static int publish_source(const coordinate *at, const char *recipe_path, const c
     return exit_ok;
 }
 
+/*
+ * Making the archive, when there is a directory to make it from.
+ *
+ * The packing is the recipe's to declare and the target's to default, which is
+ * the same order the registry reads them in -- so a recipe that says
+ * `format = "tar.gz"` is packed as one, and a windows-* target with no format
+ * key is packed as one anyway, because that is the only thing the tar Windows
+ * ships can open.
+ *
+ * Written beside the recipe under the name pickup looks for, so the publish
+ * that follows finds it the way it finds any other archive.
+ */
+static bool pack_beside_recipe(const coordinate *at, const char *recipe_path, const char *directory,
+                               char *archive, size_t size) {
+    const char *format = at->format[0] != '\0' ? at->format : pack_default_format(at->target);
+    if(!pack_format_is_known(format)) {
+        fprintf(stderr, "molto: the recipe declares format = \"%s\", which molto cannot pack\n",
+                format);
+        return false;
+    }
+
+    char dir[PATH_MAX_LEN];
+    directory_of(recipe_path, dir, sizeof dir);
+
+    char name[COORDINATE_MAX * 4];
+    if(!pack_archive_name(at->name, at->version, at->target, format, name, sizeof name))
+        return fs_report_long_path("the archive name");
+    if(!fs_format_path(archive, size, "%s/%s", dir, name))
+        return fs_report_long_path("the archive path");
+
+    fprintf(stderr, "  packing  %s as %s\n", directory, format);
+
+    char err[256] = "";
+    if(!pack_directory(directory, archive, format, err, sizeof err)) {
+        report(err);
+        return false;
+    }
+
+    fprintf(stderr, "  packed   %s\n", name);
+    if(!pack_is_reproducible())
+        fprintf(stderr,
+                "  note     this tar cannot sort its entries, so packing again may not\n"
+                "           give the same bytes; the digest still describes what was packed\n");
+    return true;
+}
+
 static int publish_binary(const coordinate *at, const char *recipe_path, const char *file,
-                          bool dry_run) {
+                          const char *pack, bool dry_run) {
     char archive[PATH_MAX_LEN];
-    if(file != NULL && file[0] != '\0')
+    if(pack != NULL && pack[0] != '\0') {
+        /* Naming both says two different things about which bytes to publish,
+           and guessing which one was meant is how the wrong ones go up under a
+           coordinate that cannot be republished. */
+        if(file != NULL && file[0] != '\0') {
+            report("--pack makes the archive and --file names one; use one or the other");
+            return exit_usage_error;
+        }
+        if(!pack_beside_recipe(at, recipe_path, pack, archive, sizeof archive))
+            return exit_build_failure;
+    } else if(file != NULL && file[0] != '\0')
         snprintf(archive, sizeof archive, "%s", file);
     else if(!find_archive(recipe_path, archive, sizeof archive))
         return exit_usage_error;
@@ -599,15 +679,15 @@ static int publish_binary(const coordinate *at, const char *recipe_path, const c
     return exit_ok;
 }
 
-int publish_command_run(const char *recipe, const char *file, bool dry_run) {
+int publish_command_run(const char *recipe, const char *file, const char *pack, bool dry_run) {
     const char *recipe_path = recipe != NULL && recipe[0] != '\0' ? recipe : DEFAULT_RECIPE;
 
     coordinate at = {0};
     if(!read_coordinate(recipe_path, &at))
         return exit_invalid_manifest;
 
-    const int code = at.from_source ? publish_source(&at, recipe_path, file, dry_run)
-                                    : publish_binary(&at, recipe_path, file, dry_run);
+    const int code = at.from_source ? publish_source(&at, recipe_path, file, pack, dry_run)
+                                    : publish_binary(&at, recipe_path, file, pack, dry_run);
     if(code != exit_ok || dry_run)
         return code;
 
