@@ -4,6 +4,7 @@
 #include <molto/services/process_service.h>
 #include <molto/util/json.h>
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -242,6 +243,94 @@ bool registry_upload_blob(const char *base_url, const char *token, const char *p
                    "--data-binary", body, out, err, err_size);
 }
 
+/* The authority of `url`, with every byte that cannot be printed shown as
+   `<hh>` instead. It goes in an error message because it is the half of a
+   signed URL that carries no part of the signature, and because it is the half
+   a misconfigured registry gets wrong. */
+static void describe_authority(const char *url, char *out, size_t size) {
+    const char *scheme_end = strstr(url, "://");
+    const char *start = scheme_end != NULL ? scheme_end + 3 : url;
+    size_t n = 0;
+    for(const char *c = start; *c != '\0' && *c != '/' && *c != '?' && n + 5 < size; c++) {
+        if((unsigned char)*c > ' ' && (unsigned char)*c != 0x7f)
+            out[n++] = *c;
+        else
+            n += (size_t)snprintf(out + n, size - n, "<%02x>", (unsigned char)*c);
+    }
+    out[n] = '\0';
+}
+
+/* Whether what sits between the scheme and the path can be a host at all:
+   letters, digits, dots and hyphens, and at most a numeric port after a colon.
+   A port because the storage a registry signs for is its own choice (RFC-0010),
+   and some of what it may choose is reached on one. */
+static bool authority_is_a_host(const char *url) {
+    const char *scheme_end = strstr(url, "://");
+    if(scheme_end == NULL)
+        return false;
+
+    const char *c = scheme_end + 3;
+    if(*c == '\0' || *c == '/' || *c == '?' || *c == ':')
+        return false;
+    for(; *c != '\0' && *c != '/' && *c != '?' && *c != ':'; c++)
+        if(!isalnum((unsigned char)*c) && *c != '.' && *c != '-')
+            return false;
+    if(*c != ':')
+        return true;
+
+    c++;
+    if(!isdigit((unsigned char)*c))
+        return false;
+    for(; *c != '\0' && *c != '/' && *c != '?'; c++)
+        if(!isdigit((unsigned char)*c))
+            return false;
+    return true;
+}
+
+/*
+ * A URL molto can hand to curl, decided before it hands it over.
+ *
+ * A registry composes this host out of its own configuration, and a setting
+ * with a trailing newline in it -- or the whole storage endpoint where a
+ * shorter part of it belonged -- signs a URL no HTTP client will parse. What
+ * molto reported for that was curl's own "(3) URL using bad/illegal format or
+ * missing URL", which names neither the URL nor which end of this got it
+ * wrong.
+ *
+ * Read here, where it is still the registry's answer being read and the host
+ * can be quoted back. Which setting composed it is the registry's own business
+ * and differs between them -- RFC-0010 leaves the storage to the registry and
+ * names none of it -- so the host is shown and no setting is guessed at.
+ */
+static bool check_signed_url(const char *url, char *err, size_t err_size) {
+    static const char scheme[] = "https://";
+    if(strncmp(url, scheme, sizeof scheme - 1) != 0)
+        return fail(err, err_size, "the registry signed a URL that is not https");
+
+    char authority[160];
+    describe_authority(url, authority, sizeof authority);
+
+    char message[320];
+    for(const char *c = url; *c != '\0'; c++) {
+        if((unsigned char)*c <= ' ' || (unsigned char)*c == 0x7f) {
+            snprintf(message, sizeof message,
+                     "the registry signed a URL with a space or a control character in it; its "
+                     "host reads \"%.120s\" -- that is the registry's to fix, not this publish",
+                     authority);
+            return fail(err, err_size, message);
+        }
+    }
+
+    if(!authority_is_a_host(url)) {
+        snprintf(message, sizeof message,
+                 "the registry signed a URL whose host is not a host: \"%.120s\" -- that is the "
+                 "registry's to fix, not this publish",
+                 authority);
+        return fail(err, err_size, message);
+    }
+    return true;
+}
+
 /* Reads `{"url": ..., "headers": {...}}` into the struct curl will be driven
    from. Every field is required: a signature with a header missing is one that
    will be refused at the far end, and finding that out here is cheaper. */
@@ -260,6 +349,8 @@ static bool read_signed_upload(const registry_response *response, registry_signe
         ok = fail(err, err_size, "the registry signed no URL");
     else if((size_t)snprintf(out->url, sizeof out->url, "%s", url) >= sizeof out->url)
         ok = fail(err, err_size, "the signed URL is too long to use");
+    else
+        ok = check_signed_url(out->url, err, err_size);
 
     const json_value headers = json_get(root, "headers");
     const size_t count = ok ? json_count(headers) : 0;
