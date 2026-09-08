@@ -242,3 +242,131 @@ MOLTEST(presign_reports_a_refusal_that_is_about_the_artifact) {
     process_kill(&server);
     (void)fs_remove_tree(directory);
 }
+
+/*
+ * The URL a registry signs, and what molto does with one it cannot use.
+ *
+ * A registry composes the host of a signed URL out of its own configuration,
+ * and a setting carrying a trailing newline signs a host with the newline in
+ * it. curl refuses that URL before it opens a socket and says "(3) URL using
+ * bad/illegal format", naming neither the URL nor which end configured it,
+ * which is a long way to go for one invisible character.
+ */
+static bool serve_signed_url(const char *directory, const char *url, process_handle *out) {
+    const char *check[] = {"python3", "--version", NULL};
+    char version[64] = "";
+    if(process_capture(check, version, sizeof version) != 0)
+        return false;
+
+    char script[MOLTEST_PATH + 32];
+    snprintf(script, sizeof script, "%s/signed.py", directory);
+
+    FILE *file = fopen(script, "w");
+    if(file == NULL)
+        return false;
+    /* The URL arrives as an argument and is encoded here, so a test may name
+       one holding a newline without writing an escape into this script. */
+    fputs("import json, sys\n"
+          "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+          "url = sys.argv[1]\n"
+          "class H(BaseHTTPRequestHandler):\n"
+          "    def respond(self):\n"
+          "        body = json.dumps(\n"
+          "            {'url': url, 'headers': {'x-amz-checksum-sha256': 'aGk='}}\n"
+          "        ).encode()\n"
+          "        self.send_response(201)\n"
+          "        self.send_header('content-length', str(len(body)))\n"
+          "        self.end_headers()\n"
+          "        self.wfile.write(body)\n"
+          "    do_GET = do_POST = do_PUT = respond\n"
+          "    def log_message(self, *a):\n"
+          "        pass\n"
+          "HTTPServer(('127.0.0.1', int(sys.argv[2])), H).serve_forever()\n",
+          file);
+    if(fclose(file) != 0)
+        return false;
+
+    const char *argv[] = {"python3", script, url, PRESIGN_PORT, NULL};
+    return process_start(argv, out);
+}
+
+/* Answers false when there was no server to ask, having recorded the skip, for
+   the same reason `presign_against` does. */
+static bool presign_signing(const char *url, bool usable, const char *expected) {
+    char directory[MOLTEST_PATH];
+    if(!moltest_temp_dir("molto_signed", directory, sizeof directory)) {
+        moltest_record_skip("no temporary directory to serve from", __FILE__, __LINE__);
+        return false;
+    }
+
+    process_handle server;
+    if(!serve_signed_url(directory, url, &server)) {
+        (void)fs_remove_tree(directory);
+        moltest_record_skip("python3 is not installed, so there is no registry to ask", __FILE__,
+                            __LINE__);
+        return false;
+    }
+
+    if(wait_for_presign_server()) {
+        registry_signed_upload upload;
+        bool supported = false;
+        /* As wide as the buffer `publish` passes, so a message is judged at
+           the length it is actually reported at. */
+        char err[512] = "";
+
+        const bool read = registry_presign_blob(PRESIGN_URL, "a-token", PRESIGN_PATH, A_DIGEST,
+                                                &upload, &supported, err, sizeof err);
+        if(usable) {
+            EXPECT_TRUE(read);
+            EXPECT_TRUE(supported);
+            EXPECT_STREQ(url, upload.url);
+            EXPECT_STREQ("", err);
+        } else {
+            EXPECT_FALSE(read);
+            EXPECT_NOT_NULL(strstr(err, expected));
+            /* The host, quoted back, because it is the evidence and molto has
+               nothing else to offer: which of a registry's settings composed
+               it is that registry's business and not in this protocol. */
+            EXPECT_NOT_NULL(strstr(err, "host"));
+        }
+    }
+
+    process_kill(&server);
+    (void)fs_remove_tree(directory);
+    return true;
+}
+
+/* The one this was written for: a setting stored with a trailing newline, and
+   the newline coming back in the host. */
+MOLTEST(presign_refuses_a_signed_url_with_a_newline_in_its_host) {
+    (void)presign_signing("https://storage\n.example.com/artifacts/a.tar.gz?"
+                          "X-Amz-Signature=deadbeef",
+                          false, "control character");
+}
+
+/* The other way a host is composed wrong: a whole endpoint pasted in where a
+   shorter part of one belonged, which reads as a URL and names nothing. */
+MOLTEST(presign_refuses_a_signed_url_whose_host_is_not_a_host) {
+    (void)presign_signing("https://https://storage.example.com/artifacts/"
+                          "a.tar.gz?X-Amz-Signature=deadbeef",
+                          false, "not a host");
+}
+
+/* And the shape of a real one, so the check is known to refuse something
+   rather than everything. */
+MOLTEST(presign_accepts_a_signed_url_it_can_use) {
+    (void)presign_signing("https://storage.example.com/"
+                          "artifacts/toolchains/llvm-mingw/23.1.0/windows-x86_64.tar.gz?"
+                          "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef",
+                          true, NULL);
+}
+
+/* A registry chooses its own storage and RFC-0010 names none of it, so a host
+   reached on a port is a host like any other -- and the port is the one branch
+   of the check that nothing above walks. */
+MOLTEST(presign_accepts_a_signed_url_whose_host_carries_a_port) {
+    (void)presign_signing("https://storage.example.com:9000/"
+                          "artifacts/toolchains/llvm-mingw/23.1.0/windows-x86_64.tar.gz?"
+                          "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef",
+                          true, NULL);
+}
