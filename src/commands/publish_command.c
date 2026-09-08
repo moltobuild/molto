@@ -475,6 +475,29 @@ static bool put_through_registry(const credentials *creds, const char *path, con
         report(err);
         return false;
     }
+    /*
+     * 413 is the one refusal that does not come from the registry.
+     *
+     * Cloudflare caps the request body a Worker may receive and answers past it
+     * at the edge, so what comes back is a proxy's HTML error page — which
+     * `registry_explain` dutifully prints in full, having found no JSON in it.
+     * The publisher is then shown a wall of markup that names a limit but not
+     * which limit, nor that there is a way round it.
+     *
+     * Molto knows both. This road is the one taken when the registry cannot
+     * sign an upload, and an archive too large for it is exactly the case the
+     * signed one exists for.
+     */
+    if(response.status == 413) {
+        fprintf(stderr,
+                "molto: the archive is larger than this registry will carry in one request\n");
+        fprintf(stderr, "  the registry has no signing endpoint, so the bytes had to go through "
+                        "it,\n  and a proxy in front of it refused them before it saw them\n");
+        fprintf(stderr, "  a registry that can sign an upload takes any size: the archive goes "
+                        "straight\n  to object storage and only the signature goes through the "
+                        "worker\n");
+        return false;
+    }
     if(response.status != 201)
         return refused("upload", &response);
     return true;
