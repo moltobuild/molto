@@ -510,6 +510,26 @@ static void restore_env(const char *name, const char *saved, bool had) {
         (void)unsetenv(name);
 }
 
+/*
+ * The name of a C compiler this machine actually has.
+ *
+ * `cc` is the POSIX spelling, and on Linux and macOS it is the only one worth
+ * asking for. Windows has no such alias: pointing C_COMPILER at a name that
+ * does not resolve fails the build with nothing to report, which reads as the
+ * output landing in the wrong place rather than as there being no compiler —
+ * the one thing the test below is not about. NULL when none of them answer.
+ */
+static const char *host_c_compiler(void) {
+    static const char *const candidates[] = { "cc", "gcc", "clang" };
+    for (size_t i = 0; i < sizeof candidates / sizeof *candidates; i++) {
+        const char *argv[] = { candidates[i], "--version", NULL };
+        char version[256] = "";
+        if (process_capture(argv, version, sizeof version) == 0)
+            return candidates[i];
+    }
+    return NULL;
+}
+
 MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_build_race", root, sizeof root));
@@ -1252,6 +1272,10 @@ MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
  * the output lands rather than whether a cross toolchain exists.
  */
 MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
+    const char *const compiler = host_c_compiler();
+    if (compiler == NULL)
+        SKIP("this machine has no C compiler to point C_COMPILER at");
+
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_target", root, sizeof root));
 
@@ -1270,7 +1294,7 @@ MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
     char saved_cc[4096];
     bool had_cc;
     remember_env("C_COMPILER", saved_cc, sizeof saved_cc, &had_cc);
-    ASSERT_TRUE(setenv("C_COMPILER", "cc", 1) == 0);
+    ASSERT_TRUE(setenv("C_COMPILER", compiler, 1) == 0);
 
     const int code = build_project(root, profile_debug, "sparc-unknown-none-elf", false, 0, NULL, 0);
     restore_env("C_COMPILER", saved_cc, had_cc);

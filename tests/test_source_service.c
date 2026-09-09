@@ -58,6 +58,18 @@ static bool make_tarball(const sandbox *at, char *out, size_t size) {
     return process_run(argv) == 0;
 }
 
+/* Whether this machine can make a zip at all.
+ *
+ * Info-ZIP's `zip` is not part of a Windows toolchain and is not on every CI
+ * image either, while `unzip` — the tool actually under test — usually is. A
+ * fixture that cannot be built says nothing about the code that unpacks it,
+ * so the absence is a skip rather than a failure. */
+static bool have_zip(void) {
+    const char *argv[] = { "sh", "-c", "command -v zip", NULL };
+    char found[PATH_MAX_LEN] = "";
+    return process_capture(argv, found, sizeof found) == 0;
+}
+
 /* The same tree as a zip, which is what sqlite.org publishes. */
 static bool make_zip(const sandbox *at, char *out, size_t size) {
     char inside[PATH_MAX_LEN];
@@ -557,6 +569,9 @@ MOLTEST(source_unpacks_a_zip_by_what_upstream_called_it) {
     /* The format is decided by the extension, so the download has to keep the
        name the URL gave it. Saved under a name of molto's own choosing it has
        none, and sqlite.org's .zip was handed to tar, which said so. */
+    if (!have_zip())
+        SKIP("this machine has no zip, so there is no archive to unpack");
+
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
