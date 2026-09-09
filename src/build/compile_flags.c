@@ -60,3 +60,19 @@ bool compile_flags_push_std(str_list *argv, const project_target *target, bool i
         return fs_report_long_path(value);
     return str_list_push(argv, flag);
 }
+
+bool compile_flags_push_toolchain(str_list *argv, const resolved_toolchain *chain) {
+    for(size_t i = 0; i < chain->compile_flag_count; i++) {
+        if(!str_list_push(argv, chain->compile_flags[i]))
+            return false;
+    }
+    return true;
+}
+
+bool compile_flags_push_toolchain_link(str_list *argv, const resolved_toolchain *chain) {
+    for(size_t i = 0; i < chain->link_flag_count; i++) {
+        if(!str_list_push(argv, chain->link_flags[i]))
+            return false;
+    }
+    return true;
+}

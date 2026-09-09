@@ -7,6 +7,7 @@
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
@@ -66,15 +67,22 @@ int run_command_run(const char *requested_profile, bool refresh_toolchain, size_
     }
 
     char binary[4096];
+    resolved_toolchain chain;
     build_report *report = build_report_create(stderr);
     int code = build_project_with(root, profile, NULL, refresh_toolchain, jobs, binary,
-                                  sizeof binary, report);
+                                  sizeof binary, &chain, report);
     build_report_finish(report, profile_name(profile), code);
     build_report_destroy(report);
     if(code != exit_ok)
         return code;
-    process_env_var vars[PROJECT_MAX_ENV];
-    size_t var_count = project_env_to_vars(&ctx.env, vars, PROJECT_MAX_ENV);
+    /* The [env] the manifest asked for, plus the loader search path the
+       resolved toolchain needs: a program linked against a compiler's own
+       shared libraries cannot start without it, and the build has just been
+       told where they are. */
+    process_env_var vars[PROJECT_RUN_MAX_VARS];
+    char runtime_path[TOOLCHAIN_RUNTIME_PATH_MAX];
+    size_t var_count = project_run_vars(&ctx.env, &chain, vars, PROJECT_RUN_MAX_VARS, runtime_path,
+                                        sizeof runtime_path);
 
     const char **argv = (const char **)malloc((size_t)(forwarded_count + 2) * sizeof(char *));
     if(argv == NULL)

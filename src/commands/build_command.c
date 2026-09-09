@@ -26,7 +26,7 @@ int build_command_run(const char *requested_profile, const char *platform, bool 
        output of anyone redirecting a build. */
     build_report *report = build_report_create(stderr);
     int code =
-        build_project_with(root, profile, platform, refresh_toolchain, jobs, NULL, 0, report);
+        build_project_with(root, profile, platform, refresh_toolchain, jobs, NULL, 0, NULL, report);
     /* After the link and not before it: what the line reports is how long the
        whole command took, and the link is part of the command. */
     build_report_finish(report, profile_name(profile), code);

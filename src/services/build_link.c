@@ -70,6 +70,14 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
         return false;
     }
     bool ok = str_list_push(argv, driver);
+    /* The toolchain's own terms, ahead of everything the document says, for the
+       reason the compile line pushes them first: a toolchain that has to link
+       statically because its runtime sits beside the compiler is stating what
+       makes the output runnable, and the scopes below still get the last word.
+       They are mode flags rather than positional ones, so they sit here and not
+       among the objects. */
+    if(ok)
+        ok = compile_flags_push_toolchain_link(argv, chain);
     /* Read off the node rather than passed in: the document already says this
        is a shared library, and a second way of saying it could disagree with
        the first. The soname that goes with it is a LinkOption the frontend

@@ -257,16 +257,18 @@ int build_tests(const char *root, build_profile profile, const char *platform,
                 bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
                 project_env *env_out) {
     return build_tests_with(root, profile, platform, refresh_toolchain, jobs, test_binaries_out,
-                            env_out, NULL);
+                            env_out, NULL, NULL);
 }
 
 int build_tests_with(const char *root, build_profile profile, const char *platform,
                      bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
-                     project_env *env_out, build_report *report) {
+                     project_env *env_out, resolved_toolchain *chain_out, build_report *report) {
     /* Cleared up front so a caller that keeps going after a failure runs
-       nothing in a half-read environment. */
+       nothing in a half-read environment, or under a half-read toolchain. */
     if(env_out != NULL)
         memset(env_out, 0, sizeof *env_out);
+    if(chain_out != NULL)
+        memset(chain_out, 0, sizeof *chain_out);
 
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
@@ -297,6 +299,8 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
                             db);
     if(env_out != NULL)
         *env_out = ctx.env;
+    if(chain_out != NULL)
+        *chain_out = chain;
 
     char profile_dir_storage[PATH_BUFFER_SIZE];
     if(!build_segment(profile, platform, profile_dir_storage, sizeof profile_dir_storage)) {

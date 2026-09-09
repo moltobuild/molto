@@ -465,12 +465,18 @@ void build_publish_compile_db(const compile_db *cdb, const char *root) {
 int build_project(const char *root, build_profile profile, const char *platform,
                   bool refresh_toolchain, size_t jobs, char *out_binary, size_t out_binary_size) {
     return build_project_with(root, profile, platform, refresh_toolchain, jobs, out_binary,
-                              out_binary_size, NULL);
+                              out_binary_size, NULL, NULL);
 }
 
 int build_project_with(const char *root, build_profile profile, const char *platform,
                        bool refresh_toolchain, size_t jobs, char *out_binary,
-                       size_t out_binary_size, build_report *report) {
+                       size_t out_binary_size, resolved_toolchain *chain_out,
+                       build_report *report) {
+    /* Cleared up front so a caller that keeps going after a failure launches
+       nothing under a half-read toolchain. */
+    if(chain_out != NULL)
+        memset(chain_out, 0, sizeof *chain_out);
+
     wsdb *db = wsdb_open(root);
     if(db == NULL) {
         fprintf(stderr, "molto: could not open the workspace database (locked?)\n");
@@ -489,6 +495,8 @@ int build_project_with(const char *root, build_profile profile, const char *plat
     const pass_options options = {.jobs = jobs, .cdb = compile_db_create()};
     int result = build_plan_project(root, profile, platform, refresh_toolchain, db, &options, &ctx,
                                     &chain, &objects, &plan);
+    if(result == exit_ok && chain_out != NULL)
+        *chain_out = chain;
     if(result == exit_ok) {
         build_report_plan(&plan, root, report);
         build_report_begin(report, plan.to_build);
@@ -559,4 +567,24 @@ int build_project_with(const char *root, build_profile profile, const char *plat
     str_list_free(&objects);
     build_warn_if_not_saved(db);
     return result;
+}
+
+size_t project_run_vars(const project_env *env, const resolved_toolchain *chain,
+                        process_env_var *vars, size_t capacity, char *path_buffer,
+                        size_t path_buffer_size) {
+    const size_t count = project_env_to_vars(env, vars, capacity);
+    if(chain == NULL || count >= capacity)
+        return count;
+
+    const char *name = toolchain_runtime_path_var();
+    for(size_t i = 0; i < count; i++) {
+        if(vars[i].name != NULL && strcmp(vars[i].name, name) == 0)
+            return count;
+    }
+    if(!toolchain_runtime_path(chain, path_buffer, path_buffer_size))
+        return count;
+
+    vars[count].name = name;
+    vars[count].value = path_buffer;
+    return count + 1;
 }

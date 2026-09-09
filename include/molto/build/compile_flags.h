@@ -49,4 +49,20 @@
 [[nodiscard]] bool compile_flags_push_std(str_list *argv, const project_target *target,
                                           bool is_cpp);
 
+/* Push the flags the resolver said this toolchain needs on a compile line.
+ *
+ * These are not the manifest's opinion and not a default: they are the terms
+ * under which pickup proved this compiler produces a working program — a
+ * toolchain that has to be linked statically because its runtime sits beside it
+ * says so here. They go on before anything the document contributes, so a
+ * project's own `flags`, which RFC-0003 promises to pass verbatim, is still the
+ * last word on a contradiction. */
+[[nodiscard]] bool compile_flags_push_toolchain(str_list *argv, const resolved_toolchain *chain);
+
+/* The same, for a link line. Separate because the two lists are: a flag that
+   has to reach the linker is not necessarily one that reaches the compiler, and
+   pickup answers them apart. */
+[[nodiscard]] bool compile_flags_push_toolchain_link(str_list *argv,
+                                                     const resolved_toolchain *chain);
+
 #endif /* MOLTO_COMPILE_FLAGS_H */

@@ -11,11 +11,16 @@
 
 #define WSDB_MAGIC "MOLTOWSDB"
 #define WSDB_MAGIC_LEN 9
-/* Version 5 records, beside every prerequisite, the content hash that
-   prerequisite had when the artifact was built; version 4 added the
-   analysis-result kind (RFC-0006), version 3 resolved toolchains. An older
-   database is discarded and rebuilt. */
-#define WSDB_VERSION 5u
+/* Version 6 widens a recorded toolchain from four values to the resolver's
+   whole answer, link recipe included; version 5 records, beside every
+   prerequisite, the content hash that prerequisite had when the artifact was
+   built; version 4 added the analysis-result kind (RFC-0006), version 3
+   resolved toolchains. An older database is discarded and rebuilt.
+
+   The bump is what keeps a version-5 entry — four values, and no recipe behind
+   them — from being read as a version-6 one and answering a build with flags
+   it never recorded. */
+#define WSDB_VERSION 6u
 #define WSDB_ROOT_MAX 4096
 #define WSDB_PATH (WSDB_ROOT_MAX + 64)        /* room for a root plus a "/.bin/..." tail */
 #define WSDB_STRING_MAX (16u * 1024u * 1024u) /* reject absurd lengths on load */
