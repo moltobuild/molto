@@ -600,8 +600,20 @@ MOLTEST(lint_analyses_a_source_again_once_it_changes) {
     int after_first = invocations(&fixture);
 
     /* Content, not timestamp: the store confirms a changed mtime with a hash,
-       so a file that was only touched is correctly left alone. */
-    ASSERT_TRUE(write_file(fixture.root, "src/main.c", "int main(void){return 1;}\n"));
+       so a file that was only touched is correctly left alone.
+
+       The replacement differs in length, and that is load-bearing rather
+       than incidental. `current_hash` memoises on (mtime, size) and only
+       reaches for the hash when one of the two moves. Windows stamps a
+       write from a clock that advances every 15.6ms rather than from the
+       100ns field it writes into: measured on this machine, 198 of 200
+       back-to-back writes left `ftLastWriteTime` identical. The edit this
+       test used to make was the same 26 bytes as the file it replaced, so
+       on a runner quick enough to fit `run_lint` inside one tick both keys
+       matched, the store answered from the memo without opening the file,
+       and the case failed for a reason that had nothing to do with linting. */
+    ASSERT_TRUE(write_file(fixture.root, "src/main.c",
+                           "int main(void){int changed = 1; return changed;}\n"));
 
     diagnostic_list second;
     ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
