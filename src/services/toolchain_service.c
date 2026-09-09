@@ -370,13 +370,13 @@ static void remember(wsdb *db, const char *request, const resolved_toolchain *ch
               str_list_push(&values, chain->vendor) && str_list_push(&values, chain->version) &&
               str_list_push(&values, chain->id) && str_list_push(&values, chain->target) &&
               str_list_push(&values, chain->std_flag) && str_list_push(&values, chain->stdlib);
-    ok = ok &&
-         push_table(&values, &chain->compile_flags[0][0], TOOLCHAIN_FLAG_MAX,
-                    chain->compile_flag_count) &&
-         push_table(&values, &chain->link_flags[0][0], TOOLCHAIN_FLAG_MAX,
-                    chain->link_flag_count) &&
-         push_table(&values, &chain->runtime_dirs[0][0], TOOLCHAIN_PATH_MAX,
-                    chain->runtime_dir_count);
+    ok =
+        ok &&
+        push_table(&values, &chain->compile_flags[0][0], TOOLCHAIN_FLAG_MAX,
+                   chain->compile_flag_count) &&
+        push_table(&values, &chain->link_flags[0][0], TOOLCHAIN_FLAG_MAX, chain->link_flag_count) &&
+        push_table(&values, &chain->runtime_dirs[0][0], TOOLCHAIN_PATH_MAX,
+                   chain->runtime_dir_count);
     if(!ok || !wsdb_record_toolchain(db, TOOLCHAIN_KEY, request, &values))
         fprintf(stderr, "molto: warning: could not record the resolved toolchain\n");
     str_list_free(&values);

@@ -5,9 +5,9 @@
 #include <molto/exit_code.h>
 #include <molto/project/project_ctx.h>
 #include <molto/services/build_service.h>
-#include <molto/services/toolchain_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
