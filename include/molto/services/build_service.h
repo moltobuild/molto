@@ -8,6 +8,7 @@
 #include <molto/build/report.h>
 #include <molto/project/project_ctx.h>
 #include <molto/services/process_service.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/util/str_list.h>
 
 /* Build the project rooted at `root` (may be ".") using `profile`.
@@ -32,16 +33,39 @@
  * The report is the caller's, because what a build says belongs to the command
  * a person typed and not to the service: `molto build` wants an inventory and a
  * bar, and a test suite building a hundred fixtures wants silence. `NULL` is
- * that silence, which is what the plain `build_project` above passes. */
+ * that silence, which is what the plain `build_project` above passes.
+ *
+ * When `chain_out` is not NULL it receives the toolchain the build resolved, for
+ * the same reason `build_tests_with` hands back the manifest's [env]: whoever
+ * runs the result has to run it under the terms it was built with, and where the
+ * toolchain keeps its shared libraries is not derivable from the binary. */
 [[nodiscard]] int build_project_with(const char *root, build_profile profile, const char *platform,
                                      bool refresh_toolchain, size_t jobs, char *out_binary,
-                                     size_t out_binary_size, build_report *report);
+                                     size_t out_binary_size, resolved_toolchain *chain_out,
+                                     build_report *report);
 
 /* Translate a manifest's [env] table into the plain pairs process_service
    expects, writing at most `capacity` of them. Returns how many were written.
    Lives here because the build service is what bridges the manifest model and
    the process service; neither of those needs to know about the other. */
 size_t project_env_to_vars(const project_env *env, process_env_var *vars, size_t capacity);
+
+/* Room for the manifest's [env] plus the one variable the toolchain adds. */
+#define PROJECT_RUN_MAX_VARS (PROJECT_MAX_ENV + 1)
+
+/* The variables a program this build produced has to run under: the manifest's
+   [env], and — when the resolved toolchain keeps shared libraries of its own —
+   the loader search path that lets the program find them. Compiling with a
+   toolchain and then launching its output without that path is how a build
+   succeeds and the program it produced does not start.
+
+   `path_buffer` receives the composed path and must outlive `vars`, which point
+   into it. A manifest that sets the variable itself keeps it: an explicit [env]
+   entry is a decision, and overriding it here would be molto second-guessing
+   the project. Returns how many vars were written. */
+size_t project_run_vars(const project_env *env, const resolved_toolchain *chain,
+                        process_env_var *vars, size_t capacity, char *path_buffer,
+                        size_t path_buffer_size);
 
 /* Enough room for what project_env_fingerprint can write. */
 #define PROJECT_ENV_FINGERPRINT_MAX                                                                \
@@ -81,6 +105,7 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size);
 /* The same test build, saying what it is doing. See build_project_with. */
 [[nodiscard]] int build_tests_with(const char *root, build_profile profile, const char *platform,
                                    bool refresh_toolchain, size_t jobs, str_list *test_binaries_out,
-                                   project_env *env_out, build_report *report);
+                                   project_env *env_out, resolved_toolchain *chain_out,
+                                   build_report *report);
 
 #endif /* MOLTO_BUILD_SERVICE_H */

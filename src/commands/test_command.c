@@ -6,6 +6,7 @@
 #include <molto/project/project_ctx.h>
 #include <molto/services/build_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/toolchain_service.h>
 #include <molto/util/str_list.h>
 #include <molto/workspace/workspace.h>
 
@@ -17,12 +18,17 @@
 /* Run one test binary and print its result, updating the pass/fail counters.
    The binary runs in the [env] it was built in: a variable the manifest sets
    for the compiler is one the code may well read at runtime too, and a test is
-   the first place that would be noticed. */
-static void run_one_test(const char *binary, const project_env *env, size_t *passed,
-                         size_t *failed) {
+   the first place that would be noticed. It runs with the resolved toolchain's
+   runtime directories on the loader path for the same reason — a test linked
+   against the compiler's own shared libraries is exactly where that would be
+   noticed first, as "could not start". */
+static void run_one_test(const char *binary, const project_env *env,
+                         const resolved_toolchain *chain, size_t *passed, size_t *failed) {
     const char *argv[] = {binary, NULL};
-    process_env_var vars[PROJECT_MAX_ENV];
-    size_t var_count = project_env_to_vars(env, vars, PROJECT_MAX_ENV);
+    process_env_var vars[PROJECT_RUN_MAX_VARS];
+    char runtime_path[TOOLCHAIN_RUNTIME_PATH_MAX];
+    size_t var_count =
+        project_run_vars(env, chain, vars, PROJECT_RUN_MAX_VARS, runtime_path, sizeof runtime_path);
     int status = process_run_env(argv, vars, var_count);
     if(status == 0) {
         printf("  %s ... ok\n", binary);
@@ -54,9 +60,10 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain, size
     str_list binaries;
     str_list_init(&binaries);
     project_env env;
+    resolved_toolchain chain;
     build_report *report = build_report_create(stderr);
-    int code =
-        build_tests_with(root, profile, NULL, refresh_toolchain, jobs, &binaries, &env, report);
+    int code = build_tests_with(root, profile, NULL, refresh_toolchain, jobs, &binaries, &env,
+                                &chain, report);
     build_report_finish(report, profile_name(profile), code);
     build_report_destroy(report);
     if(code != exit_ok) {
@@ -75,7 +82,7 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain, size
     size_t passed = 0;
     size_t failed = 0;
     for(size_t i = 0; i < total; i++)
-        run_one_test(str_list_get(&binaries, i), &env, &passed, &failed);
+        run_one_test(str_list_get(&binaries, i), &env, &chain, &passed, &failed);
     printf("%zu passed, %zu failed\n", passed, failed);
 
     str_list_free(&binaries);

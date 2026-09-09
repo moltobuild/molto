@@ -221,7 +221,7 @@ MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
     EXPECT_EQ(exit_build_failure,
-              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
+              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, NULL, report));
 
     char text[8192] = "";
     (void)fflush(said);
@@ -260,7 +260,8 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
     ASSERT_NOT_NULL(said);
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
-    EXPECT_EQ(exit_ok, build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
+    EXPECT_EQ(exit_ok,
+              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, NULL, report));
 
     char text[8192] = "";
     (void)fflush(said);
@@ -320,7 +321,7 @@ MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     build_report *report = build_report_create(said);
     ASSERT_NOT_NULL(report);
     EXPECT_EQ(exit_build_failure,
-              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, report));
+              build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, NULL, report));
 
     char text[8192] = "";
     (void)fflush(said);

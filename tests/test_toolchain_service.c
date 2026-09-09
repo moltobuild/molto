@@ -349,3 +349,160 @@ MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
     stub_answer_teardown(&answer);
     stub_teardown(&stub);
 }
+
+/* --- the link recipe --- */
+
+/* Append a recipe to an answer already composed, so a test states only the
+   part it is about. */
+[[nodiscard]] static bool stub_answer_add(stub_answer *answer, const char *recipe) {
+    const size_t used = strlen(answer->toml);
+    const int written = snprintf(answer->toml + used, sizeof answer->toml - used, "%s", recipe);
+    return written > 0 && (size_t)written < sizeof answer->toml - used;
+}
+
+/*
+ * The recipe is the part of the answer that makes what Molto builds runnable.
+ * A toolchain that keeps its runtime beside the compiler states its terms here,
+ * and carrying only the two driver paths -- which is what this used to do --
+ * compiles perfectly well and produces a program that cannot start.
+ */
+MOLTEST(toolchain_carries_the_link_recipe_the_resolver_answered) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_answer_add(&answer,
+        "\n[c]\n"
+        "compile_flags = [\"-static\"]\n"
+        "link_flags = [\"-static\", \"-lpthread\"]\n"
+        "runtime_dirs = [\"/opt/tc/lib\"]\n"));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+    project_target target = target_requiring("attr_nodiscard");
+    resolved_toolchain chain;
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
+
+    ASSERT_EQ(1, (int)chain.compile_flag_count);
+    EXPECT_STREQ("-static", chain.compile_flags[0]);
+    ASSERT_EQ(2, (int)chain.link_flag_count);
+    EXPECT_STREQ("-static", chain.link_flags[0]);
+    EXPECT_STREQ("-lpthread", chain.link_flags[1]);
+    ASSERT_EQ(1, (int)chain.runtime_dir_count);
+    EXPECT_STREQ("/opt/tc/lib", chain.runtime_dirs[0]);
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_answer_teardown(&answer);
+    stub_teardown(&stub);
+}
+
+/* Pickup names the recipe section after the language it was asked about, so
+   reading a fixed name would find the wrong flags for a C++ build -- or, when
+   only [cxx] was written, none at all. */
+MOLTEST(toolchain_reads_the_recipe_of_the_language_it_asked_about) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_answer_add(&answer,
+        "\n[c]\n"
+        "compile_flags = [\"-for-c\"]\n"
+        "\n[cxx]\n"
+        "stdlib = \"libc++\"\n"
+        "compile_flags = [\"-for-cxx\"]\n"));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+
+    project_target target = target_requiring("attr_nodiscard");
+    resolved_toolchain chain;
+
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
+    ASSERT_EQ(1, (int)chain.compile_flag_count);
+    EXPECT_STREQ("-for-c", chain.compile_flags[0]);
+    EXPECT_STREQ("", chain.stdlib);
+
+    /* The same answer, asked about C++: the other section, and the standard
+       library that section commits the build to. */
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, true, db, false, &chain));
+    ASSERT_EQ(1, (int)chain.compile_flag_count);
+    EXPECT_STREQ("-for-cxx", chain.compile_flags[0]);
+    EXPECT_STREQ("libc++", chain.stdlib);
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_answer_teardown(&answer);
+    stub_teardown(&stub);
+}
+
+/* The memo has to hold the whole answer. Recording only the driver paths would
+   make the second build -- the one that reads the memo instead of asking --
+   compile without the flags the first one used. */
+MOLTEST(toolchain_remembers_the_recipe_it_was_told) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_answer_add(&answer,
+        "\n[c]\n"
+        "compile_flags = [\"-static\"]\n"
+        "link_flags = [\"-static\"]\n"
+        "runtime_dirs = [\"/opt/tc/lib\", \"/opt/tc/lib64\"]\n"));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+
+    project_target target = target_requiring("attr_nodiscard");
+    resolved_toolchain chain;
+
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
+    ASSERT_EQ(1, stub_calls(&stub));
+
+    /* Served from the database this time, and it says the same thing. */
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
+    EXPECT_EQ(1, stub_calls(&stub));
+    ASSERT_EQ(1, (int)chain.compile_flag_count);
+    EXPECT_STREQ("-static", chain.compile_flags[0]);
+    ASSERT_EQ(1, (int)chain.link_flag_count);
+    EXPECT_STREQ("-static", chain.link_flags[0]);
+    ASSERT_EQ(2, (int)chain.runtime_dir_count);
+    EXPECT_STREQ("/opt/tc/lib", chain.runtime_dirs[0]);
+    EXPECT_STREQ("/opt/tc/lib64", chain.runtime_dirs[1]);
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_answer_teardown(&answer);
+    stub_teardown(&stub);
+}
+
+/* Nine flags into eight slots. Keeping the first eight would build under a
+   recipe the resolver never gave, which is the quietly-wrong build this whole
+   path exists to prevent -- so the resolution fails and says so. */
+MOLTEST(toolchain_refuses_a_recipe_it_cannot_carry_whole) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_answer_add(&answer,
+        "\n[c]\n"
+        "compile_flags = ["
+        "\"-1\", \"-2\", \"-3\", \"-4\", \"-5\", \"-6\", \"-7\", \"-8\", \"-9\"]\n"));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+    project_target target = target_requiring("attr_nodiscard");
+    resolved_toolchain chain;
+    EXPECT_NE(exit_ok, toolchain_resolve(&target, NULL, false, db, false, &chain));
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_answer_teardown(&answer);
+    stub_teardown(&stub);
+}

@@ -148,6 +148,12 @@ static bool build_compile_argv(str_list *argv, const char *root, const compile_u
               str_list_push(argv, object) && str_list_push(argv, opt_flag);
     if(ok && settings->debug_info)
         ok = str_list_push(argv, ARG_DEBUG);
+    /* Ahead of the document's own flags: what the resolver said this toolchain
+       needs is the floor a project may argue with, and a manifest's `flags` is
+       passed verbatim after it so a contradiction still resolves the project's
+       way. */
+    if(ok)
+        ok = compile_flags_push_toolchain(argv, chain);
     if(ok)
         ok = push_document(argv, root, unit);
     if(ok)
