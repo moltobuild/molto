@@ -483,11 +483,19 @@ bool fs_path_is_absolute(const char *path) {
        directory that drive is currently on, which is per-process state and not
        a location. A leading slash is absolute on the current drive, which is
        enough for every caller here: they all compare against or join onto a
-       root from the same machine. */
+       root from the same machine.
+
+       Either slash, because Windows accepts either and the paths reaching this
+       do not come from Molto: `C:\Users\me\bin\gcc.exe` is where a compiler
+       actually lives, and reading it as relative made Molto join it onto the
+       project root, stat a path to nothing, and give up on remembering which
+       compiler it had just resolved -- once per build. */
     if(((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':')
-        return path[2] == '/';
-#endif
+        return path[2] == '/' || path[2] == '\\';
+    return path[0] == '/' || path[0] == '\\';
+#else
     return path[0] == '/';
+#endif
 }
 
 bool fs_path_without_root(const char *path, char *out, size_t size) {

@@ -160,6 +160,13 @@ MOLTEST(an_absolute_path_is_recognised_as_one) {
     EXPECT_TRUE(fs_path_is_absolute("D:/work"));
     EXPECT_TRUE(fs_path_is_absolute("c:/work"));
     EXPECT_FALSE(fs_path_is_absolute("D:work"));
+
+    /* And with the separator Windows itself writes. The paths that reach here
+       are not Molto's: a resolved compiler is `C:\Users\me\bin\gcc.exe`, and
+       reading that as relative is what stopped a build from remembering the
+       compiler it had just been given. */
+    EXPECT_TRUE(fs_path_is_absolute("C:\\Users\\me"));
+    EXPECT_TRUE(fs_path_is_absolute("\\\\server\\share"));
 #else
     EXPECT_FALSE(fs_path_is_absolute("D:/work"));
     EXPECT_FALSE(fs_path_is_absolute("D:work"));
