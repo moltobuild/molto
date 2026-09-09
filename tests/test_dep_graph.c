@@ -302,8 +302,12 @@ MOLTEST(a_conflict_between_two_long_paths_names_both_of_them) {
 
     /* Long enough that the two paths share their first DEP_IDENTITY_MAX bytes
        and differ only at the end, which is exactly the case a tail-clipping
-       copy cannot report. */
-    char deep[192];
+       copy cannot report. Sized from that constant rather than chosen: the
+       fixture has to be deep enough to reach the clipping, and every byte
+       past that is one more the path costs — which on Windows is not free,
+       because a temporary root plus this directory plus `recipe.toml` is
+       already within sight of what the CRT will open by name. */
+    char deep[DEP_IDENTITY_MAX + 1];
     memset(deep, 'd', sizeof deep - 1);
     deep[sizeof deep - 1] = '\0';
 
