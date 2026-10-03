@@ -125,7 +125,11 @@ profile analyses code the build never sees.
 
 **Exit codes.** `0` when no `error`-severity diagnostic was produced, `1` when
 one was, `2` for an invalid configuration, `4` for bad usage. A warning is
-reported and still succeeds — only `error` fails the command.
+reported and still succeeds — only `error` fails the command. A file a tool
+could not process counts as an error too, whether the tool said why
+(clang-tidy's `Error while processing` and its `clang-diagnostic-error`) or
+only exited non-zero: that file was never analysed, and a green lint must mean
+it was.
 
 ### Neither command looks at the same file twice
 
