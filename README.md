@@ -110,8 +110,9 @@ materials.
 
 To build molto from source:
 
-- `gcc-12` or newer (the build targets the C23 subset via `-std=c2x`)
-- GNU Make
+- `gcc-12` or newer (the build targets the C23 subset via `-std=c2x`); on
+  macOS, the Apple clang from the Xcode Command Line Tools instead
+- GNU Make (on macOS, the 3.81 those same tools ship is enough)
 - [`pickup`](https://github.com/moltobuild/pickup), the toolchain manager: Molto asks it which compiler
   satisfies a project's `[target]` requirements. Point `MOLTO_PICKUP` at it if
   it is not on the `PATH`, or set `C_COMPILER` / `CPP_COMPILER` to choose the
@@ -124,6 +125,15 @@ and `CC` accordingly in the `Makefile`.
 
 ```sh
 make build        # produces build/molto
+```
+
+On macOS there is no `gcc-12`, which is what the `Makefile` reaches for unless
+told otherwise, so name the system compiler — the same one the macOS CI job
+builds with, on `macos-14`:
+
+```sh
+make build CC=clang
+make test CC=clang
 ```
 
 ## Run
