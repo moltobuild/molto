@@ -2,6 +2,7 @@
 #define MOLTO_TOOL_SERVICE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <molto/workspace/wsdb.h>
 
@@ -47,5 +48,29 @@ typedef struct {
 
 /* The name of a kind, for messages: "formatter", "linter". Never NULL. */
 [[nodiscard]] const char *tool_kind_name(tool_kind kind);
+
+/* The variable an analysis tool reads to learn where the macOS SDK is, and room
+   for the path it holds. */
+#define TOOL_SDK_ENV "SDKROOT"
+#define TOOL_SDK_PATH_MAX 4096
+
+/*
+ * Where the platform's SDK is, for a tool that will not find it by itself.
+ *
+ * Only macOS needs this. Its system headers live in an SDK rather than in
+ * /usr/include, and Apple's clang finds that SDK because Apple taught its
+ * driver to; the clang-tidy pickup unpacks is upstream LLVM, which was not, and
+ * reports `'stdio.h' file not found` on every source it is handed.
+ *
+ * On macOS the answer is SDKROOT when the environment already names one — that
+ * is how a user, or Xcode, says which SDK they mean — and otherwise what
+ * `xcrun --show-sdk-path` says (MOLTO_XCRUN overrides which xcrun, as
+ * MOLTO_PKG_CONFIG does for pkg-config). It is written to `out` and true is
+ * returned. False, with `err` saying why, when xcrun could not answer.
+ *
+ * Everywhere else there is no SDK to find: `out` is left empty, true is
+ * returned and nothing is run.
+ */
+[[nodiscard]] bool tool_platform_sdk(char *out, size_t out_size, char *err, size_t err_size);
 
 #endif /* MOLTO_TOOL_SERVICE_H */

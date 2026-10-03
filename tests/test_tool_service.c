@@ -288,3 +288,116 @@ MOLTEST(tool_kind_names_are_what_pickup_reports) {
     EXPECT_STREQ("formatter", tool_kind_name(tool_kind_formatter));
     EXPECT_STREQ("linter", tool_kind_name(tool_kind_linter));
 }
+
+/* --- the macOS SDK --- */
+
+/* SDKROOT and MOLTO_XCRUN as they were, so a test can set both and leave the
+   environment as it found it — `make` on macOS may well have exported the
+   first. */
+typedef struct {
+    char root[64];
+    char xcrun[MOLTEST_PATH];
+    char saved_sdk[4096];
+    char saved_xcrun[4096];
+    bool had_sdk;
+    bool had_xcrun;
+} sdk_env;
+
+static void sdk_env_save(const char *name, char *into, size_t size, bool *had) {
+    const char *existing = getenv(name);
+    *had = existing != NULL;
+    if (existing != NULL)
+        snprintf(into, size, "%s", existing);
+}
+
+/* An xcrun that does what `spec` says, with SDKROOT unset. */
+static bool sdk_env_setup(sdk_env *env, const char *spec) {
+    sdk_env_save("SDKROOT", env->saved_sdk, sizeof env->saved_sdk, &env->had_sdk);
+    sdk_env_save("MOLTO_XCRUN", env->saved_xcrun, sizeof env->saved_xcrun, &env->had_xcrun);
+    if (!moltest_temp_dir("molto_xcrun", env->root, sizeof env->root))
+        return false;
+    snprintf(env->xcrun, sizeof env->xcrun, "%s/xcrun", env->root);
+    if (!moltest_fake_program(env->xcrun, spec, env->xcrun, sizeof env->xcrun))
+        return false;
+    return unsetenv("SDKROOT") == 0 && setenv("MOLTO_XCRUN", env->xcrun, 1) == 0;
+}
+
+static void sdk_env_teardown(sdk_env *env) {
+    if (env->had_sdk)
+        (void)setenv("SDKROOT", env->saved_sdk, 1);
+    else
+        (void)unsetenv("SDKROOT");
+    if (env->had_xcrun)
+        (void)setenv("MOLTO_XCRUN", env->saved_xcrun, 1);
+    else
+        (void)unsetenv("MOLTO_XCRUN");
+    (void)fs_remove_tree(env->root);
+}
+
+#ifdef __APPLE__
+MOLTEST(tool_platform_sdk_asks_xcrun_on_macos) {
+    sdk_env env;
+    ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
+
+    char sdk[TOOL_SDK_PATH_MAX];
+    char err[256] = "";
+    EXPECT_TRUE(tool_platform_sdk(sdk, sizeof sdk, err, sizeof err));
+    /* Without the newline xcrun ends its answer with. */
+    EXPECT_STREQ("/fake/sdk", sdk);
+
+    sdk_env_teardown(&env);
+}
+
+MOLTEST(tool_platform_sdk_takes_the_sdkroot_the_environment_sets) {
+    sdk_env env;
+    ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
+    ASSERT_EQ(0, setenv("SDKROOT", "/user/sdk", 1));
+
+    char sdk[TOOL_SDK_PATH_MAX];
+    char err[256] = "";
+    EXPECT_TRUE(tool_platform_sdk(sdk, sizeof sdk, err, sizeof err));
+    EXPECT_STREQ("/user/sdk", sdk);
+
+    sdk_env_teardown(&env);
+}
+
+MOLTEST(tool_platform_sdk_explains_an_xcrun_that_failed) {
+    /* What a Mac without the Command Line Tools answers. */
+    sdk_env env;
+    ASSERT_TRUE(sdk_env_setup(&env, "err xcrun: error: invalid active developer path\nexit 1\n"));
+
+    char sdk[TOOL_SDK_PATH_MAX];
+    char err[256] = "";
+    EXPECT_FALSE(tool_platform_sdk(sdk, sizeof sdk, err, sizeof err));
+    EXPECT_STREQ("", sdk);
+    EXPECT_NOT_NULL(strstr(err, "--show-sdk-path' exited 1"));
+
+    sdk_env_teardown(&env);
+}
+
+MOLTEST(tool_platform_sdk_explains_an_xcrun_it_could_not_run) {
+    sdk_env env;
+    ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
+    ASSERT_EQ(0, setenv("MOLTO_XCRUN", "/nonexistent/molto_no_xcrun_zzz", 1));
+
+    char sdk[TOOL_SDK_PATH_MAX];
+    char err[256] = "";
+    EXPECT_FALSE(tool_platform_sdk(sdk, sizeof sdk, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "could not run '/nonexistent/molto_no_xcrun_zzz'"));
+
+    sdk_env_teardown(&env);
+}
+#else
+MOLTEST(tool_platform_sdk_names_nothing_off_macos) {
+    /* Only macOS keeps its system headers in an SDK, so nothing is asked. */
+    sdk_env env;
+    ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
+
+    char sdk[TOOL_SDK_PATH_MAX] = "unchanged";
+    char err[256] = "";
+    EXPECT_TRUE(tool_platform_sdk(sdk, sizeof sdk, err, sizeof err));
+    EXPECT_STREQ("", sdk);
+
+    sdk_env_teardown(&env);
+}
+#endif

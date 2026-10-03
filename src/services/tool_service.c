@@ -6,6 +6,7 @@
 #include <molto/util/str_list.h>
 #include <molto/util/toml.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -176,3 +177,71 @@ int tool_resolve(tool_kind kind, wsdb *db, bool refresh, resolved_tool *out) {
         remember(kind, db, out);
     return code;
 }
+
+/* --- the macOS SDK --- */
+
+#ifdef __APPLE__
+/* Where the SDK is asked for. Overridable so a test can answer without the
+   Command Line Tools, the same escape MOLTO_PKG_CONFIG offers for pkg-config. */
+#define XCRUN_ENV "MOLTO_XCRUN"
+#define XCRUN_PROGRAM "xcrun"
+#define ARG_SHOW_SDK_PATH "--show-sdk-path"
+
+/* The shell's code for a command that could not be executed, which is what
+   process_capture reports for a program that is not there. */
+#define STATUS_NOT_RUN 127
+
+static bool sdk_fail(char *err, size_t err_size, const char *format, ...)
+    __attribute__((format(printf, 3, 4)));
+
+static bool sdk_fail(char *err, size_t err_size, const char *format, ...) {
+    if(err != NULL && err_size > 0) {
+        va_list args;
+        va_start(args, format);
+        (void)vsnprintf(err, err_size, format, args);
+        va_end(args);
+    }
+    return false;
+}
+
+bool tool_platform_sdk(char *out, size_t out_size, char *err, size_t err_size) {
+    out[0] = '\0';
+    const char *inherited = getenv(TOOL_SDK_ENV);
+    if(inherited != NULL && inherited[0] != '\0') {
+        if(!fs_format_path(out, out_size, "%s", inherited))
+            return sdk_fail(err, err_size,
+                            "the " TOOL_SDK_ENV " this environment sets is too long");
+        return true;
+    }
+
+    const char *program = getenv(XCRUN_ENV);
+    if(program == NULL || program[0] == '\0')
+        program = XCRUN_PROGRAM;
+    const char *const argv[] = {program, ARG_SHOW_SDK_PATH, NULL};
+
+    /* Only stdout is read. What xcrun says on stderr when it fails — most often
+       that there is no active developer directory — is its own explanation,
+       and it reaches the user unchanged. */
+    char answer[TOOL_SDK_PATH_MAX];
+    const int status = process_capture(argv, answer, sizeof answer);
+    if(status < 0 || status == STATUS_NOT_RUN)
+        return sdk_fail(err, err_size, "could not run '%s' to find the macOS SDK", program);
+    if(status != 0)
+        return sdk_fail(err, err_size, "'%s " ARG_SHOW_SDK_PATH "' exited %d", program, status);
+
+    answer[strcspn(answer, "\r\n")] = '\0';
+    if(answer[0] == '\0')
+        return sdk_fail(err, err_size, "'%s " ARG_SHOW_SDK_PATH "' named no SDK", program);
+    if(!fs_format_path(out, out_size, "%s", answer))
+        return sdk_fail(err, err_size, "the SDK path '%s' is too long", answer);
+    return true;
+}
+#else
+bool tool_platform_sdk(char *out, size_t out_size, char *err, size_t err_size) {
+    (void)out_size;
+    (void)err;
+    (void)err_size;
+    out[0] = '\0';
+    return true;
+}
+#endif

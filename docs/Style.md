@@ -119,6 +119,17 @@ Two passes over every source under `src/`:
 2. **The linter**, if there is one, configured from `linter.json` and handed the
    same compile flags the build would use.
 
+**On macOS the linter is told where the SDK is.** The system headers live in
+the SDK, not in `/usr/include`, and the clang-tidy pickup installs is upstream
+LLVM, which does not look for the SDK the way Apple's clang does. Lint exports
+`SDKROOT=$(xcrun --show-sdk-path)` to the linter, asking once per run, unless
+you already decided: an `SDKROOT` in your environment or in `[env]` is used as
+is, and a compile line that carries `-isysroot` or `--sysroot` is left alone. If
+`xcrun` fails, lint says so and still runs the linter, which will then report
+`'stdio.h' file not found`; `xcode-select --install` or setting `SDKROOT` fixes
+it. Changing the SDK re-analyses every file. The compiler pass is the build's
+own compiler and is given nothing extra.
+
 `--profile` matters more than it looks: the profile decides which `defines` are
 in force, and a `#ifdef` decides what even compiles. Linting with the wrong
 profile analyses code the build never sees.
