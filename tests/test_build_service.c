@@ -350,10 +350,22 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     snprintf(path, sizeof path, "%s/Project.toml", root);
     /* Asks for GCC on purpose. Clang picks the newest GCC installation for its
        C++ headers, and a machine with gcc-12 but no g++-12 leaves it unable to
-       include <string> — a real property of the host, not of this build. */
+       include <string> — a real property of the host, not of this build.
+
+       Except on macOS, where the reason does not exist and neither does GCC:
+       `/usr/bin/gcc` is Apple clang under another name, pickup reports it as
+       the `apple-clang` it is, and a request for `gcc` has nothing to match.
+       Apple clang takes its C++ headers from the SDK's libc++, so there is no
+       GCC installation for it to pick the wrong one of. */
+#ifdef __APPLE__
+    EXPECT_TRUE(fs_write_file(path,
+        "[package]\nname = \"cpp_app\"\n"
+        "[target]\ncpp_std = \"c++17\"\n"));
+#else
     EXPECT_TRUE(fs_write_file(path,
         "[package]\nname = \"cpp_app\"\n"
         "[target]\ncompiler = \"gcc\"\ncpp_std = \"c++17\"\n"));
+#endif
     /* Uses <string> and a C++17 feature, so it only builds when the C++ driver
        and cpp_std are both applied. */
     snprintf(path, sizeof path, "%s/src/main.cpp", root);
