@@ -22,12 +22,17 @@ typedef struct {
     char linter[128];
     char log[128];
     char pickup[128];
+    char xcrun[128];
     char saved_cc[4096];
     char saved_tidy[4096];
     char saved_pickup[4096];
+    char saved_sdk[4096];
+    char saved_xcrun[4096];
     bool had_cc;
     bool had_tidy;
     bool had_pickup;
+    bool had_sdk;
+    bool had_xcrun;
 } lint_fixture;
 
 /* True if `text` ends with `suffix`. */
@@ -48,8 +53,13 @@ static bool ends_with(const char *text, const char *suffix) {
 MOLTEST_FAKE(fake_lint_compiler) {
     const char *log = moltest_fake_setting("log");
     FILE *file;
+    /* SDKROOT is how lint tells a linter where the macOS SDK is, so a tool that
+       was handed one says so at the start of its line. */
+    const char *sdk = getenv("SDKROOT");
+    char prefix[512];
+    snprintf(prefix, sizeof prefix, "SDKROOT=%s", sdk != NULL ? sdk : "");
     if (log != NULL)
-        (void)moltest_log_argv(log, NULL, argc, argv);
+        (void)moltest_log_argv(log, sdk != NULL ? prefix : NULL, argc, argv);
 
     const char *src = NULL, *dep = NULL;
     for (int i = 1; i < argc; i++) {
@@ -106,6 +116,33 @@ static bool write_stub(const char *path, const char *log, const char *transcript
     return moltest_fake_program(path, spec, NULL, 0);
 }
 
+/* A stand-in for `xcrun`, the one place macOS says where its SDK is. It logs
+   that it was asked, so a test can tell an SDK that was looked up from one
+   that was taken from the environment. */
+MOLTEST_FAKE(fake_xcrun) {
+    const char *log = moltest_fake_setting("log");
+    if (log != NULL)
+        (void)moltest_log_argv(log, "xcrun", argc, argv);
+    const char *sdk = moltest_fake_setting("sdk");
+    if (sdk != NULL)
+        printf("%s\n", sdk);
+    const char *code = moltest_fake_setting("exit");
+    return code != NULL ? atoi(code) : 0;
+}
+
+static bool write_xcrun(const lint_fixture *fixture, const char *sdk, int exit_code) {
+    char spec[1024];
+    if (snprintf(spec, sizeof spec,
+                 "set log %s\n"
+                 "set sdk %s\n"
+                 "set exit %d\n"
+                 "behave fake_xcrun\n",
+                 fixture->log, sdk, exit_code)
+        >= (int)sizeof spec)
+        return false;
+    return moltest_fake_program(fixture->xcrun, spec, NULL, 0);
+}
+
 static bool write_file(const char *root, const char *relative, const char *body) {
     char path[256];
     snprintf(path, sizeof path, "%s/%s", root, relative);
@@ -150,6 +187,18 @@ static bool fixture_setup(lint_fixture *fixture, const char *compiler_says,
                  &fixture->had_tidy);
     remember_env("MOLTO_PICKUP", fixture->saved_pickup, sizeof fixture->saved_pickup,
                  &fixture->had_pickup);
+    remember_env("SDKROOT", fixture->saved_sdk, sizeof fixture->saved_sdk,
+                 &fixture->had_sdk);
+    remember_env("MOLTO_XCRUN", fixture->saved_xcrun, sizeof fixture->saved_xcrun,
+                 &fixture->had_xcrun);
+
+    /* Every test gets an xcrun of its own, so none of them depends on whether
+       this Mac has the Command Line Tools — and an SDKROOT that `make` or an
+       IDE exported is not mistaken for one the test chose. */
+    snprintf(fixture->xcrun, sizeof fixture->xcrun, "%s/xcrun", fixture->tools);
+    if (!write_xcrun(fixture, "/fake/sdk", 0))
+        return false;
+    (void)unsetenv("SDKROOT");
 
     /* A compiler diagnoses on stderr; clang-tidy prints to stdout. */
     if (!write_stub(fixture->compiler, fixture->log, compiler_says, "2", compiler_exit))
@@ -169,6 +218,7 @@ static bool fixture_setup(lint_fixture *fixture, const char *compiler_says,
 
     return setenv("C_COMPILER", fixture->compiler, 1) == 0
         && setenv("MOLTO_PICKUP", fixture->pickup, 1) == 0
+        && setenv("MOLTO_XCRUN", fixture->xcrun, 1) == 0
         && (linter_says != NULL
                 ? setenv("MOLTO_CLANG_TIDY", fixture->linter, 1) == 0
                 : unsetenv("MOLTO_CLANG_TIDY") == 0)
@@ -182,6 +232,8 @@ static void fixture_teardown(lint_fixture *fixture) {
     restore_env("C_COMPILER", fixture->saved_cc, fixture->had_cc);
     restore_env("MOLTO_CLANG_TIDY", fixture->saved_tidy, fixture->had_tidy);
     restore_env("MOLTO_PICKUP", fixture->saved_pickup, fixture->had_pickup);
+    restore_env("SDKROOT", fixture->saved_sdk, fixture->had_sdk);
+    restore_env("MOLTO_XCRUN", fixture->saved_xcrun, fixture->had_xcrun);
     char cmd[256];
     (void)fs_remove_tree(fixture->root);
     (void)fs_remove_tree(fixture->tools);
@@ -811,3 +863,174 @@ MOLTEST(lint_command_succeeds_on_a_clean_run) {
 
     fixture_teardown(&fixture);
 }
+
+/* --- the macOS SDK --- */
+
+/* How many times `needle` occurs in `text`. */
+static int occurrences(const char *text, const char *needle) {
+    int count = 0;
+    for (const char *at = strstr(text, needle); at != NULL; at = strstr(at + 1, needle))
+        count++;
+    return count;
+}
+
+/* A linter that reports nothing, run over two sources: the SDK is a question
+   about the machine, so asking it once per file would be asking it N times. */
+static bool sdk_fixture_setup(lint_fixture *fixture) {
+    return fixture_setup(fixture, "", 0, "")
+        && write_file(fixture->root, "src/other.c", "int other(void){return 1;}\n");
+}
+
+#ifdef __APPLE__
+MOLTEST(lint_tells_the_linter_where_the_macos_sdk_is) {
+    /* Upstream clang, which is what clang-tidy is, does not look for the SDK
+       the way Apple's clang does, and macOS has no /usr/include: without being
+       told, clang-tidy reports `'stdio.h' file not found` on every source. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_EQ(1, occurrences(log, "xcrun --show-sdk-path"));
+    EXPECT_EQ(2, occurrences(log, "SDKROOT=/fake/sdk --config-file="));
+    /* The compiler pass is the build's own compiler, which finds the SDK the
+       way the build does; lint must not hand it anything the build does not. */
+    EXPECT_NULL(strstr(log, "SDKROOT=/fake/sdk -fsyntax-only"));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_respects_an_sdk_the_environment_already_names) {
+    /* SDKROOT is how a user, or Xcode, says which SDK they mean; lint asking
+       xcrun over it would silently analyse against a different one. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+    ASSERT_EQ(0, setenv("SDKROOT", "/user/sdk", 1));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NULL(strstr(log, "xcrun"));
+    EXPECT_EQ(2, occurrences(log, "SDKROOT=/user/sdk --config-file="));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_respects_an_sdk_the_project_env_names) {
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+    ASSERT_TRUE(write_file(fixture.root, "Project.toml",
+                           "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                           "\n[target]\nstd = \"c17\"\n"
+                           "\n[env]\nSDKROOT = \"/project/sdk\"\n"));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NULL(strstr(log, "xcrun"));
+    EXPECT_EQ(2, occurrences(log, "SDKROOT=/project/sdk --config-file="));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_does_not_give_a_second_sysroot_to_a_command_that_has_one) {
+    /* A project that names its SDK on the compile line has decided; the linter
+       sees that line after the separator and needs nothing else. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+    ASSERT_TRUE(write_file(fixture.root, "Project.toml",
+                           "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+                           "\n[target]\nstd = \"c17\"\n"
+                           "flags = [\"-isysroot\", \"/chosen/sdk\"]\n"));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NULL(strstr(log, "xcrun"));
+    EXPECT_NULL(strstr(log, "SDKROOT="));
+    /* Once per pass per source: two sources, a compiler and a linter each. */
+    EXPECT_EQ(4, occurrences(log, "-isysroot"));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_still_runs_the_linter_when_the_sdk_cannot_be_found) {
+    /* A Mac without the Command Line Tools. Lint says why the linter is about
+       to miss the system headers, and runs it anyway: what it reports is still
+       the honest answer, and the compiler pass is unaffected. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+    ASSERT_TRUE(write_xcrun(&fixture, "", 1));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_EQ(1, occurrences(log, "xcrun --show-sdk-path"));
+    EXPECT_NULL(strstr(log, "SDKROOT="));
+    EXPECT_EQ(2, occurrences(log, "--config-file="));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_analyses_again_once_the_sdk_changes) {
+    /* The system headers live in the SDK, and the dependency lists the cache
+       watches leave system headers out, so the SDK itself has to be part of
+       what a recorded result answers for. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+
+    diagnostic_list first;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &first));
+    int after_first = invocations(&fixture);
+
+    ASSERT_TRUE(write_xcrun(&fixture, "/other/sdk", 0));
+    diagnostic_list second;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &second));
+    EXPECT_TRUE(invocations(&fixture) > after_first);
+
+    diagnostic_list_free(&first);
+    diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+#else
+MOLTEST(lint_gives_the_linter_no_sdk_off_macos) {
+    /* Only macOS keeps its system headers in an SDK. Everywhere else the
+       linter finds them where the compiler does, and nothing is asked. */
+    lint_fixture fixture;
+    ASSERT_TRUE(sdk_fixture_setup(&fixture));
+
+    diagnostic_list found;
+    ASSERT_EQ(exit_ok, run_lint(&fixture, &found));
+
+    char *log = fs_read_file(fixture.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NULL(strstr(log, "xcrun"));
+    EXPECT_NULL(strstr(log, "SDKROOT="));
+    EXPECT_EQ(2, occurrences(log, "--config-file="));
+    free(log);
+
+    diagnostic_list_free(&found);
+    fixture_teardown(&fixture);
+}
+#endif

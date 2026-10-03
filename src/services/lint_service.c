@@ -89,6 +89,8 @@ typedef struct {
        tell and the caret needs: the compiler answers for its own vendor, and
        clang-tidy counts bytes whichever compiler the project builds with. */
     diagnostic_column_unit columns;
+    /* The macOS SDK, exported as SDKROOT to this pass only; NULL for none. */
+    const char *sdk;
     int status;
     bool truncated;
     diagnostic_list found;
@@ -116,6 +118,9 @@ typedef struct {
      * a diagnostic that blames the user for a file Molto never looked for. */
     prepared_deps deps;
     str_list include_flags;
+    /* Where the macOS SDK is, for the linter; empty when it needs no telling.
+       See find_sdk. */
+    char sdk[TOOL_SDK_PATH_MAX];
 } lint_setup;
 
 /* One source and everything the cache needs to decide about it (RFC-0006).
@@ -345,6 +350,12 @@ static char *fingerprint_for(const lint_setup *setup, const str_list *compiler_a
                            setup->linter_config_text != NULL ? setup->linter_config_text : "");
         for(size_t i = 0; ok && i < str_list_count(linter_argv); i++)
             ok = str_list_push(&parts, str_list_get(linter_argv, i));
+        /* The SDK is where the system headers are, and the dependency lists the
+           cache watches leave system headers out: without it here, moving to
+           another SDK would replay what was said about the old one. Pushed only
+           when there is one, so nothing changes off macOS. */
+        if(ok && setup->sdk[0] != '\0')
+            ok = str_list_push(&parts, setup->sdk);
     }
     /* The tools run in the project's [env], so a diagnostic recorded under one
        environment does not answer for another. Pushed only when there is one,
@@ -413,8 +424,10 @@ static void lint_task_run(void *argument) {
         return;
     }
 
-    process_env_var vars[PROJECT_MAX_ENV];
+    process_env_var vars[PROJECT_MAX_ENV + 1];
     size_t var_count = project_env_to_vars(task->env, vars, PROJECT_MAX_ENV);
+    if(task->sdk != NULL)
+        vars[var_count++] = (process_env_var){.name = TOOL_SDK_ENV, .value = task->sdk};
     task->status =
         process_capture_all(argv, vars, var_count, output, LINT_OUTPUT_SIZE, &task->truncated);
     (void)diagnostic_parse(output, &task->found);
@@ -524,6 +537,73 @@ static bool prepare_deps(const char *root, lint_setup *setup) {
            host_include_flags(&setup->ctx, &setup->include_flags);
 }
 
+/* Whether `env` sets `name`. */
+static bool env_sets(const project_env *env, const char *name) {
+    for(size_t i = 0; i < env->count; i++) {
+        if(strcmp(env->names[i], name) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Whether the project's compile line already says where the system headers
+   are. Both spellings count: a driver given --sysroot and then an SDK besides
+   would take its headers from the second. */
+static bool names_a_sysroot(const str_list *argv) {
+    for(size_t i = 0; i < str_list_count(argv); i++) {
+        const char *arg = str_list_get(argv, i);
+        if(strncmp(arg, "-isysroot", 9) == 0 || strncmp(arg, "--sysroot", 9) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Find the macOS SDK the linter has to be told about, once per run.
+ *
+ * The clang-tidy pickup provides is upstream LLVM, and upstream clang does not
+ * look for the SDK the way Apple's does; with no /usr/include on macOS, it
+ * reports `'stdio.h' file not found` on every source. The compiler pass needs
+ * none of this: it is the build's own compiler and finds the SDK the way the
+ * build does, which is the comparison lint exists to keep honest.
+ *
+ * The SDK goes to the linter as SDKROOT in its environment rather than as
+ * `--extra-arg=-isysroot<sdk>` on its command line. SDKROOT is how Apple's own
+ * tools say it, and clang's Darwin driver reads it at exactly the point Apple's
+ * clang finds its SDK: only when the command carries no -isysroot of its own,
+ * so a sysroot the project chose can never be overridden by this one. It is
+ * understood by any clang-based tool, where --extra-arg is clang-tidy's own
+ * syntax. And it leaves the argv what it is on every other platform, so the
+ * command a user sees is still the command the build runs.
+ *
+ * Nothing is looked up when the user already decided: SDKROOT in the project's
+ * [env] reaches the linter with the rest of [env], and a sysroot on the compile
+ * line reaches it after the separator. A lookup that fails is said, and the
+ * linter still runs: what it reports without the headers is honest, and the
+ * compiler pass is unaffected. */
+static void find_sdk(const char *root, build_profile profile, lint_setup *setup) {
+    setup->sdk[0] = '\0';
+    if(env_sets(&setup->ctx.env, TOOL_SDK_ENV))
+        return;
+
+    str_list probe;
+    str_list_init(&probe);
+    const bool has_sysroot =
+        push_compile_arguments(&probe, root, setup, profile, false) && names_a_sysroot(&probe);
+    str_list_free(&probe);
+    if(has_sysroot)
+        return;
+
+    char err[CONFIG_ERROR_SIZE] = "";
+    if(!tool_platform_sdk(setup->sdk, sizeof setup->sdk, err, sizeof err)) {
+        setup->sdk[0] = '\0';
+        fprintf(stderr,
+                "molto: warning: %s; %s will not find the system headers.\n"
+                "  Install the Command Line Tools (xcode-select --install),\n"
+                "  or set " TOOL_SDK_ENV " to the SDK.\n",
+                err, setup->linter.path);
+    }
+}
+
 static int prepare(const char *root, const lint_request *request, lint_setup *setup,
                    const str_list *sources) {
     char err[CONFIG_ERROR_SIZE] = "";
@@ -557,8 +637,10 @@ static int prepare(const char *root, const lint_request *request, lint_setup *se
        fatal: it costs the cache, since a fingerprint without it cannot notice
        that linter.json changed, and the empty string is never mistaken for a
        configuration that was read. */
-    if(setup->has_linter)
+    if(setup->has_linter) {
         setup->linter_config_text = fs_read_file(setup->linter_config);
+        find_sdk(root, request->profile, setup);
+    }
     return exit_ok;
 }
 
@@ -627,6 +709,7 @@ static bool build_tasks(const char *root, const lint_setup *setup, build_profile
                 .argv = &argvs[linter_at],
                 .env = &setup->ctx.env,
                 .columns = diagnostic_columns_byte,
+                .sdk = setup->sdk[0] != '\0' ? setup->sdk : NULL,
             };
             diagnostic_list_init(&tasks[linter_at].found);
         }
