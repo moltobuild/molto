@@ -1,5 +1,6 @@
 #include <moltest.h>
 
+#include <molto/commands/lint_command.h>
 #include <molto/exit_code.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/lint_service.h>
@@ -722,5 +723,91 @@ MOLTEST(lint_does_not_record_a_result_for_content_that_is_already_gone) {
 
     diagnostic_list_free(&first);
     diagnostic_list_free(&second);
+    fixture_teardown(&fixture);
+}
+
+/* --- the exit status of `molto lint` (docs/Style.md) --- */
+
+/* What clang-tidy prints when a header it was pointed at cannot be found: it
+   could not even parse the file, so nothing was analysed, and it says so with
+   an error of its own and a non-zero status. */
+#define TIDY_COULD_NOT_PROCESS \
+    "Error while processing src/main.c.\n" \
+    "src/main.c:1:10: error: 'stdbool.h' file not found [clang-diagnostic-error]"
+
+/* Run the command itself in the fixture's workspace and return its status.
+
+   The service tests above only see the diagnostics; the exit status is decided
+   one layer up, and that is the number CI reads. A lint that reports errors and
+   exits 0 is a CI job that passes a lint that never ran. JSON keeps the test
+   output to one small document and no progress line. */
+static int run_lint_command(const lint_fixture *fixture) {
+    char previous[4096];
+    if (getcwd(previous, sizeof previous) == NULL || chdir(fixture->root) != 0)
+        return -1;
+    int code = lint_command_run(NULL, false, false, false, "json", 0);
+    (void)chdir(previous);
+    return code;
+}
+
+/* Make the linter stub say `transcript` and exit with `code`. */
+static bool linter_says(const lint_fixture *fixture, const char *transcript, int code) {
+    return write_stub(fixture->linter, fixture->log, transcript, "1", code);
+}
+
+MOLTEST(lint_command_fails_when_an_error_is_reported) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+    ASSERT_TRUE(linter_says(&fixture,
+        "src/main.c:1:5: error: an assignment within an 'if' condition is bug-prone "
+        "[bugprone-assignment-in-if-condition]", 1));
+
+    EXPECT_EQ(exit_build_failure, run_lint_command(&fixture));
+    /* A replayed run has to fail the same way: replaying an error as silence
+       would turn the second CI run green. */
+    EXPECT_EQ(exit_build_failure, run_lint_command(&fixture));
+
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_command_fails_when_the_linter_could_not_process_a_file) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+    ASSERT_TRUE(linter_says(&fixture, TIDY_COULD_NOT_PROCESS, 1));
+
+    EXPECT_EQ(exit_build_failure, run_lint_command(&fixture));
+
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_command_fails_when_the_linter_gives_up_without_a_diagnostic) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+    /* Only the banner and a failing status: no parsed error to count, and the
+       file was still never analysed. */
+    ASSERT_TRUE(linter_says(&fixture, "Error while processing src/main.c.", 1));
+
+    EXPECT_EQ(exit_build_failure, run_lint_command(&fixture));
+
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_command_succeeds_when_there_are_only_warnings) {
+    lint_fixture fixture;
+    /* Documented: a warning is reported and still succeeds. */
+    ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0,
+        "src/main.c:1:5: warning: variable 'x' is never read [clang-analyzer-deadcode]"));
+
+    EXPECT_EQ(exit_ok, run_lint_command(&fixture));
+
+    fixture_teardown(&fixture);
+}
+
+MOLTEST(lint_command_succeeds_on_a_clean_run) {
+    lint_fixture fixture;
+    ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
+
+    EXPECT_EQ(exit_ok, run_lint_command(&fixture));
+
     fixture_teardown(&fixture);
 }
