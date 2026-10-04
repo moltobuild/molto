@@ -173,6 +173,28 @@ MOLTEST(windows_falls_back_to_the_user_profile) {
     restore(&saved);
 }
 
+/* What Windows actually hands over is spelled with backslashes, and every answer
+   comes back in Molto's one separator: composed onto with '/', a backslash path
+   becomes a directory a cached dependency's objects cannot be mirrored under
+   (`obj/C/\\Users\\...`), which is how a git dependency failed to build. */
+MOLTEST(windows_answers_in_one_separator) {
+    environment saved;
+    save(&saved);
+
+    ASSERT_EQ(0, setenv("APPDATA", "C:\\Users\\somebody\\AppData\\Roaming", 1));
+    (void)unsetenv("HOME");
+    ASSERT_EQ(0, setenv("USERPROFILE", "C:\\Users\\somebody", 1));
+
+    char out[MOLTO_HOME_PATH_MAX];
+    EXPECT_STREQ("C:/Users/somebody/AppData/Roaming/molto",
+                 answer(paths_molto_config_dir, out, sizeof out));
+    EXPECT_STREQ("C:/Users/somebody/AppData/Roaming/molto/cache",
+                 answer(paths_molto_cache_dir, out, sizeof out));
+    EXPECT_STREQ("C:/Users/somebody/.molto", answer(paths_molto_legacy_home, out, sizeof out));
+
+    restore(&saved);
+}
+
 /* HOME still wins where a shell went to the trouble of setting it: someone in
    MSYS2 means the home that shell gave them, and molto should agree with
    everything else run from there. */
