@@ -413,6 +413,16 @@ static int frontend_exit_code(frontend_result answer) {
     if(result != exit_ok)
         return result;
 
+    /* Before anything compiles: a coverage build that went ahead without its
+       instrumentation would report "no data" for a reason nobody could find. */
+    if(profile == profile_coverage && !profile_coverage_supported(chain_out->vendor)) {
+        fprintf(stderr,
+                "molto: the coverage profile needs a GCC- or Clang-compatible compiler;\n"
+                "       the resolved toolchain is %s\n",
+                chain_out->vendor);
+        return exit_build_failure;
+    }
+
     char segment[PATH_BUFFER_SIZE];
     if(!build_segment(profile, platform, segment, sizeof segment)) {
         (void)fs_report_long_path(root);

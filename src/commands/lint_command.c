@@ -71,7 +71,7 @@ int lint_command_run(const char *requested_profile, bool refresh_toolchain, bool
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr,
                 "molto: unknown profile '%s' "
-                "(debug, release, bench, custom)\n",
+                "(debug, release, bench, custom, coverage)\n",
                 requested_profile);
         return exit_usage_error;
     }

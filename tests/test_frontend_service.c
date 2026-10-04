@@ -1,5 +1,7 @@
 #include <moltest.h>
 
+#include <molto/build/profile.h>
+
 #include "private_home.h"
 
 #include <molto/services/frontend_service.h>
@@ -870,6 +872,56 @@ static bool carries_option(const ir_target *target, const char *value) {
             return true;
     }
     return false;
+}
+
+/* The index of `value` among the target's options in `scope`, or -1. */
+static long option_index(const ir_option *options, size_t count, const char *value,
+                         ir_scope scope) {
+    for(size_t i = 0; i < count; i++) {
+        if(options[i].scope == scope && strcmp(options[i].value, value) == 0)
+            return (long)i;
+    }
+    return -1;
+}
+
+/* RFC-0019: the coverage profile instruments every target the project builds,
+   on the compile line and the link line, in the profile scope and after what
+   [profile.coverage] itself says; no other profile does. */
+MOLTEST(frontend_native_instruments_the_coverage_profile) {
+    sandbox box;
+    ASSERT_TRUE(sandbox_setup(&box));
+
+    const char *tests[] = {"tests/test_one.c"};
+    ASSERT_TRUE(project_with_tests(&box,
+                                   "[package]\nname = \"app\"\nversion = \"1.0.0\"\n"
+                                   "[profile.coverage]\nflags = [\"-fno-inline\"]\n",
+                                   tests, 1));
+
+    ir_document doc;
+    char err[1024] = "";
+    ASSERT_TRUE(frontend_native(box.project, "coverage", &doc, err, sizeof err));
+    ASSERT_EQ(2u, doc.target_count);
+    for(size_t t = 0; t < doc.target_count; t++) {
+        const ir_target *target = &doc.targets[t];
+        const long own = option_index(target->options, target->option_count, "-fno-inline",
+                                      ir_scope_profile);
+        const long flag = option_index(target->options, target->option_count,
+                                       PROFILE_COVERAGE_FLAG, ir_scope_profile);
+        EXPECT_TRUE(own >= 0);
+        EXPECT_TRUE(flag > own);
+        EXPECT_TRUE(option_index(target->links, target->link_count, PROFILE_COVERAGE_FLAG,
+                                 ir_scope_profile) >= 0);
+    }
+    ir_document_free(&doc);
+
+    ASSERT_TRUE(frontend_native(box.project, "debug", &doc, err, sizeof err));
+    for(size_t t = 0; t < doc.target_count; t++) {
+        EXPECT_FALSE(carries_option(&doc.targets[t], PROFILE_COVERAGE_FLAG));
+        EXPECT_EQ(-1L, option_index(doc.targets[t].links, doc.targets[t].link_count,
+                                    PROFILE_COVERAGE_FLAG, ir_scope_profile));
+    }
+    ir_document_free(&doc);
+    sandbox_teardown(&box);
 }
 
 MOLTEST(frontend_native_describes_one_target_per_test_file) {

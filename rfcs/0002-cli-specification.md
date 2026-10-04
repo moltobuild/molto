@@ -91,7 +91,7 @@ project in the current directory instead of creating a new one.
 
 Compiles the project.
 
-- `--profile <debug|release|bench|custom>` selects the build profile
+- `--profile <debug|release|bench|custom|coverage>` selects the build profile
   (default: `debug`). See RFC-0003, Build Profiles.
 - Performs incremental compilation: only translation units whose source
   hash, dependency graph, or compiler flags changed are rebuilt (tracked via

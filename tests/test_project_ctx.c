@@ -47,6 +47,25 @@ MOLTEST(project_keeps_builtin_profile_defaults) {
     EXPECT_FALSE(ctx.profile.bench.debug_info);
     EXPECT_EQ(2, ctx.profile.custom.opt_level);
     EXPECT_TRUE(ctx.profile.custom.debug_info);
+    /* -O0 with debug info: an optimiser that merges lines would make a covered
+       line look missed (RFC-0019). */
+    EXPECT_EQ(0, ctx.profile.coverage.opt_level);
+    EXPECT_TRUE(ctx.profile.coverage.debug_info);
+}
+
+MOLTEST(project_reads_the_coverage_profile_like_any_other) {
+    char err[256] = "";
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n"
+                              "[profile.coverage]\nopt_level = 1\n"
+                              "defines = [\"MEASURED\"]\nflags = [\"-fno-inline\"]\n",
+                              &ctx, err, sizeof err));
+    EXPECT_EQ(1, ctx.profile.coverage.opt_level);
+    EXPECT_TRUE(ctx.profile.coverage.debug_info); /* the default, not restated */
+    ASSERT_EQ(1u, ctx.profile_options.coverage.define_count);
+    EXPECT_STREQ("MEASURED", ctx.profile_options.coverage.defines[0]);
+    ASSERT_EQ(1u, ctx.profile_options.coverage.flag_count);
+    EXPECT_STREQ("-fno-inline", ctx.profile_options.coverage.flags[0]);
 }
 
 MOLTEST(project_defaults_optional_fields) {

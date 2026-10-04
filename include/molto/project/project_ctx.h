@@ -48,6 +48,7 @@ typedef struct {
     manifest_profile release;
     manifest_profile bench;
     manifest_profile custom;
+    manifest_profile coverage;
 } project_profiles;
 
 /* Extra compilation options for a scope ([target] base or a profile).
@@ -69,6 +70,7 @@ typedef struct {
     project_options release;
     project_options bench;
     project_options custom;
+    project_options coverage;
 } project_profile_options;
 
 /* The `[target]` table: toolchain and compilation settings (RFC-0003). */
