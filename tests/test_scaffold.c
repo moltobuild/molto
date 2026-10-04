@@ -143,7 +143,7 @@ MOLTEST(scaffold_library_writes_a_header_a_source_and_a_moltest_suite) {
     EXPECT_TRUE(holds(project, "include/demo.h", "int demo_add(int a, int b);"));
     EXPECT_TRUE(holds(project, "src/demo.c", "#include <demo.h>"));
     EXPECT_TRUE(holds(project, "tests/test_demo.c", "#include <moltest.h>"));
-    EXPECT_TRUE(holds(project, "tests/test_demo.c", "MOLTEST(demo_add_sums_its_arguments)"));
+    EXPECT_TRUE(holds(project, "tests/test_demo.c", "DESCRIBE(demo_add_sums_its_arguments)"));
     EXPECT_TRUE(holds(project, "Project.toml", "artifact = \"static\""));
     EXPECT_TRUE(holds(project, "Project.toml", "[dev-deps]"));
     /* A library has nothing to run, so it gets no entry point. */

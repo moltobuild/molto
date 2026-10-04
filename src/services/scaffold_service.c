@@ -73,7 +73,7 @@ static const char source_template[] = "#include <%s.h>\n"
 static const char test_template[] = "#include <moltest.h>\n"
                                     "#include <%s.h>\n"
                                     "\n"
-                                    "MOLTEST(%s_add_sums_its_arguments) {\n"
+                                    "DESCRIBE(%s_add_sums_its_arguments) {\n"
                                     "    EXPECT_EQ(3, %s_add(1, 2));\n"
                                     "}\n";
 
