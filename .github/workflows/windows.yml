@@ -301,6 +301,20 @@ jobs:
       # job is what keeps that from blocking anyone. That flag exists for
       # exactly this: a watch that reports honestly without gating. It comes
       # off, along with this step, when the tally reaches zero.
+
+      # TEMPORARY diagnostics for moltobuild/molto#92, removed before merge.
+      - name: Diagnose the plugin fakes
+        continue-on-error: true
+        env:
+          C_COMPILER: gcc
+          CPP_COMPILER: g++
+        run: |
+          set +x
+          echo "== DLLs of the suite"; ldd build/debug/tests/molto_tests.exe || true
+          echo "== the two tests, run directly"
+          ./build/debug/tests/molto_tests.exe -v -s -k plugin_run_ 2>&1 | tail -20
+          echo "exit=$?"
+          echo "== PATH"; echo "$PATH" | tr ':' '\n' | head -20
       - name: Where the port stands
         run: |
           if [ ! -f tally.count ]; then
