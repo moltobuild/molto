@@ -25,7 +25,7 @@ MOLTEST(manifest_service) {
     EXPECT_TRUE(!manifest_is_valid_name("a/b"));    /* slash */
 
     /* Rendering a valid manifest. */
-    char *toml = manifest_render_default("my_app");
+    char *toml = manifest_render_default("my_app", project_kind_binary);
     EXPECT_TRUE(toml != NULL);
     if (toml != NULL) {
         EXPECT_TRUE(strstr(toml, "name = \"my_app\"") != NULL);
@@ -35,7 +35,7 @@ MOLTEST(manifest_service) {
     }
 
     /* Invalid name yields no manifest. */
-    EXPECT_TRUE(manifest_render_default("Bad Name") == NULL);
+    EXPECT_TRUE(manifest_render_default("Bad Name", project_kind_library) == NULL);
 }
 
 MOLTEST(manifest_accepts_an_exact_version) {
@@ -80,7 +80,7 @@ MOLTEST(manifest_rejects_a_version_that_is_not_one) {
 }
 
 MOLTEST(manifest_declares_a_language_standard) {
-    char *toml = manifest_render_default("my_app");
+    char *toml = manifest_render_default("my_app", project_kind_binary);
     ASSERT_NOT_NULL(toml);
 
     /* Left to the compiler, the standard varies by toolchain and version, so a
@@ -106,7 +106,7 @@ MOLTEST(manifest_declares_a_language_standard) {
 }
 
 MOLTEST(manifest_declares_the_project_include_directory) {
-    char *toml = manifest_render_default("my_app");
+    char *toml = manifest_render_default("my_app", project_kind_binary);
     ASSERT_NOT_NULL(toml);
 
     /* `include` is the one [target] key that ships active. A header under
@@ -287,4 +287,41 @@ MOLTEST(manifest_about_refuses_a_malformed_license) {
     EXPECT_FALSE(read_about_toml("[package]\nlicense = \"MIT OR\"\n", "package", &about, err,
                                  sizeof err));
     EXPECT_NOT_NULL(strstr(err, "license"));
+}
+
+MOLTEST(manifest_for_a_library_is_static_and_tested_with_moltest) {
+    char *toml = manifest_render_default("my_lib", project_kind_library);
+    ASSERT_NOT_NULL(toml);
+
+    EXPECT_NOT_NULL(strstr(toml, "artifact = \"static\""));
+    EXPECT_NOT_NULL(strstr(toml, "mode = \"single\""));
+    EXPECT_NOT_NULL(strstr(toml, "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", branch = \""
+                                 MANIFEST_MOLTEST_BRANCH "\" }"));
+
+    /* And it is a manifest Molto reads back as what it says. */
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_TRUE(project_parse(toml, &ctx, err, sizeof err));
+    EXPECT_STREQ("", err);
+    EXPECT_EQ(1, ctx.dev_deps.count);
+    EXPECT_EQ(0, ctx.deps.count);
+
+    free(toml);
+}
+
+MOLTEST(manifest_for_a_binary_names_its_artifact) {
+    char *toml = manifest_render_default("my_app", project_kind_binary);
+    ASSERT_NOT_NULL(toml);
+
+    /* Spelled out even though it is the default: the key is how a reader
+       learns there is a choice. */
+    EXPECT_NOT_NULL(strstr(toml, "artifact = \"executable\""));
+    EXPECT_NULL(strstr(toml, "[dev-deps]"));
+
+    char err[256] = "";
+    project_ctx ctx;
+    EXPECT_TRUE(project_parse(toml, &ctx, err, sizeof err));
+    EXPECT_EQ(0, ctx.dev_deps.count);
+
+    free(toml);
 }

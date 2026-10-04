@@ -140,8 +140,9 @@ make test CC=clang
 
 ```sh
 make run ARGS="--help"
-make run ARGS="new my_app"
-./build/molto new my_app
+make run ARGS="new my_lib"
+./build/molto new my_lib          # a library tested with moltest (the default)
+./build/molto new my_app --bin    # a program with a src/main.c
 ```
 
 ## Test

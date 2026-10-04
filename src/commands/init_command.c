@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-int init_command_run(void) {
+int init_command_run(project_kind kind) {
     char cwd[PATH_MAX];
     if(!fs_current_dir(cwd, sizeof cwd)) {
         fprintf(stderr, "molto: could not read current directory\n");
@@ -17,8 +17,8 @@ int init_command_run(void) {
     }
     const char *slash = strrchr(cwd, '/');
     const char *base = slash != NULL ? slash + 1 : cwd;
-    int code = scaffold_project(".", base);
+    int code = scaffold_project(".", base, kind);
     if(code == exit_ok)
-        printf("Initialized molto project '%s'\n", base);
+        printf("Initialized %s '%s'\n", kind == project_kind_library ? "library" : "binary", base);
     return code;
 }
