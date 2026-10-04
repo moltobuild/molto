@@ -342,8 +342,10 @@ names, and for the same reason.
 ## Testing one
 
 `molto ir` is the whole loop. Write the plugin, put it (or a symlink to it) in
-`~/.molto/plugins/bin/molto-<name>` with a recipe in
-`~/.molto/plugins/recipes/<name>.toml`, and run `molto ir` in a directory your
+`~/.local/share/molto/plugins/bin/molto-<name>` with a recipe in
+`~/.local/share/molto/plugins/recipes/<name>.toml` (under `$XDG_DATA_HOME/molto`
+when that is set, `%APPDATA%\molto` on Windows, `$MOLTO_HOME` when that is),
+and run `molto ir` in a directory your
 extension matches.
 
 Two runs over one project produce one **byte-identical** document. That is a

@@ -76,7 +76,9 @@ static bool plugin_program(const char *name, char *out, size_t size) {
 
 /* --- where to look --- */
 
-bool plugin_dir(char *out, size_t size) { return paths_molto_subdir("plugins/bin", out, size); }
+bool plugin_dir(char *out, size_t size) {
+    return paths_molto_data_subdir("plugins/bin", out, size);
+}
 
 static bool is_executable(const char *path) { return access(path, X_OK) == 0; }
 
@@ -175,7 +177,7 @@ int plugin_run(const char *path, int argc, char **argv) {
 
 /* The recipe directory itself, which the install has to create. */
 static bool recipe_dir(char *out, size_t size) {
-    return paths_molto_subdir("plugins/recipes", out, size);
+    return paths_molto_data_subdir("plugins/recipes", out, size);
 }
 
 /* One of the two encodings a recipe may be stored in. */
@@ -480,7 +482,7 @@ bool plugin_prepare(const char *base_url, const char *name, const char *version,
     return ok;
 }
 
-/* Copy the binary out of the unpacked tree and into ~/.molto/plugins/bin. */
+/* Copy the binary out of the unpacked tree and into the data directory's plugins/bin. */
 static bool place_binary(const char *root, const char *name, char *err, size_t err_size) {
     char dir[PLUGIN_PATH_MAX];
     if(!plugin_dir(dir, sizeof dir) || !fs_make_dirs(dir))

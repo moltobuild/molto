@@ -7,7 +7,9 @@
 /*
  * What `molto login` wrote and `molto publish` reads.
  *
- * The file is ~/.molto/credentials.toml, created with mode 0600. It holds a
+ * The file is credentials.toml in molto's config directory — ~/.config/molto
+ * on Linux and macOS, %APPDATA%\molto on Windows, `$MOLTO_HOME` where that is
+ * set (see paths_service.h) — created with mode 0600. It holds a
  * bearer token, not a password: the registry stores only the token's digest,
  * so a copy of this file is revocable and a password would not be.
  *
@@ -34,7 +36,7 @@ typedef struct {
 [[nodiscard]] bool credentials_load(credentials *out, char *err, size_t err_size);
 
 /* Write `creds`, replacing whatever was there, with the file readable only by
-   its owner. Creates ~/.molto if it does not exist. */
+   its owner. Creates the config directory if it does not exist. */
 [[nodiscard]] bool credentials_save(const credentials *creds, char *err, size_t err_size);
 
 #endif /* MOLTO_CREDENTIALS_SERVICE_H */

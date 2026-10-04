@@ -106,6 +106,14 @@ Without that, `new`, `init`, `add`, `remove` and `metadata` work, and `build`,
 also carries `molto-<version>.cdx.json`, molto's own CycloneDX bill of
 materials.
 
+**Where molto keeps its own files.** On Linux and macOS it follows the XDG
+Base Directory layout: the registry credential in `~/.config/molto`, installed
+plugins in `~/.local/share/molto`, and the dependency cache in `~/.cache/molto`
+(`$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` and `$XDG_CACHE_HOME` move them). On
+Windows all of it lives under `%APPDATA%\molto`. `MOLTO_HOME` puts everything
+in one directory instead, and `MOLTO_CACHE` moves the cache alone. A `~/.molto`
+left by an older molto is migrated the first time a newer one runs.
+
 ## Requirements
 
 To build molto from source:

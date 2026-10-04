@@ -28,8 +28,8 @@
 typedef struct {
     char root[64];
     char home[128];
-    char installed[192]; /* ~/.molto/plugins/bin */
-    char recipes[192];   /* ~/.molto/plugins/recipes */
+    char installed[192]; /* the data directory's plugins/bin */
+    char recipes[192];   /* the data directory's plugins/recipes */
     char project[192];   /* the directory being described */
     char old_home[4096];
     molto_home_override old_override;
@@ -40,8 +40,8 @@ static bool sandbox_setup(sandbox *box) {
         return false;
 
     snprintf(box->home, sizeof box->home, "%s/home", box->root);
-    snprintf(box->installed, sizeof box->installed, "%s/.molto/plugins/bin", box->home);
-    snprintf(box->recipes, sizeof box->recipes, "%s/.molto/plugins/recipes", box->home);
+    snprintf(box->installed, sizeof box->installed, "%s" PRIVATE_HOME_DATA "/plugins/bin", box->home);
+    snprintf(box->recipes, sizeof box->recipes, "%s" PRIVATE_HOME_DATA "/plugins/recipes", box->home);
     snprintf(box->project, sizeof box->project, "%s/project", box->root);
 
     const char *home = getenv("HOME");
@@ -52,7 +52,7 @@ static bool sandbox_setup(sandbox *box) {
     molto_home_override_clear(&box->old_override);
 
     return fs_make_dirs(box->installed) && fs_make_dirs(box->recipes) &&
-           fs_make_dirs(box->project) && setenv("HOME", box->home, 1) == 0;
+           fs_make_dirs(box->project) && private_home_point(box->home);
 }
 
 static void sandbox_teardown(sandbox *box) {

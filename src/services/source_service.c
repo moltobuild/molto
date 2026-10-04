@@ -202,7 +202,7 @@ static bool cache_root(char *out, size_t size) {
     if(override != NULL && override[0] != '\0')
         return fs_format_path(out, size, "%s", override);
 
-    return paths_molto_subdir("cache", out, size);
+    return paths_molto_cache_dir(out, size);
 }
 
 bool source_cache_root(char *out, size_t size) { return cache_root(out, size); }

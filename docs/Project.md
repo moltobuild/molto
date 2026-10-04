@@ -604,7 +604,7 @@ message under the caret is the compiler's, word for word.
 The footer says whose code this was. `= dependency:` names the package and its
 version; a source of your own has no package and gets no such line. `= source:`
 appears only when the package is somewhere you can go and look — a `path`
-dependency under your project — because a path into `~/.molto/cache/sources/`
+dependency under your project — because a path into `~/.cache/molto/sources/`
 says no more than the coordinate above it already did. `= compiler:` is the
 vendor and version pickup resolved, or the name of the binary when `C_COMPILER`
 chose one by hand and nothing asked it what it was.

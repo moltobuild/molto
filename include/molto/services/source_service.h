@@ -18,8 +18,9 @@
  * chose. `[build]` names a build system and that is a separate step; nothing
  * here executes a string that came out of a TOML file.
  *
- * The cache lives at ~/.molto/cache/sources/<name>/<version>/<target>, or
- * under $MOLTO_CACHE when that is set. A coordinate is fetched once: a
+ * The cache lives at <cache>/sources/<name>/<version>/<target>, where <cache>
+ * is molto's cache directory (~/.cache/molto by default, see paths_service.h)
+ * or $MOLTO_CACHE when that is set. A coordinate is fetched once: a
  * completed fetch leaves a stamp file, and only a directory carrying one is
  * treated as usable. A directory without it is remains of an interrupted
  * fetch and is removed rather than read.
@@ -95,7 +96,7 @@ typedef struct {
    gets changed in one of them. */
 [[nodiscard]] bool source_spec_validate(const source_spec *spec, char *err, size_t err_size);
 
-/* The root of the source cache: `$MOLTO_CACHE`, or ~/.molto/cache.
+/* The root of the source cache: `$MOLTO_CACHE`, or molto's cache directory.
 
    Exported because it is a bound a document is validated against (RFC-0013),
    and a caller that composed it itself would miss the override and validate

@@ -230,9 +230,7 @@ Global cache stores only reusable build artifacts.
 
 Example
 
-~/.molto/
-
-cache/
+~/.cache/molto/ (XDG_CACHE_HOME; %APPDATA%\molto\cache on Windows)
 
 include/
 

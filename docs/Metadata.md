@@ -56,8 +56,8 @@ that publishes it needs an `[about]` table. See `docs/Project.md` for the keys.
 Resolving the graph, which is what reads the recipes. In a project that has
 already been built this touches no network — a published coordinate never
 changes, so the registry's previous answer still stands, and the sources are
-already in `~/.molto/cache`. In a fresh clone it fetches, exactly as a build
-would.
+already in molto's cache, `~/.cache/molto`. In a fresh clone it fetches,
+exactly as a build would.
 
 It does not read `Molto.lock`. The lock records versions, origins and checksums
 and deliberately not licences: that fact already lives in each recipe, and a
