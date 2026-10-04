@@ -47,13 +47,13 @@ MOLTEST(test_command) {
     EXPECT_TRUE(chdir(root) == 0);
 
     /* One test fails -> non-zero exit; both binaries built. */
-    EXPECT_TRUE(test_command_run(NULL, false, 0) == exit_build_failure);
+    EXPECT_TRUE(test_command_run(NULL, false, 0, NULL, 0) == exit_build_failure);
     EXPECT_TRUE(fs_path_exists("build/debug/tests/test_pass" FS_EXECUTABLE_SUFFIX));
     EXPECT_TRUE(fs_path_exists("build/debug/tests/test_fail" FS_EXECUTABLE_SUFFIX));
 
     /* Fix the failing test -> everything passes. */
     EXPECT_TRUE(fs_write_file("tests/test_fail.c", "int main(void) { return 0; }\n"));
-    EXPECT_TRUE(test_command_run(NULL, false, 0) == exit_ok);
+    EXPECT_TRUE(test_command_run(NULL, false, 0, NULL, 0) == exit_ok);
 
     EXPECT_TRUE(chdir(previous) == 0);
 
@@ -95,7 +95,7 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
     EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
     EXPECT_TRUE(chdir(root) == 0);
 
-    EXPECT_EQ(exit_ok, test_command_run(NULL, false, 0));
+    EXPECT_EQ(exit_ok, test_command_run(NULL, false, 0, NULL, 0));
 
     EXPECT_TRUE(chdir(previous) == 0);
 
@@ -157,5 +157,44 @@ MOLTEST(test_build_prunes_a_deleted_test) {
     EXPECT_TRUE(fs_path_exists(keep_binary));
 
     char cmd[600];
+    (void)fs_remove_tree(root);
+}
+
+MOLTEST(test_command_forwards_what_follows_the_double_dash) {
+    /* `molto test -- -v -k json` reaches the suite as its own arguments: the
+       bootstrap's `make test TEST_ARGS=...` and CI's `-v` go through here. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_test_args", root, sizeof root));
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/tests", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"args\"\n"));
+    snprintf(path, sizeof path, "%s/src/lib.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int lib(void) { return 0; }\n"));
+
+    /* Passes only when called with exactly `-k json`, after its own name. */
+    snprintf(path, sizeof path, "%s/tests/test_args.c", root);
+    EXPECT_TRUE(fs_write_file(path, "#include <string.h>\n"
+                                    "int main(int argc, char **argv) {\n"
+                                    "    return argc == 3 && strcmp(argv[1], \"-k\") == 0 &&\n"
+                                    "           strcmp(argv[2], \"json\") == 0 ? 0 : 1;\n"
+                                    "}\n"));
+
+    char previous[4096];
+    EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    EXPECT_TRUE(chdir(root) == 0);
+
+    char k[] = "-k";
+    char json[] = "json";
+    char *forwarded[] = {k, json};
+    EXPECT_EQ(exit_ok, test_command_run(NULL, false, 0, forwarded, 2));
+    /* And without them it fails, so the pass above is the forwarding's. */
+    EXPECT_EQ(exit_build_failure, test_command_run(NULL, false, 0, NULL, 0));
+
+    EXPECT_TRUE(chdir(previous) == 0);
     (void)fs_remove_tree(root);
 }

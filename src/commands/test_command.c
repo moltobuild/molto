@@ -11,6 +11,7 @@
 #include <molto/workspace/workspace.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 
 /* process_run reports a signal death as 128 + signal (shell convention). */
 #define SIGNAL_EXIT_BASE 128
@@ -23,8 +24,8 @@
    against the compiler's own shared libraries is exactly where that would be
    noticed first, as "could not start". */
 static void run_one_test(const char *binary, const project_env *env,
-                         const resolved_toolchain *chain, size_t *passed, size_t *failed) {
-    const char *argv[] = {binary, NULL};
+                         const resolved_toolchain *chain, const char *const *argv, size_t *passed,
+                         size_t *failed) {
     process_env_var vars[PROJECT_RUN_MAX_VARS];
     char runtime_path[TOOLCHAIN_RUNTIME_PATH_MAX];
     size_t var_count =
@@ -45,7 +46,8 @@ static void run_one_test(const char *binary, const project_env *env,
     }
 }
 
-int test_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs) {
+int test_command_run(const char *requested_profile, bool refresh_toolchain, size_t jobs,
+                     char *const *forwarded, int forwarded_count) {
     build_profile profile = profile_debug;
     if(requested_profile != NULL && !profile_parse(requested_profile, &profile)) {
         fprintf(stderr, "molto: unknown profile '%s'\n", requested_profile);
@@ -78,13 +80,27 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain, size
         return exit_ok;
     }
 
+    /* One argv for every binary: its own path first, then what came after `--`.
+       The same arguments go to each, which is what a single-mode suite wants
+       and what a per-file one at least does not mind. */
+    const char **argv = calloc((size_t)forwarded_count + 2, sizeof *argv);
+    if(argv == NULL) {
+        str_list_free(&binaries);
+        return exit_build_failure;
+    }
+    for(int i = 0; i < forwarded_count; i++)
+        argv[i + 1] = forwarded[i];
+
     printf("running %zu test%s (%s)\n", total, total == 1 ? "" : "s", profile_name(profile));
     size_t passed = 0;
     size_t failed = 0;
-    for(size_t i = 0; i < total; i++)
-        run_one_test(str_list_get(&binaries, i), &env, &chain, &passed, &failed);
+    for(size_t i = 0; i < total; i++) {
+        argv[0] = str_list_get(&binaries, i);
+        run_one_test(argv[0], &env, &chain, argv, &passed, &failed);
+    }
     printf("%zu passed, %zu failed\n", passed, failed);
 
+    free((void *)argv);
     str_list_free(&binaries);
     return failed == 0 ? exit_ok : exit_build_failure;
 }
