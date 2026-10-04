@@ -107,22 +107,6 @@ jobs:
           ./.github/tally.sh compile.log "molto for macOS"
           exit $status
 
-      # Only once `src/` compiles, and that `if` is not caution. The test
-      # binary links every object under `src/`, so this step rebuilds them all
-      # before it reaches a single file under `tests/` -- which on Windows meant
-      # the same errors were counted twice and the job announced a number that
-      # did not exist. A measurement that counts the same thing twice is worse
-      # than no measurement, because it looks like data.
-      - name: Compile its suite for macOS
-        if: steps.sources.outcome == 'success'
-        continue-on-error: true
-        run: |
-          set +e
-          make -k build/molto_tests CC=clang 2>&1 | tee suite.log
-          status=${PIPESTATUS[0]}
-          ./.github/tally.sh suite.log "its suite for macOS"
-          exit $status
-
       # The architecture is printed and not asserted: what is being checked is
       # that a Mach-O came out, and RFC-0018 promises one architecture without
       # promising which runner label keeps offering it.
@@ -188,13 +172,19 @@ jobs:
       # `-v` names each test as it runs. Without it a crash leaves a row of
       # dots, and working out which case died means counting them against the
       # order the file registers in.
+      #
+      # Built and run by the molto the steps above produced: the suite's
+      # dependencies (moltest, moltest-coverage) come from molto's store, and
+      # its compile errors, if any, end this step without a tally line and are
+      # counted as one below. moltest's own summary is the line that names
+      # assertions; molto's per-binary line after it is not the test count.
       - name: Run the suite (watched, not yet a gate)
         continue-on-error: true
         run: |
           set +e
-          make test CC=clang TEST_ARGS=-v 2>&1 | tee run.log
+          ./build/molto test -- -v 2>&1 | tee run.log
           status=${PIPESTATUS[0]}
-          failed=$(sed -n 's/.*[^0-9]\([0-9][0-9]*\) failed.*/\1/p' run.log | tail -1)
+          failed=$(grep 'assertions in' run.log | tail -1 | sed -n 's/.* \([0-9][0-9]*\) failed.*/\1/p')
           if [ -n "$failed" ] && [ "$failed" -gt 0 ]; then
             echo "$failed" >> tally.count
             echo "### The suite on macOS" >> "$GITHUB_STEP_SUMMARY"

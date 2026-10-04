@@ -117,11 +117,11 @@ Once this exists, Molto's own coverage moves off the Makefile:
    molto the job just bootstrapped, and uploads `coverage.lcov`.
 3. `make coverage`, `.github/coverage.sh` and `coverage.floor` are removed.
 
-Step 1 needs the moltest in `modules/moltest` to be one moltest-coverage can
-plug into (reporter API v1, moltest 0.3.0). That copy is older, so this step
-depends on Molto consuming moltest as a dependency rather than as a vendored
-copy, which is its own change (the bootstrap Makefile still compiles the suite
-from `modules/moltest`) and is not specified here.
+Step 1 needed moltest 0.3.0 (reporter API v1), which the vendored copy in
+`modules/moltest` predated. Molto now takes moltest as a development
+dependency from its shared store, and the bootstrap Makefile builds the first
+molto and hands `test` and `coverage` over to it, so the Makefile needs no copy
+of anything.
 
 ## Alternatives considered
 

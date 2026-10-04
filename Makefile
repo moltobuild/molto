@@ -41,15 +41,9 @@ LDFLAGS ?=
 
 BUILD_DIR := build
 BIN       := $(BUILD_DIR)/molto
-TEST_BIN  := $(BUILD_DIR)/molto_tests
 
 LIB_SRC  := $(shell find src -name '*.c' ! -name 'main.c')
 MAIN_SRC := src/main.c
-TEST_SRC := $(shell find tests -name '*.c')
-
-# moltest: the test framework, a standalone module linked only into the tests.
-MOLTEST_DIR := modules/moltest
-MOLTEST_SRC := $(shell find $(MOLTEST_DIR)/src -name '*.c')
 
 LIB_OBJ  := $(LIB_SRC:%.c=$(BUILD_DIR)/%.o)
 MAIN_OBJ := $(MAIN_SRC:%.c=$(BUILD_DIR)/%.o)
@@ -77,55 +71,31 @@ $(BUILD_DIR)/%.o: %.c Project.toml
 run: build
 	./$(BIN) $(ARGS)
 
+# The suite, and its coverage, are built by molto.
+#
+# This file compiles the first molto because something has to; it does not
+# compile the tests, which need moltest and moltest-coverage — development
+# dependencies that molto resolves into its shared store and reuses across
+# projects (Project.toml). Fetching them here as well would be a second store
+# that nothing else reads. So both targets build molto and hand over to it.
+#
 # TEST_ARGS reaches the suite: `make test TEST_ARGS="-k glob"` runs a few cases,
-# which is what debugging one wants and what shelling out to the binary by hand
-# was standing in for.
+# which is what debugging one wants. molto passes what follows `--` to the
+# test binary.
+#
+# molto asks pickup for a compiler; on a machine without pickup, name one with
+# C_COMPILER (CI does).
 TEST_ARGS ?=
+TEST_FORWARD := $(if $(TEST_ARGS),-- $(TEST_ARGS))
 
-test: $(TEST_BIN)
-	./$(TEST_BIN) $(TEST_ARGS)
+test: $(BIN)
+	./$(BIN) test $(TEST_FORWARD)
 
-$(TEST_BIN): $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(MOLTEST_DIR)/include $(LIB_OBJ) $(MOLTEST_SRC) $(TEST_SRC) \
-	    -o $@ $(LDFLAGS)
-
-# What the suite covers.
-#
-# 863 tests is a number that says nothing about what is not executed, and the
-# lines no test reaches are where the next bug is. Built apart from the normal
-# objects because `--coverage` changes what the compiler emits, and a tree half
-# instrumented measures itself wrong.
-#
-# gcov and nothing else: the aggregation is a shell script over its output, so
-# this runs anywhere the tree already builds. lcov and genhtml are worth having
-# to read a specific file line by line, and are not needed to answer the
-# question this target exists for — which files does the suite not enter.
-COVERAGE_OUT    := $(BUILD_DIR)/coverage
-COVERAGE_OBJ    := $(LIB_SRC:%.c=$(COVERAGE_OUT)/obj/%.o)
-COVERAGE_BIN    := $(COVERAGE_OUT)/molto_tests
-COVERAGE_CFLAGS := $(CFLAGS) --coverage -O0 -g
-COVERAGE_REPORT := .github/coverage.sh
-# The gcov that matches CC. An older one refuses the notes a newer gcc wrote,
-# and says "version 'B23', prefer 'B14'" — which sounds like a corrupt file and
-# is a mismatched pair. Derived rather than assumed, because a machine with
-# three gccs on it has a /usr/bin/gcov belonging to only one of them.
-GCOV ?= $(patsubst gcc%,gcov%,$(notdir $(CC)))
-
-coverage: $(COVERAGE_BIN)
-	./$(COVERAGE_BIN) $(TEST_ARGS)
-	@$(COVERAGE_REPORT) $(COVERAGE_OUT)/obj $(GCOV)
-
-$(COVERAGE_OUT)/obj/%.o: %.c Project.toml
-	@mkdir -p $(dir $@)
-	$(CC) $(COVERAGE_CFLAGS) -MMD -MP -c $< -o $@
-
--include $(COVERAGE_OBJ:.o=.d)
-
-$(COVERAGE_BIN): $(COVERAGE_OBJ) $(MOLTEST_SRC) $(TEST_SRC) Project.toml
-	@mkdir -p $(dir $@)
-	$(CC) $(COVERAGE_CFLAGS) -I$(MOLTEST_DIR)/include $(COVERAGE_OBJ) $(MOLTEST_SRC) \
-	    $(TEST_SRC) -o $@ $(LDFLAGS) --coverage
+# What the suite covers: the coverage profile (RFC-0019) instruments src/ and
+# tests/, and moltest-coverage prints the table, writes build/coverage.lcov and
+# fails the run under the floor in moltest-coverage.toml.
+coverage: $(BIN)
+	./$(BIN) test --profile coverage $(TEST_FORWARD)
 
 # Fuzzing the parsers.
 #

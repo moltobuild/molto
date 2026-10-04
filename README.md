@@ -157,8 +157,20 @@ make run ARGS="new my_lib"
 ## Test
 
 ```sh
-make test
+make test                      # ./build/molto test
+make test TEST_ARGS="-k json"  # arguments for the suite, after --
+make coverage                  # ./build/molto test --profile coverage
 ```
+
+The Makefile builds the first `molto` and nothing more: the suite is built by
+that molto, which takes its test framework,
+[moltest](https://github.com/moltobuild/moltest), and
+[moltest-coverage](https://github.com/moltobuild/moltest-coverage) from its
+shared store like any project's dependencies (`[dev-deps]` in `Project.toml`).
+Without pickup, name the compiler for it: `C_COMPILER=gcc-12 make test`.
+
+`make coverage` ends with the coverage of `src/` and fails under the floor in
+`moltest-coverage.toml`; `build/coverage.lcov` holds the detail.
 
 ## Licence
 
@@ -171,8 +183,7 @@ runs other people's compilers and its registry distributes other people's code.
 ```
 include/molto/   Public headers (used as <molto/...>)
 src/             CLI entry point, command handlers, and services
-tests/           The test suites
-modules/moltest/ The test framework, a standalone module
+tests/           The test suites (moltest, a [dev-deps] entry)
 docs/            User guides (start with docs/Project.md)
 rfcs/            Design documents
 ```

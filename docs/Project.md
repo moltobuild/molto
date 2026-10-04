@@ -196,14 +196,24 @@ By default (`mode = "per_file"`) Molto builds **one executable per file** under
 test file supplies its own `main()`.
 
 A framework that registers its cases owns `main()` instead, so everything has to
-link into one binary. And if the framework lives outside `src/`, its sources are
-not compiled at all unless you say so:
+link into one binary. Taken as a development dependency, its sources and headers
+reach the test build by themselves:
+
+```toml
+[test]
+mode = "single"
+
+[dev-deps]
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
+```
+
+A framework kept in the tree instead is not compiled at all unless you say so:
 
 ```toml
 [test]
 mode    = "single"
-sources = ["modules/moltest/src"]        # directories are walked, files taken as given
-include = ["modules/moltest/include"]
+sources = ["third_party/tinytest/src"]   # directories are walked, files taken as given
+include = ["third_party/tinytest/include"]
 ```
 
 That produces `build/<profile>/tests/<package>_tests`. `[test]` also accepts
@@ -767,9 +777,10 @@ include  = ["include"]
 flags    = ["-Wall", "-Wextra", "-Wpedantic"]
 
 [test]
-mode    = "single"
-sources = ["modules/moltest/src"]
-include = ["modules/moltest/include"]
+mode = "single"
+
+[dev-deps]
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
 ```
 
 Migrating from a Makefile is mostly this: read `CFLAGS` and `LDFLAGS`, and put

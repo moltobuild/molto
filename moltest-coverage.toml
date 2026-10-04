@@ -1,0 +1,15 @@
+# The share of src/ the suite has to keep reaching (moltest-coverage, read at
+# the end of `molto test --profile coverage`).
+#
+# Not a target somebody picked — 90% would be that, and a number nobody agreed
+# to is a number that gets waived the first time it is inconvenient. This is a
+# fact the tree already earned, and the only thing it forbids is going
+# backwards: new code arrives with a test, or this line is lowered on purpose
+# and the commit that lowers it says why. Raise it when the real figure has
+# moved comfortably past it; every coverage run prints both.
+#
+# It moved here from coverage.floor, which the bootstrap Makefile's own
+# coverage build read. The figure is the same measurement: gcov's executed
+# lines of src/, under the same -O0.
+fail_under = 79.5
+lcov = "build/coverage.lcov"
