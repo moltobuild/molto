@@ -100,10 +100,16 @@ static bool describe_all(ir_document *doc, const prepared_deps *deps, ir_dep_sco
         const char *version = unit->version[0] != '\0' ? unit->version : NULL;
         ir_dependency *dep =
             ir_add_dependency(doc, unit->name, version, origin_of(unit->origin), scope, unit->root);
+        /* Its raw flags reach both lines, the way a project's own `flags` do
+           (frontend_native's push_link_scope): `-pthread`, `-fsanitize` and
+           `--coverage` are compiler flags that mean nothing unless the linker
+           is told too. Ahead of the libraries, as the project's are. Defines
+           stay off the link line for the reason they do there. */
         if(dep == NULL ||
            !push_includes(&dep->includes, &dep->include_count, &unit->exports.includes) ||
            !push_defines(&dep->options, &dep->option_count, &unit->exports.defines) ||
            !push_options(&dep->options, &dep->option_count, &unit->exports.flags) ||
+           !push_options(&dep->links, &dep->link_count, &unit->exports.flags) ||
            !push_links(&dep->links, &dep->link_count, &unit->exports.links)) {
             snprintf(err, err_size, "out of memory describing dependency '%s'", unit->name);
             return false;

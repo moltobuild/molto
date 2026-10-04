@@ -86,9 +86,11 @@ MOLTEST(ir_transform_says_what_each_dependency_exports) {
     EXPECT_STREQ("-fno-strict-aliasing", dep->options[1].value);
 
     /* A library reaches the document as the flag it already is, for the same
-       reason a define does: a LinkOption is what reaches the link line. */
-    ASSERT_EQ(1u, dep->link_count);
-    EXPECT_STREQ("-lm", dep->links[0].value);
+       reason a define does: a LinkOption is what reaches the link line. The raw
+       flag is there too, ahead of it, as a project's own flags are. */
+    ASSERT_EQ(2u, dep->link_count);
+    EXPECT_STREQ("-fno-strict-aliasing", dep->links[0].value);
+    EXPECT_STREQ("-lm", dep->links[1].value);
 
     /* The transform touched nothing else. */
     EXPECT_STREQ("app", doc.name);
@@ -277,6 +279,40 @@ MOLTEST(ir_transform_keeps_a_development_dependency_out_of_the_executable) {
     EXPECT_EQ(ir_target_test, test->kind);
     EXPECT_TRUE(carries_include(test, "/w/app/modules/moltest/include"));
     EXPECT_TRUE(carries_option(test, "-DMOLTEST=1"));
+
+    ir_document_free(&doc);
+    prepared_deps_free(&dev);
+}
+
+/* A dependency's raw flags reach the link line of what depends on it, not only
+   its compile lines: `--coverage`, `-pthread` and `-fsanitize` are not complete
+   without the linker. A development dependency's reach the test link and still
+   nothing else. */
+MOLTEST(ir_transform_folds_a_dependency_flag_into_the_link_line) {
+    ir_document doc;
+    document_with_targets(&doc);
+
+    prepared_deps dev;
+    prepared_deps_init(&dev);
+    prepared_unit *unit =
+        add_unit(&dev, "moltest_coverage", "", dep_source_path, "/w/moltest-coverage");
+    ASSERT_NOT_NULL(unit);
+    ASSERT_TRUE(str_list_push(&unit->exports.flags, "--coverage"));
+    ASSERT_TRUE(str_list_push(&unit->exports.defines, "COVERED=1"));
+
+    char err[512] = "";
+    ASSERT_TRUE(ir_transform_dependencies(&doc, NULL, &dev, err, sizeof err));
+    ASSERT_TRUE(ir_transform_fold_dependencies(&doc, err, sizeof err));
+
+    const ir_target *app = &doc.targets[0];
+    EXPECT_EQ(ir_target_executable, app->kind);
+    EXPECT_EQ(0u, app->link_count);
+
+    const ir_target *test = &doc.targets[1];
+    EXPECT_EQ(ir_target_test, test->kind);
+    EXPECT_TRUE(carries_option(test, "--coverage"));
+    ASSERT_EQ(1u, test->link_count); /* the define stays a compile option */
+    EXPECT_STREQ("--coverage", test->links[0].value);
 
     ir_document_free(&doc);
     prepared_deps_free(&dev);
