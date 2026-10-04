@@ -98,25 +98,39 @@ static bool platform_cache_dir(char *out, size_t size) {
 }
 #endif
 
+/*
+ * Every directory below is composed from an environment variable, which is a
+ * path that came from outside: %APPDATA% is `C:\Users\x\AppData\Roaming`.
+ * Composed onto it with '/', it is a path spelled two ways at once, and the
+ * build then mirrors a cached dependency's sources under obj/ as
+ * `obj/C/\Users\...` — a directory nothing can create. So the answer is put
+ * into Molto's one separator here, at the boundary, for every caller.
+ */
+static bool one_separator(bool composed, char *out) {
+    if(composed)
+        fs_to_one_separator(out);
+    return composed;
+}
+
 bool paths_molto_config_dir(char *out, size_t size) {
     const char *home = override_home();
     if(home != NULL)
-        return fs_format_path(out, size, "%s", home);
-    return platform_config_dir(out, size);
+        return one_separator(fs_format_path(out, size, "%s", home), out);
+    return one_separator(platform_config_dir(out, size), out);
 }
 
 bool paths_molto_data_dir(char *out, size_t size) {
     const char *home = override_home();
     if(home != NULL)
-        return fs_format_path(out, size, "%s", home);
-    return platform_data_dir(out, size);
+        return one_separator(fs_format_path(out, size, "%s", home), out);
+    return one_separator(platform_data_dir(out, size), out);
 }
 
 bool paths_molto_cache_dir(char *out, size_t size) {
     const char *home = override_home();
     if(home != NULL)
-        return fs_format_path(out, size, "%s/%s", home, CACHE_DIRNAME);
-    return platform_cache_dir(out, size);
+        return one_separator(fs_format_path(out, size, "%s/%s", home, CACHE_DIRNAME), out);
+    return one_separator(platform_cache_dir(out, size), out);
 }
 
 bool paths_molto_data_subdir(const char *subdirectory, char *out, size_t size) {
@@ -128,7 +142,8 @@ bool paths_molto_data_subdir(const char *subdirectory, char *out, size_t size) {
 
 bool paths_molto_legacy_home(char *out, size_t size) {
     const char *home = user_home();
-    return home != NULL && fs_format_path(out, size, "%s/%s", home, LEGACY_DIRNAME);
+    return home != NULL &&
+           one_separator(fs_format_path(out, size, "%s/%s", home, LEGACY_DIRNAME), out);
 }
 
 /* --- the migration from ~/.molto --- */

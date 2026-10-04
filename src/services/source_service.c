@@ -199,8 +199,14 @@ bool source_read(doc_view doc, source_spec *out, char *err, size_t err_size) {
    directory without touching the user's own. */
 static bool cache_root(char *out, size_t size) {
     const char *override = getenv("MOLTO_CACHE");
-    if(override != NULL && override[0] != '\0')
-        return fs_format_path(out, size, "%s", override);
+    if(override != NULL && override[0] != '\0') {
+        /* A path from the environment, so in Molto's separator before anything
+           is composed onto it (paths_service says why). */
+        if(!fs_format_path(out, size, "%s", override))
+            return false;
+        fs_to_one_separator(out);
+        return true;
+    }
 
     return paths_molto_cache_dir(out, size);
 }
