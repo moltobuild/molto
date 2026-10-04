@@ -20,9 +20,9 @@
  */
 typedef struct {
     char root[64];
-    char home[128];      /* $HOME, holding .molto/plugins/bin */
-    char installed[192]; /* ~/.molto/plugins/bin */
-    char recipes[192];   /* ~/.molto/plugins/recipes */
+    char home[128];      /* $HOME, holding the data directory */
+    char installed[192]; /* the data directory's plugins/bin */
+    char recipes[192];   /* the data directory's plugins/recipes */
     char elsewhere[128]; /* a directory placed on PATH */
     char log[192];       /* what a stub plugin wrote when it ran */
     char old_home[4096];
@@ -41,8 +41,8 @@ static bool sandbox_setup(sandbox *box) {
         return false;
 
     snprintf(box->home, sizeof box->home, "%s/home", box->root);
-    snprintf(box->installed, sizeof box->installed, "%s/.molto/plugins/bin", box->home);
-    snprintf(box->recipes, sizeof box->recipes, "%s/.molto/plugins/recipes", box->home);
+    snprintf(box->installed, sizeof box->installed, "%s" PRIVATE_HOME_DATA "/plugins/bin", box->home);
+    snprintf(box->recipes, sizeof box->recipes, "%s" PRIVATE_HOME_DATA "/plugins/recipes", box->home);
     snprintf(box->elsewhere, sizeof box->elsewhere, "%s/elsewhere", box->root);
     snprintf(box->log, sizeof box->log, "%s/log", box->root);
 
@@ -54,7 +54,7 @@ static bool sandbox_setup(sandbox *box) {
     molto_home_override_clear(&box->old_override);
 
     return fs_make_dirs(box->installed) && fs_make_dirs(box->recipes)
-        && fs_make_dirs(box->elsewhere) && setenv("HOME", box->home, 1) == 0
+        && fs_make_dirs(box->elsewhere) && private_home_point(box->home)
         && setenv("PATH", box->elsewhere, 1) == 0;
 }
 
@@ -182,7 +182,7 @@ MOLTEST(plugin_resolve_prefers_the_installed_one_over_path) {
        happened to put earlier on PATH. */
     char path[PLUGIN_PATH_MAX];
     EXPECT_TRUE(plugin_resolve("deb", path, sizeof path));
-    EXPECT_TRUE(strstr(path, ".molto/plugins/bin/molto-deb") != NULL);
+    EXPECT_TRUE(strstr(path, PRIVATE_HOME_DATA "/plugins/bin/molto-deb") != NULL);
 
     sandbox_teardown(&box);
 }

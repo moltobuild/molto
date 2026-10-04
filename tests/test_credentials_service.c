@@ -35,16 +35,11 @@ static void with_private_home(void) {
        these suites did not run on Windows; this is the one that got away. */
     if(!moltest_temp_dir("molto_credentials", sandbox, sizeof sandbox))
         sandbox[0] = '\0';
-    setenv("HOME", sandbox, 1);
+    (void)private_home_point(sandbox);
 }
 
 static void restore_home(void) {
-    char path[1200];
-    if(fs_format_path(path, sizeof path, "%s/.molto/credentials.toml", sandbox))
-        (void)unlink(path);
-    if(fs_format_path(path, sizeof path, "%s/.molto", sandbox))
-        (void)rmdir(path);
-    (void)rmdir(sandbox);
+    (void)fs_remove_tree(sandbox);
 
     if(previous_home[0] != '\0')
         setenv("HOME", previous_home, 1);
@@ -91,6 +86,20 @@ MOLTEST(credentials_are_readable_only_by_their_owner) {
 #ifndef _WIN32
     EXPECT_EQ(0, (int)(info.st_mode & (S_IRWXG | S_IRWXO)));
 #endif
+
+    restore_home();
+}
+
+/* A credential is configuration, so it lives in the config directory rather
+   than beside the plugins or in the cache. */
+MOLTEST(credentials_live_in_the_config_directory) {
+    with_private_home();
+
+    char path[1200];
+    ASSERT_TRUE(credentials_path(path, sizeof path));
+    char expected[1200];
+    snprintf(expected, sizeof expected, "%s" PRIVATE_HOME_CONFIG "/credentials.toml", sandbox);
+    EXPECT_STREQ(expected, path);
 
     restore_home();
 }

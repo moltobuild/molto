@@ -23,10 +23,10 @@ static bool fail(char *err, size_t err_size, const char *message) {
 }
 
 bool credentials_path(char *out, size_t size) {
-    char home[MOLTO_HOME_PATH_MAX];
-    if(!paths_molto_home(home, sizeof home))
+    char config[MOLTO_HOME_PATH_MAX];
+    if(!paths_molto_config_dir(config, sizeof config))
         return false;
-    return fs_format_path(out, size, "%s/credentials.toml", home);
+    return fs_format_path(out, size, "%s/credentials.toml", config);
 }
 
 static bool read_field(const toml_document *doc, const char *key, char *out, size_t size, char *err,
@@ -99,14 +99,14 @@ static bool write_private(const char *path, const char *content, char *err, size
 }
 
 bool credentials_save(const credentials *creds, char *err, size_t err_size) {
-    char home[MOLTO_HOME_PATH_MAX];
+    char config[MOLTO_HOME_PATH_MAX];
     char path[768];
-    if(!paths_molto_home(home, sizeof home) || !credentials_path(path, sizeof path))
+    if(!paths_molto_config_dir(config, sizeof config) || !credentials_path(path, sizeof path))
         return fail(err, err_size,
                     "this machine has no home directory, so there is nowhere to store "
                     "credentials; set MOLTO_HOME to a directory molto may use");
-    if(!fs_make_dir(home))
-        return fail(err, err_size, "could not create the molto home");
+    if(!fs_make_dirs(config))
+        return fail(err, err_size, "could not create molto's config directory");
 
     char content[1536];
     const int n = snprintf(content, sizeof content,

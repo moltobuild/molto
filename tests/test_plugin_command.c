@@ -26,7 +26,7 @@ typedef struct {
 static bool home_setup(home *box) {
     if(!moltest_temp_dir("molto_plugin_cmd", box->root, sizeof box->root))
         return false;
-    snprintf(box->bin, sizeof box->bin, "%s/.molto/plugins/bin", box->root);
+    snprintf(box->bin, sizeof box->bin, "%s" PRIVATE_HOME_DATA "/plugins/bin", box->root);
 
     const char *home_value = getenv("HOME");
     const char *path_value = getenv("PATH");
@@ -37,7 +37,7 @@ static bool home_setup(home *box) {
        second one is not a sandbox on a machine that sets the first. */
     molto_home_override_clear(&box->old_override);
 
-    return fs_make_dirs(box->bin) && setenv("HOME", box->root, 1) == 0
+    return fs_make_dirs(box->bin) && private_home_point(box->root)
         && setenv("PATH", "", 1) == 0;
 }
 

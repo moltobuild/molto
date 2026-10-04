@@ -19,7 +19,8 @@
  *
  * Two places are searched, in this order:
  *
- *   1. ~/.molto/plugins/bin, where `molto plugin install` puts things;
+ *   1. plugins/bin in molto's data directory (~/.local/share/molto by
+ *      default), where `molto plugin install` puts things;
  *   2. PATH, so a plugin can be developed without installing it.
  *
  * The install directory is first so that what the user asked Molto to install
@@ -38,7 +39,7 @@
 /* Where a plugin came from, which `molto plugin list` reports because "what is
    installed" and "what happens to be on this PATH" are different answers. */
 typedef enum {
-    plugin_origin_installed, /* ~/.molto/plugins/bin, put there by molto */
+    plugin_origin_installed, /* the data directory's plugins/bin, put there by molto */
     plugin_origin_path,      /* found on PATH, and nobody's record says why */
 } plugin_origin;
 
@@ -57,8 +58,8 @@ typedef struct {
    directory being searched. A rejected name is not looked for at all. */
 [[nodiscard]] bool plugin_name_valid(const char *name);
 
-/* Where installed plugins live: ~/.molto/plugins/bin. False when HOME is unset
-   or the path does not fit. */
+/* Where installed plugins live: plugins/bin in molto's data directory. False
+   when there is no home to derive it from or the path does not fit. */
 [[nodiscard]] bool plugin_dir(char *out, size_t size);
 
 /* The executable serving `name`, written to `out` as an absolute path.
@@ -95,7 +96,7 @@ typedef struct {
 [[nodiscard]] bool plugin_remove(const char *name, char *err, size_t err_size);
 
 /* Where the recipe of an installed plugin is kept:
-   ~/.molto/plugins/recipes/<name>.toml.
+   plugins/recipes/<name>.toml in molto's data directory.
 
    Beside the binary rather than inside it, and on disk rather than fetched
    again, because the permissions a plugin was installed under have to be

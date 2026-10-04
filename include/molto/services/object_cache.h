@@ -9,9 +9,9 @@
  *
  * Fetching sqlite once and then compiling it once per project is half a win:
  * the download is shared and the twenty seconds are not. This is the other
- * half — an object compiled from a dependency is kept under
- * ~/.molto/cache/objects and reused by every project that would compile it the
- * same way.
+ * half — an object compiled from a dependency is kept under `objects/` in the
+ * cache (~/.cache/molto/objects by default) and reused by every project that
+ * would compile it the same way.
  *
  * It covers dependencies and nothing else, and the reason is soundness rather
  * than scope. Knowing that two compilations produce the same object means
