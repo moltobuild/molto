@@ -2,6 +2,7 @@
 #define MOLTO_ADD_COMMAND_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /*
  * `molto add <name>[@<version>]` and `molto remove <name>` (RFC-0002).
@@ -31,6 +32,26 @@
    manifest as an exact number like any other. */
 [[nodiscard]] int add_command_run(const char *name, const char *version, const char *source_key,
                                   const char *source, const char *registry, bool development);
+
+/* `molto add git+<url>[#<ref>]`: the spelling Molto.lock already uses for a
+   git source, accepted on the command line. */
+#define ADD_GIT_PREFIX "git+"
+
+/*
+ * Split `git+<url>[#<ref>]` into the URL, the reference (empty when absent)
+ * and the package name, which is the repository's last path segment without
+ * `.git`. False, with a reason in `err`, when it is not that shape, carries a
+ * character a manifest string cannot, or names something that is not a
+ * package name. Touches nothing outside its arguments.
+ */
+[[nodiscard]] bool add_git_spec_parse(const char *spec, char *name, size_t name_size, char *url,
+                                      size_t url_size, char *reference, size_t reference_size,
+                                      char *err, size_t err_size);
+
+/* Add the dependency `spec` names. Without `#<ref>` the repository's default
+   branch is asked for and written as `branch`; a ref is written as `rev`,
+   `tag` or `branch`, whichever the repository says it is. */
+[[nodiscard]] int add_git_command_run(const char *spec, bool development);
 
 [[nodiscard]] int remove_command_run(const char *name);
 

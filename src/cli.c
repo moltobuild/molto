@@ -38,6 +38,13 @@ static const cli_option clean_options[] = {
     {"--all", 'a', cli_opt_flag, NULL, "Also remove .bin/ (the incremental state)", NULL},
 };
 
+/* `molto new` and `molto init`. A library is the default (RFC-0002); both
+   flags exist so a script can say which it means either way. */
+static const cli_option new_options[] = {
+    {"--lib", 0, cli_opt_flag, NULL, "Create a static library tested with moltest (default)", NULL},
+    {"--bin", 0, cli_opt_flag, NULL, "Create an executable with a src/main.c", NULL},
+};
+
 /* `molto add`. The source keys mirror RFC-0003's, so what is typed here and
    what ends up in the manifest are spelled the same. */
 static const cli_option add_options[] = {
@@ -164,19 +171,47 @@ static const cli_option metadata_options[] = {
 
 /* --- command handlers: thin adapters over the *_command_run functions --- */
 
+/* The kind `--lib`/`--bin` ask for, or false when they ask for both. */
+[[nodiscard]] static bool project_kind_of(const cli_args *args, project_kind *out) {
+    const bool lib = cli_args_flag(args, "--lib");
+    const bool bin = cli_args_flag(args, "--bin");
+    if(lib && bin) {
+        fprintf(stderr,
+                "molto: a project is a library or a binary; pass --lib or --bin, not both\n");
+        return false;
+    }
+    *out = bin ? project_kind_binary : project_kind_library;
+    return true;
+}
+
 static int handle_new(const cli_args *args) {
-    return new_command_run(cli_args_positional(args, 0));
+    project_kind kind;
+    if(!project_kind_of(args, &kind))
+        return exit_usage_error;
+    return new_command_run(cli_args_positional(args, 0), kind);
 }
 
 static int handle_init(const cli_args *args) {
-    (void)args;
-    return init_command_run();
+    project_kind kind;
+    if(!project_kind_of(args, &kind))
+        return exit_usage_error;
+    return init_command_run(kind);
 }
 
 /* `<name>@<version>` is one argument, because that is how a version is asked
    for everywhere else a package manager is used. */
 static int handle_add(const cli_args *args) {
     const char *spec = cli_args_positional(args, 0);
+    /* `git+<url>` carries its own source, and an `@` inside it is part of the
+       URL (`git+ssh://git@host/...`), not a version. */
+    if(spec != NULL && strncmp(spec, ADD_GIT_PREFIX, strlen(ADD_GIT_PREFIX)) == 0) {
+        if(cli_args_option(args, "--git") != NULL || cli_args_option(args, "--path") != NULL ||
+           cli_args_option(args, "--archive") != NULL) {
+            fprintf(stderr, "molto: a dependency has exactly one source\n");
+            return exit_usage_error;
+        }
+        return add_git_command_run(spec, cli_args_flag(args, "--dev"));
+    }
     char name[128] = "";
     const char *version = NULL;
     if(spec != NULL) {
@@ -355,8 +390,10 @@ static const cli_option plugin_options[] = {
 /* --- command table --- */
 
 static const cli_command commands[] = {
-    {"new", "Create a new project in a new directory", "<name>", NULL, 0, handle_new},
-    {"init", "Initialize a project in the current directory", NULL, NULL, 0, handle_init},
+    {"new", "Create a new project in a new directory", "<name>", new_options,
+     sizeof new_options / sizeof new_options[0], handle_new},
+    {"init", "Initialize a project in the current directory", NULL, new_options,
+     sizeof new_options / sizeof new_options[0], handle_init},
     {"build", "Compile the project", NULL, build_options,
      sizeof build_options / sizeof build_options[0], handle_build},
     {"run", "Build and run the project (args after -- go to the program)", NULL, run_options,
@@ -374,7 +411,7 @@ static const cli_command commands[] = {
      sizeof ir_options / sizeof ir_options[0], handle_ir},
     {"metadata", "Write a CycloneDX bill of materials", NULL, metadata_options,
      sizeof metadata_options / sizeof metadata_options[0], handle_metadata},
-    {"add", "Add a dependency", "<dep>[@<version>]", add_options,
+    {"add", "Add a dependency", "<dep>[@<version>] | git+<url>[#<ref>]", add_options,
      sizeof add_options / sizeof add_options[0], handle_add},
     {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_remove},
     {"login", "Store a registry credential", NULL, login_options,

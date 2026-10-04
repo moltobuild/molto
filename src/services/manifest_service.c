@@ -250,7 +250,7 @@ static const char manifest_template[] =
     "[package]\n"
     "name = \"%s\"\n"
     "version = \"0.1.0\"\n"
-    "# artifact = \"static\"   # executable (default) | static | shared\n"
+    "artifact = \"%s\"%s# executable | static | shared\n"
     "# description = \"\"      # one line, for a catalogue\n"
     "# license = \"MIT\"       # an SPDX expression: MIT OR Apache-2.0\n"
     "# homepage = \"\"\n"
@@ -272,18 +272,38 @@ static const char manifest_template[] =
     "\n"
     "[profile.release]\n"
     "opt_level = 3\n"
-    "debug_info = false\n";
+    "debug_info = false\n"
+    "%s";
 
-char *manifest_render_default(const char *name) {
+/* What a library is tested with. moltest is the ecosystem's tester and owns
+   main(), so the suite links into one executable. It is a dependency like any
+   other, written where the user can see it and delete it: nothing in molto
+   requires it. Taken from git until moltest is on the registry. */
+static const char library_test_section[] =
+    "\n"
+    "[test]\n"
+    "mode = \"single\"         # moltest registers the tests and owns main()\n"
+    "\n"
+    "[dev-deps]\n"
+    "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", branch = \"" MANIFEST_MOLTEST_BRANCH "\" }\n";
+
+char *manifest_render_default(const char *name, project_kind kind) {
     if(!manifest_is_valid_name(name))
         return NULL;
-    int needed = snprintf(NULL, 0, manifest_template, name);
+    /* Written out rather than left to the default: `executable` is what an
+       absent key means (RFC-0003), and a starter manifest that says which one
+       it is teaches the key instead of hiding it. */
+    const bool library = kind == project_kind_library;
+    const char *artifact = library ? "static" : "executable";
+    const char *padding = library ? "       " : "   ";
+    const char *tail = library ? library_test_section : "";
+    int needed = snprintf(NULL, 0, manifest_template, name, artifact, padding, tail);
     if(needed < 0)
         return NULL;
     size_t size = (size_t)needed + 1;
     char *buffer = malloc(size);
     if(buffer == NULL)
         return NULL;
-    snprintf(buffer, size, manifest_template, name);
+    snprintf(buffer, size, manifest_template, name, artifact, padding, tail);
     return buffer;
 }

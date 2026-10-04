@@ -37,12 +37,35 @@ specification is required so that:
 
 ## Commands
 
-### `molto new <name>`
+### `molto new <name> [--lib | --bin]`
 
 Creates a new project directory named `<name>` containing a `Project.toml`
-and the conventional `src/`, `tests/` layout described in RFC-0001
-(Philosophy), plus a starter `src/main.c` so the project builds and runs
-immediately.
+and the conventional `src/`, `tests/`, `include/` layout described in RFC-0001
+(Philosophy). What else it writes depends on what the project is:
+
+- **A library, the default** (`--lib`): `artifact = "static"`, a header
+  `include/<name>.h`, its source `src/<name>.c`, and a test
+  `tests/test_<name>.c` written with moltest. The manifest declares moltest in
+  `[dev-deps]` with `[test] mode = "single"`, so `molto test` works
+  immediately.
+- **A program** (`--bin`): `artifact = "executable"` and a starter
+  `src/main.c`, so `molto run` works immediately.
+
+Passing both flags is a usage error and writes nothing.
+
+**Why a library by default.** Most C and C++ packages anyone depends on are
+libraries, and a library is what a package manager distributes; a program is
+the special case of a library with an entry point. The manifest's own default
+for `artifact` stays `executable` (RFC-0003): changing it would silently turn
+every existing manifest that omits the key into a library. The scaffold writes
+`artifact` explicitly instead, so the choice is in the file and a reader learns
+the key exists.
+
+**moltest is offered, not required.** It is the ecosystem's tester and lives in
+its own repository; the starter manifest names it like any other dependency,
+and deleting that line and the test is all it takes to use something else.
+Until moltest is published to the registry it is taken from git
+(`https://github.com/moltobuild/moltest`, branch `master`).
 
 The generated manifest declares `[target].std`. Left undeclared, the language
 standard is whatever the local compiler defaults to, which varies by toolchain
@@ -59,10 +82,10 @@ every build. Molto writes the file but does not initialize a repository:
 generating an inert text file is not the same as assuming a version control
 system. Any of these files that already exists is left untouched.
 
-### `molto init`
+### `molto init [--lib | --bin]`
 
-Same as `new`, but initializes a project in the current directory instead of
-creating a new one.
+Same as `new`, including the flags and the library default, but initializes a
+project in the current directory instead of creating a new one.
 
 ### `molto build`
 
@@ -161,6 +184,16 @@ version**: the one given after `@`, or the newest the registry offers when it is
 omitted. Accepts the same dependency sources defined in RFC-0003 (registry, git,
 path, archive, recipe). `--dev` adds it to `[dev-deps]` instead, for a
 dependency that must not reach the package's binary (RFC-0008).
+
+`molto add git+<url>[#<ref>]` takes a git source in the spelling `Molto.lock`
+already uses for one. The package name is the repository's: the last segment of
+the URL, without `.git`; when that is not a valid package name, the command
+says so and points at `molto add <name> --git <url>`. A git dependency needs a
+branch, tag or rev before a build can cache it, so the reference is decided
+here and written into the manifest, the way a registry's newest version is:
+without `#<ref>`, the repository is asked for its default branch and that is
+written as `branch`; with one, it is written as `rev` for a commit id and as
+`tag` or `branch` for whichever the repository says it is (a tag when both).
 
 ### `molto remove <dependency>`
 

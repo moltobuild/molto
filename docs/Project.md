@@ -34,13 +34,16 @@ contract.
 
 ## Starting point
 
-`molto new my_app` creates `src/`, `tests/`, `include/`, a starter `main.c`, a
-`.gitignore` and this manifest:
+`molto new my_lib` creates a **library**: `src/`, `tests/`, `include/`, a
+header `include/my_lib.h`, its source `src/my_lib.c`, a test
+`tests/test_my_lib.c` written with [moltest](https://github.com/moltobuild/moltest),
+a `.gitignore` and this manifest:
 
 ```toml
 [package]
-name = "my_app"
+name = "my_lib"
 version = "0.1.0"
+artifact = "static"       # executable | static | shared
 # description = ""      # one line, for a catalogue
 # license = "MIT"       # an SPDX expression: MIT OR Apache-2.0
 # homepage = ""
@@ -63,12 +66,25 @@ debug_info = true
 [profile.release]
 opt_level = 3
 debug_info = false
+
+[test]
+mode = "single"         # moltest registers the tests and owns main()
+
+[dev-deps]
+moltest = { git = "https://github.com/moltobuild/moltest", branch = "master" }
 ```
 
-`std` and `include` ship active; the rest are commented documentation.
+`artifact`, `std` and `include` ship active; the rest are commented
+documentation. moltest is offered, not required: delete the `[dev-deps]` line
+and the test to use something else.
 
-Adopting an existing project with `molto init` writes the same manifest, taking
-the package name from the current directory's name. If that project keeps its
+`molto new my_app --bin` creates a **program** instead: the same manifest with
+`artifact = "executable"` and without `[test]` or `[dev-deps]`, and a starter
+`src/main.c` in place of the header, source and test.
+
+Adopting an existing project with `molto init` writes the same manifest (a
+library unless given `--bin`), taking the package name from the current
+directory's name. If that project keeps its
 headers somewhere other than `include/`, that is the first line to change.
 
 ## Common tasks
@@ -411,6 +427,8 @@ Three rules worth knowing:
 molto add sqlite                      # the newest release, written as an exact version
 molto add sqlite@3.53.4               # that one
 molto add tinytest --dev --path ../tt # into [dev-deps]
+molto add git+https://github.com/moltobuild/moltest --dev  # git; name from the URL
+molto add git+https://github.com/org/zlib#v1.3.1            # at that tag
 molto remove sqlite
 ```
 
@@ -419,13 +437,18 @@ Adding a name you already have is how you upgrade it — the same move as
 release is and **writes that number into the manifest**, so the choice is made
 once, in a diff you can read, and never again behind your back.
 
-That question is the only slow thing `molto add` does, so a terminal gets one
+That registry question is the slow thing `molto add` does, so a terminal gets one
 row while it is out — a braille spinner and `resolving <name>`, taken away
 before the line saying what was added arrives. It carries no figure, because a
 single request has no honest one. Every other form of the command rewrites a
 line in a file and finishes before there is anything to say: `@<version>`,
 `--path`, `--git` and `--archive` reach no registry and draw nothing. Neither
 does a pipe or a log file, which get no row and no escape sequence.
+
+A `git+<url>` dependency is written with the branch, tag or rev it resolves
+to: the repository's default branch when no `#<ref>` is given, so a build never
+has to guess. That asks the repository through `git ls-remote`, without a
+spinner: it is git's round trip, not the registry's.
 
 They edit lines rather than rewriting the file, so your comments, alignment and
 key order survive — and re-adding a name at a new version replaces it where it

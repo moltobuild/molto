@@ -8,6 +8,7 @@
 #include <molto/services/manifest_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/resolve_service.h>
+#include <molto/services/source_service.h>
 #include <molto/util/loader.h>
 #include <molto/workspace/workspace.h>
 
@@ -26,6 +27,8 @@
    one package: "resolving" alone would be true of any command that reaches a
    registry, and the person watching already knows which one they typed. */
 #define LOADER_LABEL_FORMAT "resolving %s ..."
+
+static int write_entry(const char *name, const char *value, bool development);
 
 /* Find the manifest of the workspace this was run in. */
 static bool manifest_path(char *out, size_t out_size) {
@@ -162,15 +165,19 @@ int add_command_run(const char *name, const char *version, const char *source_ke
         }
     }
 
-    char path[PATH_BUFFER_SIZE];
-    if(!manifest_path(path, sizeof path))
-        return exit_invalid_manifest;
-
     char value[VALUE_BUFFER_SIZE];
     if(!compose_value(version, source_key, source, registry, value, sizeof value)) {
         fprintf(stderr, "molto: the entry for '%s' is too long\n", name);
         return exit_usage_error;
     }
+    return write_entry(name, value, development);
+}
+
+/* Put `name = value` into the table `development` selects. */
+static int write_entry(const char *name, const char *value, bool development) {
+    char path[PATH_BUFFER_SIZE];
+    if(!manifest_path(path, sizeof path))
+        return exit_invalid_manifest;
 
     const char *table = development ? "dev-deps" : "deps";
     char err[512] = "";
@@ -181,6 +188,98 @@ int add_command_run(const char *name, const char *version, const char *source_ke
 
     printf("Added %s = %s to [%s]\n", name, value, table);
     return exit_ok;
+}
+
+/* Characters a git URL or reference may carry into the manifest. Anything that
+   would end or escape a TOML string, or a line, is refused rather than quoted:
+   none of it belongs in either. */
+static bool is_plain_text(const char *text) {
+    for(const char *p = text; *p != '\0'; p++) {
+        const unsigned char c = (unsigned char)*p;
+        if(c <= ' ' || c == '"' || c == '\\' || c == 0x7f)
+            return false;
+    }
+    return true;
+}
+
+bool add_git_spec_parse(const char *spec, char *name, size_t name_size, char *url, size_t url_size,
+                        char *reference, size_t reference_size, char *err, size_t err_size) {
+    static const char prefix[] = ADD_GIT_PREFIX;
+    if(strncmp(spec, prefix, sizeof prefix - 1) != 0) {
+        snprintf(err, err_size, "'%s' does not begin with %s", spec, prefix);
+        return false;
+    }
+    const char *location = spec + sizeof prefix - 1;
+    const char *hash = strchr(location, '#');
+    const size_t url_length = hash == NULL ? strlen(location) : (size_t)(hash - location);
+    const char *ref = hash == NULL ? "" : hash + 1;
+    if(url_length == 0 || url_length >= url_size || strlen(ref) >= reference_size) {
+        snprintf(err, err_size, "'%s' is not a git URL molto can hold", spec);
+        return false;
+    }
+    snprintf(url, url_size, "%.*s", (int)url_length, location);
+    snprintf(reference, reference_size, "%s", ref);
+    if(url[0] == '-' || reference[0] == '-' || !is_plain_text(url) || !is_plain_text(reference) ||
+       (hash != NULL && reference[0] == '\0')) {
+        snprintf(err, err_size, "'%s' is not a git URL molto can hold", spec);
+        return false;
+    }
+
+    /* The name is the repository's: the last segment of the path, without a
+       trailing slash or `.git`. `git@host:org/repo` ends the same way. */
+    size_t end = url_length;
+    while(end > 0 && url[end - 1] == '/')
+        end--;
+    if(end >= 4 && strncmp(url + end - 4, ".git", 4) == 0)
+        end -= 4;
+    size_t start = end;
+    while(start > 0 && url[start - 1] != '/' && url[start - 1] != ':')
+        start--;
+    if(end == start || end - start >= name_size) {
+        snprintf(err, err_size, "'%s' names no repository", url);
+        return false;
+    }
+    snprintf(name, name_size, "%.*s", (int)(end - start), url + start);
+    if(!manifest_is_valid_name(name)) {
+        snprintf(err, err_size,
+                 "'%s' is not a package name; name it yourself with "
+                 "`molto add <name> --git %s`",
+                 name, url);
+        return false;
+    }
+    return true;
+}
+
+int add_git_command_run(const char *spec, bool development) {
+    char name[128];
+    char url[1024];
+    char requested[256];
+    char err[512] = "";
+    if(!add_git_spec_parse(spec, name, sizeof name, url, sizeof url, requested, sizeof requested,
+                           err, sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return exit_usage_error;
+    }
+
+    /* A git dependency needs a branch, tag or rev before any build can cache
+       it, so the question is asked now and the answer written down, the way a
+       registry's newest version is. */
+    const char *key = NULL;
+    char reference[256];
+    if(!source_git_reference_key(url, requested, &key, reference, sizeof reference, err,
+                                 sizeof err)) {
+        fprintf(stderr, "molto: %s\n", err);
+        return exit_dependency_failure;
+    }
+
+    char value[VALUE_BUFFER_SIZE];
+    const int written =
+        snprintf(value, sizeof value, "{ git = \"%s\", %s = \"%s\" }", url, key, reference);
+    if(written < 0 || (size_t)written >= sizeof value) {
+        fprintf(stderr, "molto: the entry for '%s' is too long\n", name);
+        return exit_usage_error;
+    }
+    return write_entry(name, value, development);
 }
 
 int remove_command_run(const char *name) {

@@ -95,8 +95,19 @@ typedef struct {
 [[nodiscard]] bool manifest_read_about(doc_view doc, const char *table, manifest_about *out,
                                        char *err, size_t err_size);
 
-/* Render a default Project.toml for a package named `name`.
+/* What `molto new` and `molto init` start: a library unless asked otherwise
+   (RFC-0002). */
+typedef enum {
+    project_kind_library, /* artifact = "static", tested with moltest */
+    project_kind_binary,  /* artifact = "executable", with a src/main.c */
+} project_kind;
+
+/* Where a new library's moltest comes from. */
+#define MANIFEST_MOLTEST_GIT "https://github.com/moltobuild/moltest"
+#define MANIFEST_MOLTEST_BRANCH "master"
+
+/* Render a default Project.toml of the given kind for a package named `name`.
    Returns a heap-allocated string the caller must free(), or NULL on error. */
-[[nodiscard]] char *manifest_render_default(const char *name);
+[[nodiscard]] char *manifest_render_default(const char *name, project_kind kind);
 
 #endif /* MOLTO_MANIFEST_SERVICE_H */

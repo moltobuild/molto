@@ -81,7 +81,7 @@ jobs:
           molto="$PWD/build/molto"
           "$molto" --version
           cd "$(mktemp -d -t molto)"
-          "$molto" new smoke_test
+          "$molto" new smoke_test --bin
           cd smoke_test
           "$molto" run | tee output
           grep -q "Hello, world!" output
@@ -159,7 +159,7 @@ jobs:
           molto="$PWD/build/molto"
           test "$("$molto" --version)" = "molto ${VERSION}"
           cd "$(mktemp -d)"
-          "$molto" new smoke_test
+          "$molto" new smoke_test --bin
           cd smoke_test
           "$molto" run | tee output
           grep -q "Hello, world!" output
@@ -259,7 +259,7 @@ jobs:
               "Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";\$dir", "User")
           \`\`\`
 
-          Open a new terminal, then \`molto new hello\` and \`molto run\`.
+          Open a new terminal, then \`molto new hello --bin\` and \`molto run\`.
 
           ### macOS
 
@@ -364,7 +364,7 @@ jobs:
           chmod +x "$molto"
           test "$("$molto" --version)" = "molto ${VERSION}"
           cd "$(mktemp -d)"
-          "$molto" new smoke_test
+          "$molto" new smoke_test --bin
           cd smoke_test
           "$molto" run | tee output
           grep -q "Hello, world!" output
@@ -407,7 +407,7 @@ jobs:
           chmod +x "$molto"
           test "$("$molto" --version)" = "molto ${VERSION}"
           cd "$(mktemp -d -t molto)"
-          "$molto" new smoke_test
+          "$molto" new smoke_test --bin
           cd smoke_test
           "$molto" run | tee output
           grep -q "Hello, world!" output
