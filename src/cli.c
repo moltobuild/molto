@@ -237,16 +237,6 @@ static int handle_add(const cli_args *args) {
             continue;
         if(source != NULL) {
             fprintf(stderr, "molto: a dependency has exactly one source\n");
-    /* `git+<url>` carries its own source, and an `@` inside it is part of the
-       URL (`git+ssh://git@host/...`), not a version. */
-    if(spec != NULL && strncmp(spec, ADD_GIT_PREFIX, strlen(ADD_GIT_PREFIX)) == 0) {
-        if(cli_args_option(args, "--git") != NULL || cli_args_option(args, "--path") != NULL ||
-           cli_args_option(args, "--archive") != NULL) {
-            fprintf(stderr, "molto: a dependency has exactly one source\n");
-            return exit_usage_error;
-        }
-        return add_git_command_run(spec, cli_args_flag(args, "--dev"));
-    }
             return exit_usage_error;
         }
         source_key = keys[i];
