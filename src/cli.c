@@ -202,6 +202,16 @@ static int handle_add(const cli_args *args) {
             continue;
         if(source != NULL) {
             fprintf(stderr, "molto: a dependency has exactly one source\n");
+    /* `git+<url>` carries its own source, and an `@` inside it is part of the
+       URL (`git+ssh://git@host/...`), not a version. */
+    if(spec != NULL && strncmp(spec, ADD_GIT_PREFIX, strlen(ADD_GIT_PREFIX)) == 0) {
+        if(cli_args_option(args, "--git") != NULL || cli_args_option(args, "--path") != NULL ||
+           cli_args_option(args, "--archive") != NULL) {
+            fprintf(stderr, "molto: a dependency has exactly one source\n");
+            return exit_usage_error;
+        }
+        return add_git_command_run(spec, cli_args_flag(args, "--dev"));
+    }
             return exit_usage_error;
         }
         source_key = keys[i];
@@ -374,7 +384,7 @@ static const cli_command commands[] = {
      sizeof ir_options / sizeof ir_options[0], handle_ir},
     {"metadata", "Write a CycloneDX bill of materials", NULL, metadata_options,
      sizeof metadata_options / sizeof metadata_options[0], handle_metadata},
-    {"add", "Add a dependency", "<dep>[@<version>]", add_options,
+    {"add", "Add a dependency", "<dep>[@<version>] | git+<url>[#<ref>]", add_options,
      sizeof add_options / sizeof add_options[0], handle_add},
     {"remove", "Remove a dependency", "<dep>", NULL, 0, handle_remove},
     {"login", "Store a registry credential", NULL, login_options,

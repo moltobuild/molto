@@ -276,6 +276,88 @@ static bool looks_like_commit_id(const char *reference) {
     return true;
 }
 
+/* A remote's default branch, from the symbolic ref it advertises for HEAD:
+   "ref: refs/heads/<branch>\tHEAD". */
+static bool remote_default_branch(const char *url, char *out, size_t size, char *err,
+                                  size_t err_size) {
+    const char *argv[] = {"git", "ls-remote", "--symref", url, "HEAD", NULL};
+    char captured[1024] = "";
+    const int code = process_capture(argv, captured, sizeof captured);
+    if(code == 127)
+        return fail(err, err_size,
+                    "git is not installed, and molto needs it to ask a "
+                    "repository for its default branch");
+    if(code != 0)
+        return fail_about(err, err_size, "could not reach the repository", url);
+
+    static const char prefix[] = "ref: refs/heads/";
+    const char *start = strstr(captured, prefix);
+    if(start == NULL)
+        return fail_about(err, err_size, "the repository names no default branch; add #<ref>", url);
+    start += sizeof prefix - 1;
+    const size_t length = strcspn(start, " \t\r\n");
+    if(length == 0 || length >= size)
+        return fail_about(err, err_size, "the repository's default branch is unreadable", url);
+    snprintf(out, size, "%.*s", (int)length, start);
+    return true;
+}
+
+/* Whether `listing`, the output of ls-remote, has a line for `full_ref`. */
+static bool lists_ref(const char *listing, const char *full_ref) {
+    const size_t length = strlen(full_ref);
+    for(const char *at = strstr(listing, full_ref); at != NULL; at = strstr(at + 1, full_ref)) {
+        const bool starts = at > listing && at[-1] == '\t';
+        const char end = at[length];
+        if(starts && (end == '\0' || end == '\n' || end == '\r' || end == '^'))
+            return true;
+    }
+    return false;
+}
+
+bool source_git_reference_key(const char *url, const char *reference, const char **key, char *out,
+                              size_t size, char *err, size_t err_size) {
+    /* Both reach git's command line, where a leading dash is an option. */
+    if(url[0] == '-' || (reference != NULL && reference[0] == '-'))
+        return fail(err, err_size, "a git URL or reference may not begin with '-'");
+
+    if(reference == NULL || reference[0] == '\0') {
+        *key = "branch";
+        return remote_default_branch(url, out, size, err, err_size);
+    }
+    if(strlen(reference) >= size)
+        return fail_about(err, err_size, "git reference too long", reference);
+    snprintf(out, size, "%s", reference);
+    if(looks_like_commit_id(reference)) {
+        *key = "rev";
+        return true;
+    }
+
+    char tag_ref[256];
+    char branch_ref[256];
+    snprintf(tag_ref, sizeof tag_ref, "refs/tags/%s", reference);
+    snprintf(branch_ref, sizeof branch_ref, "refs/heads/%s", reference);
+    const char *argv[] = {"git", "ls-remote", url, tag_ref, branch_ref, NULL};
+    char captured[2048] = "";
+    const int code = process_capture(argv, captured, sizeof captured);
+    if(code == 127)
+        return fail(err, err_size,
+                    "git is not installed, and molto needs it to tell a branch "
+                    "from a tag");
+    if(code != 0)
+        return fail_about(err, err_size, "could not reach the repository", url);
+
+    /* A name that is both is the tag: it is the one that does not move. */
+    if(lists_ref(captured, tag_ref)) {
+        *key = "tag";
+        return true;
+    }
+    if(lists_ref(captured, branch_ref)) {
+        *key = "branch";
+        return true;
+    }
+    return fail_about(err, err_size, "the repository knows no such branch or tag", reference);
+}
+
 bool source_cache_key(const source_spec *spec, char *out, size_t size, char *err, size_t err_size) {
     switch(spec->origin) {
     case source_origin_archive:

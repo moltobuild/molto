@@ -411,6 +411,8 @@ Three rules worth knowing:
 molto add sqlite                      # the newest release, written as an exact version
 molto add sqlite@3.53.4               # that one
 molto add tinytest --dev --path ../tt # into [dev-deps]
+molto add git+https://github.com/moltobuild/moltest --dev  # git; name from the URL
+molto add git+https://github.com/org/zlib#v1.3.1            # at that tag
 molto remove sqlite
 ```
 
@@ -426,6 +428,11 @@ single request has no honest one. Every other form of the command rewrites a
 line in a file and finishes before there is anything to say: `@<version>`,
 `--path`, `--git` and `--archive` reach no registry and draw nothing. Neither
 does a pipe or a log file, which get no row and no escape sequence.
+
+A `git+<url>` dependency is written with the branch, tag or rev it resolves
+to: the repository's default branch when no `#<ref>` is given, so a build never
+has to guess. That asks the repository through `git ls-remote`, without a
+spinner: it is git's round trip, not the registry's.
 
 They edit lines rather than rewriting the file, so your comments, alignment and
 key order survive — and re-adding a name at a new version replaces it where it

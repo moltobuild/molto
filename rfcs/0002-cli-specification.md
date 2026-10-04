@@ -162,6 +162,16 @@ omitted. Accepts the same dependency sources defined in RFC-0003 (registry, git,
 path, archive, recipe). `--dev` adds it to `[dev-deps]` instead, for a
 dependency that must not reach the package's binary (RFC-0008).
 
+`molto add git+<url>[#<ref>]` takes a git source in the spelling `Molto.lock`
+already uses for one. The package name is the repository's: the last segment of
+the URL, without `.git`; when that is not a valid package name, the command
+says so and points at `molto add <name> --git <url>`. A git dependency needs a
+branch, tag or rev before a build can cache it, so the reference is decided
+here and written into the manifest, the way a registry's newest version is:
+without `#<ref>`, the repository is asked for its default branch and that is
+written as `branch`; with one, it is written as `rev` for a commit id and as
+`tag` or `branch` for whichever the repository says it is (a tag when both).
+
 ### `molto remove <dependency>`
 
 Removes a dependency entry from `Project.toml`, from either table.

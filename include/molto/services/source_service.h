@@ -145,6 +145,21 @@ typedef struct {
 [[nodiscard]] bool source_cache_key(const source_spec *spec, char *out, size_t size, char *err,
                                     size_t err_size);
 
+/*
+ * Which manifest key a git `reference` is, asked of the repository at `url`:
+ * `rev` for a commit id, `tag` or `branch` for a name the remote lists (a tag
+ * when it is both), and the remote's default branch, with `branch`, when
+ * `reference` is NULL or empty.
+ *
+ * For `molto add`, which writes the answer into the manifest once so that no
+ * build has to guess. `out` receives the reference to write. False, with a
+ * reason in `err`, when git is missing, the remote is unreachable, or it has
+ * no such reference.
+ */
+[[nodiscard]] bool source_git_reference_key(const char *url, const char *reference,
+                                            const char **key, char *out, size_t size, char *err,
+                                            size_t err_size);
+
 /* True when that coordinate is already fetched and complete. */
 [[nodiscard]] bool source_is_cached(const char *name, const char *version, const char *target);
 
