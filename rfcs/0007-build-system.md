@@ -398,10 +398,10 @@ something the command cannot use.
 
 ## Profiles
 
-A profile is a named set of compile settings and a directory segment. Four names
-exist: `debug`, `release`, `bench` and `custom`. They are selected with
-`--profile` on `build`, `run`, `test` and `lint`, and default to `debug`. An
-unknown name is a usage error.
+A profile is a named set of compile settings and a directory segment. Five names
+exist: `debug`, `release`, `bench`, `custom` and `coverage` (RFC-0019). They are
+selected with `--profile` on `build`, `run`, `test` and `lint`, and default to
+`debug`. An unknown name is a usage error.
 
 Built-in defaults apply when the manifest declares nothing:
 
@@ -411,6 +411,7 @@ Built-in defaults apply when the manifest declares nothing:
 | `release` | 3 | false |
 | `bench` | 3 | false |
 | `custom` | 2 | true |
+| `coverage` | 0 | true, and `--coverage` on every compile and link line |
 
 `[profile.<name>]` overrides them and adds to the base:
 

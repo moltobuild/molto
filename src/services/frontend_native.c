@@ -98,6 +98,8 @@ static const project_options *options_for(const project_ctx *ctx, build_profile 
         return &ctx->profile_options.bench;
     case profile_custom:
         return &ctx->profile_options.custom;
+    case profile_coverage:
+        return &ctx->profile_options.coverage;
     case profile_debug:
         break;
     }
@@ -229,11 +231,33 @@ static bool push_host_scope(ir_target *target, const project_ctx *ctx, char *err
    the native frontend emits carries all three, so they are composed once: an executable and a test
    that filled their scopes in two places would drift, and the drift would show up as a test
    compiled against options the code under it was not. */
+/*
+ * The coverage profile's instrumentation (RFC-0019), on the compile line and
+ * the link line alike, since the coverage runtime has to be linked as much as
+ * the code has to be instrumented.
+ *
+ * The profile's, not the manifest's: nothing writes it in [profile.coverage],
+ * and it lands in the profile scope after whatever that table says, so the
+ * flags a user adds there cannot undo it, and `molto ir --profile coverage`
+ * shows it. Only the project's own targets get it — a package's are composed
+ * apart and never pass through here — so what is measured is the project's
+ * code, not what it links.
+ */
+static bool push_instrumentation(ir_target *target, build_profile profile) {
+    if(profile != profile_coverage)
+        return true;
+    return ir_add_option(&target->options, &target->option_count, PROFILE_COVERAGE_FLAG,
+                         ir_scope_profile) &&
+           ir_add_option(&target->links, &target->link_count, PROFILE_COVERAGE_FLAG,
+                         ir_scope_profile);
+}
+
 static bool fill_common(ir_target *target, const project_ctx *ctx, build_profile profile, char *err,
                         size_t err_size) {
     return push_scope(target, &ctx->target.options, ir_scope_target) &&
            push_scope(target, options_for(ctx, profile), ir_scope_profile) &&
-           push_link_scope(target, ctx, profile) && push_host_scope(target, ctx, err, err_size);
+           push_link_scope(target, ctx, profile) && push_instrumentation(target, profile) &&
+           push_host_scope(target, ctx, err, err_size);
 }
 
 /* `src/` on the include path.

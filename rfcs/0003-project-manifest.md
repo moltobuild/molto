@@ -381,8 +381,8 @@ object in the cache.
 
 ## `[profile.*]`
 
-One table per build profile: `debug`, `release`, `bench`, or the user-defined
-`custom` name (`spec.md` section 13). `release` enables compiler optimizations
+One table per build profile: `debug`, `release`, `bench`, `coverage`
+(RFC-0019), or the user-defined `custom` name (`spec.md` section 13). `release` enables compiler optimizations
 by default.
 
 | Key          | Type          | Description                                             |

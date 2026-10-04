@@ -32,6 +32,9 @@ static void seed_defaults(project_ctx *ctx) {
     ctx->profile.release = (manifest_profile){.opt_level = 3, .debug_info = false};
     ctx->profile.bench = (manifest_profile){.opt_level = 3, .debug_info = false};
     ctx->profile.custom = (manifest_profile){.opt_level = 2, .debug_info = true};
+    /* -O0: an optimiser that merges or drops lines makes a covered line look
+       missed, which is the one thing a coverage figure must not do (RFC-0019). */
+    ctx->profile.coverage = (manifest_profile){.opt_level = 0, .debug_info = true};
 }
 
 /*
@@ -267,6 +270,8 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         TOML_BOOL(project_ctx, "profile.bench", "debug_info", profile.bench.debug_info),
         TOML_INT(project_ctx, "profile.custom", "opt_level", profile.custom.opt_level),
         TOML_BOOL(project_ctx, "profile.custom", "debug_info", profile.custom.debug_info),
+        TOML_INT(project_ctx, "profile.coverage", "opt_level", profile.coverage.opt_level),
+        TOML_BOOL(project_ctx, "profile.coverage", "debug_info", profile.coverage.debug_info),
     };
     size_t field_count = sizeof schema / sizeof schema[0];
     if(!toml_bind(doc, schema, field_count, out, err, err_size)) {
@@ -354,7 +359,8 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
          read_options(doc, "profile.debug", &out->profile_options.debug, err, err_size) &&
          read_options(doc, "profile.release", &out->profile_options.release, err, err_size) &&
          read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
-         read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size);
+         read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size) &&
+         read_options(doc, "profile.coverage", &out->profile_options.coverage, err, err_size);
 
     /* The rest of `[package]`. Read with the same code a recipe's `[about]` is
        read with, because RFC-0009 requires the two to say the same thing and
@@ -437,6 +443,8 @@ void project_ctx_dump(const project_ctx *ctx, FILE *stream) {
             ctx->profile.bench.opt_level, ctx->profile.bench.debug_info ? "true" : "false");
     fprintf(stream, "profile.custom  = { opt_level = %d, debug_info = %s }\n",
             ctx->profile.custom.opt_level, ctx->profile.custom.debug_info ? "true" : "false");
+    fprintf(stream, "profile.coverage = { opt_level = %d, debug_info = %s }\n",
+            ctx->profile.coverage.opt_level, ctx->profile.coverage.debug_info ? "true" : "false");
     project_deps_dump(&ctx->deps, stream);
 }
 

@@ -2,7 +2,7 @@
 
 - RFC Number: 0019
 - Title: The Coverage Profile
-- Status: Draft
+- Status: Accepted
 - Created: 2026-10-04
 
 ## Summary

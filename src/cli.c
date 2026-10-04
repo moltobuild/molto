@@ -76,8 +76,8 @@ static const cli_option add_options[] = {
  * it can have its own flag when someone wants it.
  */
 static const cli_option run_options[] = {
-    {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
-     "debug"},
+    {"--profile", 'p', cli_opt_value, "<name>",
+     "Build profile (debug, release, bench, custom, coverage)", "debug"},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
      "Resolve the compiler again instead of reusing the cached one", NULL},
     {"--jobs", 'j', cli_opt_value, "<n>", "Compile at most n units at once (default: every core)",
@@ -85,8 +85,8 @@ static const cli_option run_options[] = {
 };
 
 static const cli_option build_options[] = {
-    {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
-     "debug"},
+    {"--profile", 'p', cli_opt_value, "<name>",
+     "Build profile (debug, release, bench, custom, coverage)", "debug"},
     {"--target", 't', cli_opt_value, "<triple>",
      "Platform to build for; this machine's when absent", NULL},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
@@ -99,8 +99,8 @@ static const cli_option build_options[] = {
    in force, so it decides what even compiles — plus the machine-readable output
    CI wants. */
 static const cli_option lint_options[] = {
-    {"--profile", 'p', cli_opt_value, "<name>", "Build profile (debug, release, bench, custom)",
-     "debug"},
+    {"--profile", 'p', cli_opt_value, "<name>",
+     "Build profile (debug, release, bench, custom, coverage)", "debug"},
     {"--refresh-toolchain", 0, cli_opt_flag, NULL,
      "Resolve the compiler again instead of reusing the cached one", NULL},
     {"--refresh-tools", 0, cli_opt_flag, NULL,

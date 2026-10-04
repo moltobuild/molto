@@ -271,12 +271,31 @@ debug_info = false
 flags      = ["-flto"]      # added on top of [target], release only
 ```
 
-Profiles: `debug` (default), `release`, `bench`, `custom`. Select with
-`molto build --profile release`. Output goes to `build/<profile>/`.
+Profiles: `debug` (default), `release`, `bench`, `custom`, `coverage`. Select
+with `molto build --profile release`. Output goes to `build/<profile>/`.
 
 `defines`/`include`/`flags` in a profile are **added on top of** the `[target]`
 base, never replace it. Changing any compile setting triggers recompilation:
 Molto records the exact command per object and rebuilds when it changes.
+
+### I want to measure coverage
+
+```sh
+molto test --profile coverage
+```
+
+The `coverage` profile builds `src/` and `tests/` at `-O0` with debug info and
+instrumented for coverage — Molto adds `--coverage` to the compile and link
+lines itself, so the manifest needs nothing. Running the tests writes `.gcda`
+counters beside the objects under `build/coverage/obj/`. Dependencies are not
+instrumented: the figure is your code's.
+
+Molto builds the measurement and does not read it. With moltest, add
+[moltest-coverage](https://github.com/moltobuild/moltest-coverage) and the run
+ends with a report, lcov and JSON, and an optional floor; with anything else,
+point gcovr or lcov at `build/coverage/`. `[profile.coverage]` is an ordinary
+profile table for anything else you want there. The profile needs a GCC- or
+Clang-compatible compiler, and is refused with MSVC ([RFC-0019](../rfcs/0019-the-coverage-profile.md)).
 
 ### I need environment variables during the build or the run
 
@@ -348,7 +367,7 @@ embedded in the binary is a list that expires. `MIT OR`, `(MIT` and
 | `sources` | array | implemented | Extra sources for tests only; directories walked |
 | `defines`, `include`, `flags` | array | implemented | Applied only when compiling tests |
 
-### `[profile.debug|release|bench|custom]`
+### `[profile.debug|release|bench|custom|coverage]`
 
 | Key | Type | Status | Notes |
 |---|---|---|---|
@@ -357,7 +376,8 @@ embedded in the binary is a list that expires. `MIT OR`, `(MIT` and
 | `defines`, `include`, `flags` | array | implemented | Added on top of `[target]` |
 
 Defaults if the table is absent: `debug` = `{0, true}`, `release` = `{3, false}`,
-`bench` = `{3, false}`, `custom` = `{2, true}`.
+`bench` = `{3, false}`, `custom` = `{2, true}`, `coverage` = `{0, true}` (and
+always instrumented).
 
 ### `[env]`
 

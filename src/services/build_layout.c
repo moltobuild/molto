@@ -148,6 +148,8 @@ manifest_profile build_profile_settings(const project_ctx *ctx, build_profile pr
         return ctx->profile.bench;
     case profile_custom:
         return ctx->profile.custom;
+    case profile_coverage:
+        return ctx->profile.coverage;
     case profile_debug:
     default:
         return ctx->profile.debug;

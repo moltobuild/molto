@@ -196,6 +196,8 @@ static const project_options *profile_options_for(const project_ctx *ctx, build_
         return &ctx->profile_options.bench;
     case profile_custom:
         return &ctx->profile_options.custom;
+    case profile_coverage:
+        return &ctx->profile_options.coverage;
     case profile_debug:
     default:
         return &ctx->profile_options.debug;

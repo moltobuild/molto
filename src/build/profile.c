@@ -8,10 +8,8 @@ typedef struct {
 } profile_entry;
 
 static const profile_entry profile_table[] = {
-    {"debug", profile_debug},
-    {"release", profile_release},
-    {"bench", profile_bench},
-    {"custom", profile_custom},
+    {"debug", profile_debug},   {"release", profile_release},   {"bench", profile_bench},
+    {"custom", profile_custom}, {"coverage", profile_coverage},
 };
 
 bool profile_parse(const char *name, build_profile *out) {
@@ -34,4 +32,8 @@ const char *profile_name(build_profile profile) {
             return profile_table[i].name;
     }
     return profile_table[0].name;
+}
+
+bool profile_coverage_supported(const char *vendor) {
+    return vendor == NULL || strcmp(vendor, "msvc") != 0;
 }
