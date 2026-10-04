@@ -300,7 +300,7 @@ ends up on a compile or link line of the project that depends on it.
 | `include` | array[string] | Directories added as `-I`, relative to the artifact root |
 | `link` | array[string] | Libraries added as `-l` |
 | `defines` | array[string] | Defines added as `-D` |
-| `flags` | array[string] | Raw flags a consumer must compile with |
+| `flags` | array[string] | Raw flags passed verbatim to the compiler and the linker of whatever depends on it, as RFC-0003's `[target].flags` are |
 
 Everything in that table is the package's **interface**: it reaches the compile
 and link lines of whatever depends on it. `[artifacts.private]` is the other
