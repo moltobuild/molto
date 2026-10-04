@@ -222,7 +222,7 @@ jobs:
             molto="$here/build/molto"
             "$molto" --version
             cd "$(mktemp -d)"
-            "$molto" new smoke_test
+            "$molto" new smoke_test --bin
             cd smoke_test
             "$molto" run | tee output
             grep -q "Hello, world!" output

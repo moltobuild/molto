@@ -150,7 +150,7 @@ jobs:
             # a prefix, and the bare form -- which is what the Windows job
             # uses, on msys2's GNU coreutils -- is a usage error here.
             cd "$(mktemp -d -t molto)"
-            "$molto" new smoke_test
+            "$molto" new smoke_test --bin
             cd smoke_test
             "$molto" run | tee output
             grep -q "Hello, world!" output
