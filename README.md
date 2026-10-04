@@ -94,8 +94,9 @@ attribute, because this one is not notarised: `xattr -d com.apple.quarantine
 molto` clears it, or open it once from Finder with a right click.
 
 **Then get a compiler.** Molto does not choose one: it asks
-[`pickup`](https://github.com/moltobuild/pickup), which installs one under
-`~/.pickup` without root. Failing that, name the drivers by hand:
+[`pickup`](https://github.com/moltobuild/pickup), which installs one in your
+user data directory (`~/.local/share/pickup`, `%APPDATA%\pickup` on Windows)
+without root. Failing that, name the drivers by hand:
 
 ```sh
 export C_COMPILER=gcc CPP_COMPILER=g++
