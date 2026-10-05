@@ -199,13 +199,14 @@ MOLTEST(test_command_forwards_what_follows_the_double_dash) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(test_command_tells_each_binary_its_place_in_the_run) {
+DESCRIBE(test_command_tells_each_binary_its_place_in_the_run) {
     /* RFC-0020: a plugin that measures the whole run (moltest-coverage) erases
        in the first executable and reports in the last, and only Molto knows
        which those are. Each binary appends what it was told to one file, so
        the file is the run as the binaries saw it. [env] tries to set both
        variables too, and loses: a position the manifest could fake would make
-       a plugin judge a partial run as whole. */
+       a plugin judge a partial run as whole. The file is opened in binary
+       mode: in text mode Windows writes "\r\n", which is not what is compared. */
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_test_position", root, sizeof root));
 
@@ -227,7 +228,7 @@ MOLTEST(test_command_tells_each_binary_its_place_in_the_run) {
         "int main(void) {\n"
         "    const char *index = getenv(\"MOLTO_TEST_INDEX\");\n"
         "    const char *count = getenv(\"MOLTO_TEST_COUNT\");\n"
-        "    FILE *out = fopen(\"positions.txt\", \"a\");\n"
+        "    FILE *out = fopen(\"positions.txt\", \"ab\");\n"
         "    if(out == NULL) return 1;\n"
         "    fprintf(out, \"%s/%s\\n\", index ? index : \"-\", count ? count : \"-\");\n"
         "    return fclose(out) == 0 ? 0 : 1;\n"
