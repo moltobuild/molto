@@ -2,7 +2,7 @@
 
 - RFC Number: 0021
 - Title: Isolated Tests
-- Status: Draft
+- Status: Accepted
 - Created: 2026-10-04
 
 ## Summary
