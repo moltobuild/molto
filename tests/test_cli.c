@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* What the test command handler saw on the last run. */
 static struct {
@@ -264,4 +265,32 @@ DESCRIBE(only_build_takes_a_target) {
        asks the parser and nothing else. */
     char *accepted[] = {"molto", "build", "--target", "x86_64-w64-mingw32", "--help", NULL};
     EXPECT_EQ(exit_ok, cli_run(5, accepted));
+}
+
+DESCRIBE(add_takes_d_for_dev) {
+    /* `-d` is `--dev`: the dependency lands in [dev-deps]. Driven through the
+       real command table in a temporary workspace, because what is under test
+       is the option `add` was given, and a case in Molto's own workspace would
+       rewrite its manifest. `--path` keeps it away from any registry. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_add_d", root, sizeof root));
+    char manifest[MOLTEST_PATH + 32];
+    ASSERT_TRUE(fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root));
+    ASSERT_TRUE(fs_write_file(manifest, "[package]\nname = \"app\"\n"));
+
+    char previous[4096];
+    ASSERT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    ASSERT_TRUE(chdir(root) == 0);
+    char *argv[] = {"molto", "add", "tt", "--path", "../tt", "-d", NULL};
+    const int code = cli_run(6, argv);
+    EXPECT_TRUE(chdir(previous) == 0);
+
+    EXPECT_EQ(exit_ok, code);
+    char *text = fs_read_file(manifest);
+    ASSERT_NOT_NULL(text);
+    const char *dev = strstr(text, "[dev-deps]");
+    EXPECT_NOT_NULL(dev);
+    EXPECT_NOT_NULL(dev != NULL ? strstr(dev, "tt = { path = \"../tt\" }") : NULL);
+    free(text);
+    (void)fs_remove_tree(root);
 }

@@ -48,7 +48,7 @@ static const cli_option new_options[] = {
 /* `molto add`. The source keys mirror RFC-0003's, so what is typed here and
    what ends up in the manifest are spelled the same. */
 static const cli_option add_options[] = {
-    {"--dev", 0, cli_opt_flag, NULL, "Add to [dev-deps]: needed to develop, never shipped", NULL},
+    {"--dev", 'd', cli_opt_flag, NULL, "Add to [dev-deps]: needed to develop, never shipped", NULL},
     {"--git", 0, cli_opt_value, "<url>", "Take it from a git repository", NULL},
     {"--path", 0, cli_opt_value, "<dir>", "Take it from a local directory", NULL},
     {"--archive", 0, cli_opt_value, "<url>", "Take it from a source archive", NULL},

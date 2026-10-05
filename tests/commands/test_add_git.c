@@ -6,7 +6,9 @@
 #include <molto/services/source_service.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* `molto add git+<url>[#<ref>]`: the spelling Molto.lock uses for a git
  * source, accepted on the command line. Parsing is pure and checked without a
@@ -129,6 +131,40 @@ DESCRIBE(git_reference_key_tells_branch_tag_and_commit_apart) {
 
     EXPECT_FALSE(source_git_reference_key(repo, "nope", &key, ref, sizeof ref, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "nope"));
+
+    (void)fs_remove_tree(root);
+}
+
+DESCRIBE(add_with_git_and_no_reference_writes_the_default_branch) {
+    /* `molto add dep --git <url>` used to write `{ git = "<url>" }` and stop:
+       a manifest no build accepts, because a git source caches under a commit
+       and needs a branch, tag or rev. `git+<url>` already asked the repository
+       for its default branch; this spelling now does the same. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_addgit_noref", root, sizeof root));
+    char repo[MOLTEST_PATH + 16];
+    char head[128] = "";
+    if (!make_repo(root, repo, sizeof repo, head, sizeof head)) {
+        (void)fs_remove_tree(root);
+        SKIP("this machine has no usable git");
+    }
+    char manifest[MOLTEST_PATH + 32];
+    ASSERT_TRUE(fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root));
+    ASSERT_TRUE(fs_write_file(manifest, "[package]\nname = \"app\"\n"));
+
+    char previous[4096];
+    ASSERT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    ASSERT_TRUE(chdir(root) == 0);
+    const int code = add_command_run("dep", NULL, "git", repo, NULL, true);
+    EXPECT_TRUE(chdir(previous) == 0);
+
+    EXPECT_EQ(0, code);
+    char *text = fs_read_file(manifest);
+    ASSERT_NOT_NULL(text);
+    char expected[MOLTEST_PATH + 96];
+    snprintf(expected, sizeof expected, "dep = { git = \"%s\", branch = \"main\" }", repo);
+    EXPECT_NOT_NULL(strstr(text, expected));
+    free(text);
 
     (void)fs_remove_tree(root);
 }
