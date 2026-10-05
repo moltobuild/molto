@@ -347,9 +347,20 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     /* One target for the whole suite in this mode, so every unit names it.
        Not linked at all when every test file is isolated: the framework alone
        is a suite of nothing. */
-    if(ok && shared_tests > 0)
+    if(ok && shared_tests > 0) {
         ok = link_one_test(context, &link_objects, binary, cpp, context->test_units[0].node,
                            binaries_out);
+        /* No framework at all: nothing supplies main(), and all the linker
+           can say is that main is undefined, not why. */
+        const bool no_framework = str_list_count(&framework) == 0 &&
+                                  context->dev_start == str_list_count(context->lib_objects);
+        if(!ok && no_framework)
+            build_report_message(context->report,
+                                 "molto: note: [test] mode = \"single\" links every test into "
+                                 "one executable whose main() a test framework supplies, and "
+                                 "this build has none. Add one to [dev-deps] (moltest), or use "
+                                 "mode = \"per_file\" with a main() in each test\n");
+    }
     int result = ok ? exit_ok : exit_build_failure;
     for(size_t i = 0; result == exit_ok && i < str_list_count(test_objects); i++) {
         const char *source = str_list_get(test_sources, i);

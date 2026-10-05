@@ -220,7 +220,9 @@ include = ["third_party/tinytest/include"]
 ```
 
 That produces `build/<profile>/tests/<package>_tests`. `[test]` also accepts
-`defines` and `flags`, applied only when compiling tests.
+`defines` and `flags`, applied only when compiling tests. In `single` mode with
+no framework at all, the link fails on an undefined `main`, and molto adds a
+note saying so: add one to `[dev-deps]`, or go back to `per_file`.
 
 ### I want to build a library rather than a program
 

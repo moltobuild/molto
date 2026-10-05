@@ -284,3 +284,25 @@ DESCRIBE(the_link_note_names_both_places_a_missing_fake_can_come_from) {
     free(said);
     (void)fs_remove_tree(root);
 }
+
+DESCRIBE(single_mode_without_a_framework_says_what_supplies_main) {
+    /* single links every test into one executable whose main() a framework
+       supplies. Without one the linker says "undefined main" and nothing
+       about why; molto knows the why. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(clock_project(root, sizeof root,
+                              "[package]\nname = \"app\"\n[test]\nmode = \"single\"\n"));
+    ASSERT_TRUE(write_in(root, "tests/test_check.c",
+                         "int app_elapsed(int start);\n"
+                         "int check(void) { return app_elapsed(0) == 1000 ? 0 : 1; }\n"));
+
+    int code = 0;
+    char *said = build_and_read_report(root, &code);
+    EXPECT_EQ(exit_build_failure, code);
+    ASSERT_NOT_NULL(said);
+    EXPECT_NOT_NULL(strstr(said, "main()"));
+    EXPECT_NOT_NULL(strstr(said, "[dev-deps]"));
+    EXPECT_NOT_NULL(strstr(said, "per_file"));
+    free(said);
+    (void)fs_remove_tree(root);
+}
