@@ -288,6 +288,26 @@ with `molto build --profile release`. Output goes to `build/<profile>/`.
 base, never replace it. Changing any compile setting triggers recompilation:
 Molto records the exact command per object and rebuilds when it changes.
 
+### I want to fake a function in a test
+
+A fake (moltest-mock, fff, or one written by hand) is a definition the linker
+takes instead of the real one, so the real one must not be in the test binary.
+Say which sources a test file replaces:
+
+```toml
+[[test.isolated]]
+file     = "tests/services/test_build_failures.c"
+replaces = ["src/services/process_service.c"]   # or "dep:src/x.c", or "dep"
+```
+
+That file links into an executable of its own, `build/<profile>/tests/<stem>`,
+without those sources; the rest of the suite keeps its mode. Everything else
+the project and its dependencies compiled is linked as an archive, so the test
+fakes only what its code under test reaches. A replacement that names no
+source of the build, or names a `[dev-deps]` package, is a manifest error. A
+call between two functions of one `.c` cannot be faked: move one of them to
+another file ([RFC-0021](../rfcs/0021-isolated-tests.md)).
+
 ### I want to measure coverage
 
 ```sh
@@ -384,6 +404,7 @@ embedded in the binary is a list that expires. `MIT OR`, `(MIT` and
 | `mode` | string | implemented | `per_file` (default) or `single` |
 | `sources` | array | implemented | Extra sources for tests only; directories walked |
 | `defines`, `include`, `flags` | array | implemented | Applied only when compiling tests |
+| `[[test.isolated]]` `file`, `replaces` | table array | implemented | A test file linked alone, without the sources it replaces (RFC-0021) |
 
 ### `[profile.debug|release|bench|custom|coverage]`
 

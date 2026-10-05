@@ -157,6 +157,67 @@ static bool valid_compiler(const char *name) {
                             PROJECT_OPT_LEN, count, err, err_size);
 }
 
+/* Where an isolated test has to live: it is a test file like any other. */
+#define ISOLATED_FILE_PREFIX "tests/"
+
+/* Whether `entry` has the shape of a replacement: a path, "dep:path" or "dep".
+   Empty halves around the colon are refused here; whether the source exists is
+   the build's question, since only the plan knows every source. */
+static bool replacement_is_well_formed(const char *entry) {
+    if(entry[0] == '\0')
+        return false;
+    const char *colon = strchr(entry, ':');
+    return colon == NULL || (colon != entry && colon[1] != '\0');
+}
+
+/*
+ * `[[test.isolated]]` (RFC-0021): which test files link alone, and without what.
+ *
+ * Fails closed, unlike the rest of `[test]`. An entry that says too little — no
+ * file, no replacement, a file outside tests/ — does not quietly do nothing: it
+ * leaves the real function in the binary beside the fake, and the link fails
+ * with a duplicate symbol that points nowhere near the manifest.
+ */
+[[nodiscard]] static bool read_isolated_tests(const toml_document *doc, project_test *test,
+                                              char *err, size_t err_size) {
+    const size_t count = toml_table_array_count(doc, "test.isolated");
+    if(count > PROJECT_MAX_ISOLATED)
+        return set_error(err, err_size, "[[test.isolated]] has %zu entries; at most %d", count,
+                         PROJECT_MAX_ISOLATED);
+    for(size_t i = 0; i < count; i++) {
+        char section[TOML_SECTION_MAX];
+        if(!toml_table_array_section("test.isolated", i, section, sizeof section))
+            return set_error(err, err_size, "[[test.isolated]] entry %zu has no name", i + 1);
+        project_isolated_test *entry = &test->isolated[i];
+        if(!toml_get_string(doc, section, "file", entry->file, sizeof entry->file))
+            return set_error(err, err_size, "[[test.isolated]] entry %zu needs a file", i + 1);
+        if(strncmp(entry->file, ISOLATED_FILE_PREFIX, sizeof ISOLATED_FILE_PREFIX - 1) != 0)
+            return set_error(err, err_size, "[[test.isolated]] file '%s' is not under tests/",
+                             entry->file);
+        for(size_t j = 0; j < i; j++) {
+            if(strcmp(test->isolated[j].file, entry->file) == 0)
+                return set_error(err, err_size, "[[test.isolated]] names '%s' twice", entry->file);
+        }
+        if(!doc_read_strings(doc_from_toml(doc), section, "replaces", entry->replaces[0],
+                             PROJECT_MAX_REPLACES, PROJECT_OPT_LEN, &entry->replace_count, err,
+                             err_size))
+            return false;
+        if(entry->replace_count == 0)
+            return set_error(err, err_size,
+                             "[[test.isolated]] '%s' needs replaces: what to leave out",
+                             entry->file);
+        for(size_t j = 0; j < entry->replace_count; j++) {
+            if(!replacement_is_well_formed(entry->replaces[j]))
+                return set_error(
+                    err, err_size,
+                    "[[test.isolated]] '%s' replaces '%s': not a path, dep:path or dep",
+                    entry->file, entry->replaces[j]);
+        }
+        test->isolated_count++;
+    }
+    return true;
+}
+
 /*
  * Hand the package's own identity to the code being compiled.
  *
@@ -337,7 +398,8 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     ok = ok &&
          read_option_array(doc, "test", "sources", out->test.sources, &out->test.source_count, err,
                            err_size) &&
-         read_options(doc, "test", &out->test.options, err, err_size);
+         read_options(doc, "test", &out->test.options, err, err_size) &&
+         read_isolated_tests(doc, &out->test, err, err_size);
 
     /* target.requires: the features the project needs from a compiler. */
     ok = ok && read_option_array(doc, "target", "requires", out->target.requires,

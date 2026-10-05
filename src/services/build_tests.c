@@ -27,10 +27,12 @@
  * to check is that they agree about everything except that.
  */
 
-/* Output path of a test executable: build/<profile>/tests/<name>, mirroring the
-   test source's path under tests/ with its extension stripped. */
-[[nodiscard]] static bool test_binary_path(const char *root, const char *profile_dir,
-                                           const char *test_source, char *out, size_t out_size) {
+/* Output path of something built for one test source:
+   build/<profile>/tests/<name><suffix>, mirroring the source's path under
+   tests/ with its extension stripped. */
+[[nodiscard]] static bool test_output_path(const char *root, const char *profile_dir,
+                                           const char *test_source, const char *suffix, char *out,
+                                           size_t out_size) {
     char stem[PATH_BUFFER_SIZE];
     if(!fs_format_path(stem, sizeof stem, "%s", build_relative_to_root(root, test_source)))
         return fs_report_long_path(test_source);
@@ -38,9 +40,15 @@
     char *slash = strrchr(stem, '/');
     if(dot != NULL && (slash == NULL || dot > slash))
         *dot = '\0';
-    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s" FS_EXECUTABLE_SUFFIX, root,
-                          profile_dir, stem) ||
+    return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s%s", root, profile_dir, stem,
+                          suffix) ||
            fs_report_long_path(test_source);
+}
+
+/* Output path of a test executable. */
+[[nodiscard]] static bool test_binary_path(const char *root, const char *profile_dir,
+                                           const char *test_source, char *out, size_t out_size) {
+    return test_output_path(root, profile_dir, test_source, FS_EXECUTABLE_SUFFIX, out, out_size);
 }
 
 /* Everything a test link needs beyond its own objects. */
@@ -55,6 +63,10 @@ typedef struct {
        line comes from now. */
     const compile_unit *test_units;
     const str_list *lib_objects; /* src objects, minus the app's main */
+    /* Where in `lib_objects` the development dependencies' objects begin: an
+       isolated test links those loose and archives the rest (RFC-0021). */
+    size_t dev_start;
+    const build_plan *plan; /* what compiled each object, to find a replacement */
     bool any_cpp;
     bool force; /* something was recompiled */
     wsdb *db;
@@ -75,6 +87,182 @@ static bool link_one_test(const test_link_context *context, const str_list *obje
     return str_list_push(binaries_out, binary);
 }
 
+/* --- Isolated tests (RFC-0021) --- */
+
+/* Whether `unit` is what replacement `entry` names: a source of the project
+   ("src/a.c"), one of a dependency ("dep:src/a.c"), or any of a dependency's
+   ("dep"). Paths are the document's, relative to the package's own root. */
+static bool replacement_names(const compile_unit *unit, const char *entry) {
+    const char *package = unit->node->package;
+    const char *path = unit->unit->path;
+    const char *colon = strchr(entry, ':');
+    if(colon != NULL) {
+        const size_t length = (size_t)(colon - entry);
+        return package != NULL && strlen(package) == length &&
+               strncmp(package, entry, length) == 0 && strcmp(path, colon + 1) == 0;
+    }
+    if(strchr(entry, '/') != NULL)
+        return package == NULL && strcmp(path, entry) == 0;
+    return package != NULL && strcmp(package, entry) == 0;
+}
+
+/* The objects `entry` leaves out. Each replacement has to name a source the
+   project or a runtime dependency compiles: one that names nothing leaves the
+   real function in place beside the fake, and a development dependency is the
+   test framework, not code under test. Either is a manifest error. */
+[[nodiscard]] static int replaced_objects_of(const build_plan *plan,
+                                             const project_isolated_test *entry,
+                                             build_report *report, str_list *out) {
+    for(size_t r = 0; r < entry->replace_count; r++) {
+        const char *replacement = entry->replaces[r];
+        bool found = false;
+        for(size_t p = 0; p < plan->pass_count; p++) {
+            const compile_pass *pass = &plan->passes[p];
+            for(size_t u = 0; u < pass->count; u++) {
+                const compile_unit *unit = pass->units[u].unit;
+                if(unit->node->kind == ir_target_test || !replacement_names(unit, replacement))
+                    continue;
+                if(build_in_set(&plan->doc, unit->node, doc_targets_dev_packages)) {
+                    build_report_message(report,
+                                         "molto: [[test.isolated]] '%s' replaces '%s', a "
+                                         "development dependency: the test framework is not "
+                                         "code under test\n",
+                                         entry->file, replacement);
+                    return exit_invalid_manifest;
+                }
+                found = true;
+                if(!str_list_push(out, pass->units[u].object))
+                    return exit_build_failure;
+            }
+        }
+        if(!found) {
+            build_report_message(report,
+                                 "molto: [[test.isolated]] '%s' replaces '%s', which is not a "
+                                 "source of this build\n",
+                                 entry->file, replacement);
+            return exit_invalid_manifest;
+        }
+    }
+    return exit_ok;
+}
+
+/* Whether `list` holds `text`. */
+static bool list_holds(const str_list *list, const char *text) {
+    for(size_t i = 0; i < str_list_count(list); i++) {
+        if(strcmp(str_list_get(list, i), text) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* The `[[test.isolated]]` entry for `source`, or NULL when it links as usual. */
+static const project_isolated_test *isolated_entry_for(const char *root, const project_test *test,
+                                                       const char *source) {
+    const char *relative = build_relative_to_root(root, source);
+    for(size_t i = 0; i < test->isolated_count; i++) {
+        if(strcmp(test->isolated[i].file, relative) == 0)
+            return &test->isolated[i];
+    }
+    return NULL;
+}
+
+/* Whether `source` is a test file rather than one of `[test].sources`. */
+static bool is_test_file(const char *root, const char *source) {
+    return strncmp(build_relative_to_root(root, source), DIR_TESTS "/", sizeof DIR_TESTS) == 0;
+}
+
+/* Every entry names a test source and real replacements, checked once the
+   plan knows every source and before anything compiles. */
+[[nodiscard]] static int check_isolated_tests(const char *root, const project_test *test,
+                                              const build_plan *plan, build_report *report) {
+    for(size_t i = 0; i < test->isolated_count; i++) {
+        const project_isolated_test *entry = &test->isolated[i];
+        bool is_a_test = false;
+        for(size_t s = 0; !is_a_test && s < str_list_count(&plan->test_sources); s++) {
+            const char *source = str_list_get(&plan->test_sources, s);
+            is_a_test = isolated_entry_for(root, test, source) == entry;
+        }
+        if(!is_a_test) {
+            build_report_message(
+                report, "molto: [[test.isolated]] file '%s' is not a test source\n", entry->file);
+            return exit_invalid_manifest;
+        }
+        str_list replaced;
+        str_list_init(&replaced);
+        const int result = replaced_objects_of(plan, entry, report, &replaced);
+        str_list_free(&replaced);
+        if(result != exit_ok)
+            return result;
+    }
+    return exit_ok;
+}
+
+/*
+ * An isolated test's executable: its own object, `loose` (a framework's
+ * sources in single mode) and the development dependencies' objects as they
+ * are, then everything else the project and its runtime dependencies compiled,
+ * minus the replaced sources, as one static archive.
+ *
+ * The archive is the point. Linked loose, every remaining object is in the
+ * binary, and each one that calls into a replaced source needs a fake whether
+ * the test reaches it or not. From an archive the linker takes only the
+ * members the test reaches, so it fakes what its code calls and nothing else.
+ * One archive needs no --start-group: a linker rescans an archive's own index
+ * until it stops pulling members. The framework stays loose because a
+ * constructor in a member nothing references would never be pulled in.
+ */
+[[nodiscard]] static int link_isolated_test(const test_link_context *context,
+                                            const project_isolated_test *entry, const char *source,
+                                            const char *object, const str_list *loose, bool cpp,
+                                            const ir_target *node, str_list *binaries_out) {
+    char binary[PATH_BUFFER_SIZE];
+    char archive[PATH_BUFFER_SIZE];
+    if(!test_binary_path(context->root, context->profile_dir, source, binary, sizeof binary) ||
+       !test_output_path(context->root, context->profile_dir, source, ".isolated.a", archive,
+                         sizeof archive))
+        return exit_build_failure;
+
+    str_list replaced;
+    str_list archived;
+    str_list link_objects;
+    str_list_init(&replaced);
+    str_list_init(&archived);
+    str_list_init(&link_objects);
+    int result = replaced_objects_of(context->plan, entry, context->report, &replaced);
+    bool ok = result == exit_ok && str_list_push(&link_objects, object);
+    for(size_t i = 0; ok && i < str_list_count(loose); i++)
+        ok = str_list_push(&link_objects, str_list_get(loose, i));
+    const size_t total = str_list_count(context->lib_objects);
+    for(size_t i = context->dev_start; ok && i < total; i++)
+        ok = str_list_push(&link_objects, str_list_get(context->lib_objects, i));
+    for(size_t i = 0; ok && i < context->dev_start; i++) {
+        const char *kept = str_list_get(context->lib_objects, i);
+        if(!list_holds(&replaced, kept))
+            ok = str_list_push(&archived, kept);
+    }
+    if(ok && str_list_count(&archived) > 0)
+        ok = build_make_parent_dirs(archive) &&
+             build_archive_project(&archived, archive, &context->ctx->env, context->chain,
+                                   context->force, context->db, context->report) &&
+             str_list_push(&link_objects, archive);
+    if(ok && !link_one_test(context, &link_objects, binary, cpp, node, binaries_out)) {
+        /* What the linker cannot know: the symbol it missed most likely lived
+           in a file this test asked to leave out. */
+        build_report_message(context->report,
+                             "molto: note: %s replaces %s%s; a function of it the test reaches "
+                             "has to be faked in the test\n",
+                             entry->file, entry->replaces[0],
+                             entry->replace_count > 1 ? " and more" : "");
+        ok = false;
+    }
+    if(result == exit_ok && !ok)
+        result = exit_build_failure;
+    str_list_free(&link_objects);
+    str_list_free(&archived);
+    str_list_free(&replaced);
+    return result;
+}
+
 /* One executable per test file: each links its own object with the project's
    library objects, and brings its own main(). */
 static int link_tests_per_file(const test_link_context *context, const str_list *test_sources,
@@ -82,6 +270,17 @@ static int link_tests_per_file(const test_link_context *context, const str_list 
     for(size_t i = 0; i < str_list_count(test_sources); i++) {
         const char *source = str_list_get(test_sources, i);
         const char *object = str_list_get(test_objects, i);
+        const project_isolated_test *entry =
+            isolated_entry_for(context->root, &context->ctx->test, source);
+        if(entry != NULL) {
+            const str_list none = {0};
+            const int result = link_isolated_test(context, entry, source, object, &none,
+                                                  context->any_cpp || source_is_cpp(source),
+                                                  context->test_units[i].node, binaries_out);
+            if(result != exit_ok)
+                return result;
+            continue;
+        }
 
         char binary[PATH_BUFFER_SIZE];
         if(!test_binary_path(context->root, context->profile_dir, source, binary, sizeof binary))
@@ -118,22 +317,48 @@ static int link_tests_single(const test_link_context *context, const str_list *t
         return exit_build_failure;
     }
 
+    /* An isolated file leaves the suite for an executable of its own; the
+       framework's sources (outside tests/) go into every executable, since
+       that is where main() is. */
     str_list link_objects;
+    str_list framework;
     str_list_init(&link_objects);
+    str_list_init(&framework);
     bool ok = true;
     bool cpp = context->any_cpp;
+    size_t shared_tests = 0;
     for(size_t i = 0; ok && i < str_list_count(test_objects); i++) {
+        const char *source = str_list_get(test_sources, i);
+        cpp = cpp || source_is_cpp(source);
+        if(isolated_entry_for(context->root, &context->ctx->test, source) != NULL)
+            continue;
         ok = str_list_push(&link_objects, str_list_get(test_objects, i));
-        cpp = cpp || source_is_cpp(str_list_get(test_sources, i));
+        if(ok && is_test_file(context->root, source))
+            shared_tests++;
+        else if(ok)
+            ok = str_list_push(&framework, str_list_get(test_objects, i));
     }
     for(size_t i = 0; ok && i < str_list_count(context->lib_objects); i++)
         ok = str_list_push(&link_objects, str_list_get(context->lib_objects, i));
 
-    /* One target for the whole suite in this mode, so every unit names it. */
-    ok = ok && link_one_test(context, &link_objects, binary, cpp, context->test_units[0].node,
-                             binaries_out);
+    /* One target for the whole suite in this mode, so every unit names it.
+       Not linked at all when every test file is isolated: the framework alone
+       is a suite of nothing. */
+    if(ok && shared_tests > 0)
+        ok = link_one_test(context, &link_objects, binary, cpp, context->test_units[0].node,
+                           binaries_out);
+    int result = ok ? exit_ok : exit_build_failure;
+    for(size_t i = 0; result == exit_ok && i < str_list_count(test_objects); i++) {
+        const char *source = str_list_get(test_sources, i);
+        const project_isolated_test *entry =
+            isolated_entry_for(context->root, &context->ctx->test, source);
+        if(entry != NULL)
+            result = link_isolated_test(context, entry, source, str_list_get(test_objects, i),
+                                        &framework, cpp, context->test_units[0].node, binaries_out);
+    }
+    str_list_free(&framework);
     str_list_free(&link_objects);
-    return ok ? exit_ok : exit_build_failure;
+    return result;
 }
 
 /* Every object the project compiled except the one holding its `main`: a test
@@ -208,8 +433,9 @@ static void prune_what_a_deleted_test_left(wsdb *db, const char *root, const cha
 [[nodiscard]] static int link_the_suite(const char *root, const char *profile_dir,
                                         const project_ctx *ctx, const resolved_toolchain *chain,
                                         const build_plan *plan, const str_list *lib_objects,
-                                        str_list *test_objects, bool force, wsdb *db,
-                                        build_report *report, str_list *test_binaries_out) {
+                                        size_t dev_start, str_list *test_objects, bool force,
+                                        wsdb *db, build_report *report,
+                                        str_list *test_binaries_out) {
     const test_link_context context = {
         .root = root,
         .profile_dir = profile_dir,
@@ -217,6 +443,8 @@ static void prune_what_a_deleted_test_left(wsdb *db, const char *root, const cha
         .chain = chain,
         .test_units = plan->test_units,
         .lib_objects = lib_objects,
+        .dev_start = dev_start,
+        .plan = plan,
         .any_cpp = plan->any_cpp,
         .force = force,
         .db = db,
@@ -348,11 +576,15 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
     if(result == exit_ok)
         result = library_objects_of(&objects, main_object, has_main, &lib_objects);
 
+    const size_t dev_start = str_list_count(&lib_objects);
     if(result == exit_ok)
         result = plan_the_dev_packages(root, &env, &plan, &lib_objects);
 
     if(result == exit_ok)
         result = plan_the_tests(root, &env, &plan, &test_objects);
+
+    if(result == exit_ok)
+        result = check_isolated_tests(root, &ctx.test, &plan, report);
 
     /* Everything is planned, so the report can finally say how much there is —
        and only now does anything compile. The four passes run in the order
@@ -364,8 +596,8 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
     }
 
     if(result == exit_ok)
-        result = link_the_suite(root, profile_dir, &ctx, &chain, &plan, &lib_objects, &test_objects,
-                                any_compiled, db, report, test_binaries_out);
+        result = link_the_suite(root, profile_dir, &ctx, &chain, &plan, &lib_objects, dev_start,
+                                &test_objects, any_compiled, db, report, test_binaries_out);
 
     if(result == exit_ok)
         prune_what_a_deleted_test_left(db, root, profile_dir, &test_objects, test_binaries_out);
