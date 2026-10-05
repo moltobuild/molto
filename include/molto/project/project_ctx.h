@@ -105,6 +105,22 @@ typedef enum {
     test_mode_single,
 } test_mode;
 
+/* How many `[[test.isolated]]` entries a manifest may declare, and how many
+   sources each may replace (RFC-0021). */
+#define PROJECT_MAX_ISOLATED 16
+#define PROJECT_MAX_REPLACES 8
+
+/* One `[[test.isolated]]` entry: a test file linked into an executable of its
+   own, without the sources it replaces, so a fake it defines stands in for
+   the real function (RFC-0021). Each replacement is a source of the project
+   ("src/a.c"), one of a dependency ("dep:src/a.c"), or a whole dependency
+   ("dep"); that it names something real is checked when the build is planned. */
+typedef struct {
+    char file[PROJECT_OPT_LEN];
+    char replaces[PROJECT_MAX_REPLACES][PROJECT_OPT_LEN];
+    size_t replace_count;
+} project_isolated_test;
+
 /* The `[test]` table: how tests are built, and what they need beyond the
    project's own sources. */
 typedef struct {
@@ -115,6 +131,8 @@ typedef struct {
     char sources[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t source_count;
     project_options options; /* defines/include/flags applied only to tests */
+    project_isolated_test isolated[PROJECT_MAX_ISOLATED];
+    size_t isolated_count;
 } project_test;
 
 /* The `[env]` table: variables exported to every process Molto spawns for this

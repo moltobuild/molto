@@ -2,6 +2,7 @@
 
 #include <molto/project/project_ctx.h>
 
+#include <stdio.h>
 #include <string.h>
 
 /* A manifest exercising the package and profile tables. */
@@ -449,4 +450,62 @@ DESCRIBE(project_reads_the_artifact_kind_it_is_built_as) {
     ASSERT_TRUE(project_parse("[package]\nname = \"x\"\nartifact = \"shared\"\n", &ctx, err,
                               sizeof err));
     EXPECT_EQ(artifact_shared, ctx.artifact);
+}
+
+/* --- [[test.isolated]] (RFC-0021) --- */
+
+static bool parse_isolated(const char *tables, project_ctx *ctx, char *err, size_t err_size) {
+    char toml[2048];
+    snprintf(toml, sizeof toml, "[package]\nname = \"app\"\n%s", tables);
+    return project_parse(toml, ctx, err, err_size);
+}
+
+DESCRIBE(isolated_tests_name_a_file_and_what_it_replaces) {
+    static project_ctx ctx;
+    char err[256] = "";
+    ASSERT_TRUE(parse_isolated("[[test.isolated]]\n"
+                               "file = \"tests/test_failures.c\"\n"
+                               "replaces = [\"src/process.c\", \"clocklib:src/clock.c\"]\n"
+                               "[[test.isolated]]\n"
+                               "file = \"tests/deep/test_offline.c\"\n"
+                               "replaces = [\"netlib\"]\n",
+                               &ctx, err, sizeof err));
+    ASSERT_EQ(2, (int)ctx.test.isolated_count);
+    EXPECT_STREQ("tests/test_failures.c", ctx.test.isolated[0].file);
+    ASSERT_EQ(2, (int)ctx.test.isolated[0].replace_count);
+    EXPECT_STREQ("src/process.c", ctx.test.isolated[0].replaces[0]);
+    EXPECT_STREQ("clocklib:src/clock.c", ctx.test.isolated[0].replaces[1]);
+    EXPECT_STREQ("tests/deep/test_offline.c", ctx.test.isolated[1].file);
+    EXPECT_STREQ("netlib", ctx.test.isolated[1].replaces[0]);
+}
+
+DESCRIBE(a_manifest_without_isolated_tests_has_none) {
+    static project_ctx ctx;
+    char err[256] = "";
+    ASSERT_TRUE(parse_isolated("", &ctx, err, sizeof err));
+    EXPECT_EQ(0, (int)ctx.test.isolated_count);
+}
+
+DESCRIBE(an_isolated_test_that_says_too_little_is_a_manifest_error) {
+    /* Each of these would leave the real function in the binary and the fake
+       colliding with it, the failure the table exists to remove, so none is
+       accepted quietly. */
+    static const char *const bad[][2] = {
+        {"[[test.isolated]]\nreplaces = [\"src/a.c\"]\n", "file"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\n", "replaces"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = []\n", "replaces"},
+        {"[[test.isolated]]\nfile = \"src/t.c\"\nreplaces = [\"src/a.c\"]\n", "tests/"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = [\"src/a.c\"]\n"
+         "[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = [\"src/b.c\"]\n",
+         "twice"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = [\"\"]\n", "replaces"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = [\"dep:\"]\n", "dep:"},
+        {"[[test.isolated]]\nfile = \"tests/t.c\"\nreplaces = [\":src/a.c\"]\n", ":src/a.c"},
+    };
+    for(size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        static project_ctx ctx;
+        char err[256] = "";
+        EXPECT_FALSE(parse_isolated(bad[i][0], &ctx, err, sizeof err));
+        EXPECT_NOT_NULL(strstr(err, bad[i][1]));
+    }
 }

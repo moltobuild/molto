@@ -185,3 +185,32 @@ away from the suite that needs it for everything else.
 - Whether a dependency replaced whole should still have its include directories
   on the test's compile line. Today they come with the dependency; the fake
   usually needs its header.
+
+## Implementation Status
+
+Implemented after molto 0.51.0: `[[test.isolated]]` is read and checked for
+shape (`project_ctx`); once the build is planned, each entry must name a test
+source and each replacement a source the project or a runtime dependency
+compiles, before anything compiles (`build_tests`). An isolated file links
+alone in both modes, with its object, the framework's sources and the
+development dependencies loose, and the rest as an archive minus the replaced
+objects. `tests/services/test_isolated_tests.c` covers `per_file`, `single`, a
+dependency's source, both manifest errors and a missing fake.
+
+Where it differs from the design above:
+
+- **No `--start-group`.** There is one archive, and a linker rescans an
+  archive's own index until it stops pulling members; a group is only needed
+  between several archives.
+- **The link note names the replaced files, not the symbol.** Saying which
+  replaced source defined the missing symbol needs that source's symbols, from
+  an object reader per format. The note says the test replaces those files and
+  that a function of them it reaches has to be faked.
+- **What a test fakes is per file, not per call.** The linker takes an archive
+  member whole, so a test fakes every function of a replaced source that the
+  files it pulls in call, including from functions it never runs. Molto's
+  first isolated test fakes `process_run` because `source_service.c` clones
+  with it, though the test only asks git for references.
+- **Not in the IR document.** `molto ir` still describes the suite as before;
+  the isolated executables are composed when the tests are linked.
+
