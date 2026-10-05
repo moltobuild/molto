@@ -272,3 +272,39 @@ DESCRIBE(a_release_is_remembered_for_a_coordinate_nothing_fetched) {
     (void)unsetenv("MOLTO_CACHE");
     (void)fs_remove_tree(root);
 }
+
+DESCRIBE(a_platform_asked_for_and_not_published_names_what_was) {
+    /* A plugin asks for the host's platform (RFC-0014); what the release has
+       instead is what can be acted on. */
+    resolved_dep dep;
+    char err[512] = "";
+    EXPECT_FALSE(resolve_read_release_for(ENVELOPE(SOURCE_TARGET), "sqlite", "3.53.4",
+                                          "x86_64-linux", &dep, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "published for any, and not for x86_64-linux"));
+}
+
+DESCRIBE(a_release_kept_by_an_older_molto_beside_the_sources_is_still_read) {
+    /* Releases used to live beside the sources. A cache an older molto filled
+       keeps answering instead of being fetched again. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_legacy_release", root, sizeof root));
+    char cache[MOLTEST_PATH + 16] = "";
+    snprintf(cache, sizeof cache, "%s/cache", root);
+    ASSERT_EQ(0, setenv("MOLTO_CACHE", cache, 1));
+
+    char sources[512] = "";
+    ASSERT_TRUE(source_cache_path("sqlite", "3.53.4", "any", sources, sizeof sources));
+    ASSERT_TRUE(fs_make_dirs(sources));
+    char legacy[600] = "";
+    snprintf(legacy, sizeof legacy, "%s/.molto-release.json", sources);
+    ASSERT_TRUE(fs_write_file(legacy, ENVELOPE(SOURCE_TARGET)));
+
+    resolved_dep dep;
+    ASSERT_TRUE(resolve_remembered("sqlite", "3.53.4", &dep));
+    EXPECT_STREQ("sqlite", dep.coordinate.name);
+    /* And nothing at all for a coordinate never seen. */
+    EXPECT_FALSE(resolve_remembered("sqlite", "0.0.1", &dep));
+
+    (void)unsetenv("MOLTO_CACHE");
+    (void)fs_remove_tree(root);
+}
