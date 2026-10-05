@@ -247,11 +247,13 @@ static bool is_test_file(const char *root, const char *source) {
                                    context->force, context->db, context->report) &&
              str_list_push(&link_objects, archive);
     if(ok && !link_one_test(context, &link_objects, binary, cpp, node, binaries_out)) {
-        /* What the linker cannot know: the symbol it missed most likely lived
-           in a file this test asked to leave out. */
+        /* What the linker cannot know. A symbol it missed lived in a file this
+           test asked to leave out, or was a fake another test file defines for
+           the shared suite: this executable links neither. */
         build_report_message(context->report,
-                             "molto: note: %s replaces %s%s; a function of it that the linked "
-                             "code calls has to be faked in the test\n",
+                             "molto: note: %s replaces %s%s and links alone. A missing symbol "
+                             "is a function of a replaced file, or a fake another test file "
+                             "defines for the rest of the suite; define it in this test\n",
                              entry->file, entry->replaces[0],
                              entry->replace_count > 1 ? " and more" : "");
         ok = false;
@@ -345,9 +347,20 @@ static int link_tests_single(const test_link_context *context, const str_list *t
     /* One target for the whole suite in this mode, so every unit names it.
        Not linked at all when every test file is isolated: the framework alone
        is a suite of nothing. */
-    if(ok && shared_tests > 0)
+    if(ok && shared_tests > 0) {
         ok = link_one_test(context, &link_objects, binary, cpp, context->test_units[0].node,
                            binaries_out);
+        /* No framework at all: nothing supplies main(), and all the linker
+           can say is that main is undefined, not why. */
+        const bool no_framework = str_list_count(&framework) == 0 &&
+                                  context->dev_start == str_list_count(context->lib_objects);
+        if(!ok && no_framework)
+            build_report_message(context->report,
+                                 "molto: note: [test] mode = \"single\" links every test into "
+                                 "one executable whose main() a test framework supplies, and "
+                                 "this build has none. Add one to [dev-deps] (moltest), or use "
+                                 "mode = \"per_file\" with a main() in each test\n");
+    }
     int result = ok ? exit_ok : exit_build_failure;
     for(size_t i = 0; result == exit_ok && i < str_list_count(test_objects); i++) {
         const char *source = str_list_get(test_sources, i);

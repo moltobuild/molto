@@ -220,7 +220,9 @@ include = ["third_party/tinytest/include"]
 ```
 
 That produces `build/<profile>/tests/<package>_tests`. `[test]` also accepts
-`defines` and `flags`, applied only when compiling tests.
+`defines` and `flags`, applied only when compiling tests. In `single` mode with
+no framework at all, the link fails on an undefined `main`, and molto adds a
+note saying so: add one to `[dev-deps]`, or go back to `per_file`.
 
 ### I want to build a library rather than a program
 
@@ -308,7 +310,9 @@ without those sources; the rest of the suite keeps its mode. Everything else
 the project and its dependencies compiled is linked as an archive, so only the
 files the test reaches are linked; the test fakes what those files call. The
 linker takes a file whole, so that includes calls from functions the test never
-runs, and a missing one is an undefined symbol molto points back to here. A replacement that names no
+runs. It also includes fakes another test file defines for the rest of the
+suite: an isolated test does not link them. A missing one is an undefined
+symbol, and molto's note says which test and which replaced files. A replacement that names no
 source of the build, or names a `[dev-deps]` package, is a manifest error. A
 call between two functions of one `.c` cannot be faked: move one of them to
 another file ([RFC-0021](../rfcs/0021-isolated-tests.md)).
