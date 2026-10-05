@@ -485,7 +485,9 @@ does a pipe or a log file, which get no row and no escape sequence.
 
 A `git+<url>` dependency is written with the branch, tag or rev it resolves
 to: the repository's default branch when no `#<ref>` is given, so a build never
-has to guess. That asks the repository through `git ls-remote`, without a
+has to guess. `molto add <name> --git <url>` does the same without `@<ref>`, and
+is the spelling for a repository whose name is not a package name:
+`molto add moltest_coverage@v0.2.0 --git https://github.com/moltobuild/moltest-coverage -d`. That asks the repository through `git ls-remote`, without a
 spinner: it is git's round trip, not the registry's.
 
 They edit lines rather than rewriting the file, so your comments, alignment and

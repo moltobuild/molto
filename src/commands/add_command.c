@@ -165,7 +165,28 @@ int add_command_run(const char *name, const char *version, const char *source_ke
         }
     }
 
+    /* A git source with no reference asks the repository for its default
+       branch and writes it down, as `git+<url>` does: written without one, the
+       entry is a manifest no build accepts, since a git source caches under a
+       commit. */
     char value[VALUE_BUFFER_SIZE];
+    if(source != NULL && version == NULL && strcmp(source_key, "git") == 0) {
+        const char *key = NULL;
+        char reference[256];
+        char err[512] = "";
+        if(!source_git_reference_key(source, NULL, &key, reference, sizeof reference, err,
+                                     sizeof err)) {
+            fprintf(stderr, "molto: %s\n", err);
+            return exit_dependency_failure;
+        }
+        const int written =
+            snprintf(value, sizeof value, "{ git = \"%s\", %s = \"%s\" }", source, key, reference);
+        if(written < 0 || (size_t)written >= sizeof value) {
+            fprintf(stderr, "molto: the entry for '%s' is too long\n", name);
+            return exit_usage_error;
+        }
+        return write_entry(name, value, development);
+    }
     if(!compose_value(version, source_key, source, registry, value, sizeof value)) {
         fprintf(stderr, "molto: the entry for '%s' is too long\n", name);
         return exit_usage_error;
