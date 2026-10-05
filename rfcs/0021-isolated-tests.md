@@ -1,6 +1,6 @@
-# RFC 0020: Isolated Tests
+# RFC 0021: Isolated Tests
 
-- RFC Number: 0020
+- RFC Number: 0021
 - Title: Isolated Tests
 - Status: Draft
 - Created: 2026-10-04
@@ -96,7 +96,9 @@ lld do not need it.
 In `single` mode the file is taken out of the shared executable. In `per_file`
 mode it already has one; only step 3 changes. Either way `molto test` runs every
 executable it built and reports each, as it does for `per_file` today, and what
-follows `--` reaches all of them.
+follows `--` reaches all of them. Each one is told its place in the run
+(RFC-0020), so a plugin that measures the whole run, such as moltest-coverage,
+erases in the first executable and reports in the last.
 
 The archive is built per isolated file, under `build/<profile>/tests/`, from
 objects that already exist: nothing is compiled twice. The replaced sources are
@@ -178,12 +180,6 @@ away from the suite that needs it for everything else.
 
 ## Unresolved questions
 
-- **Coverage across executables.** Several executables write counters for the
-  same objects, and gcov merges them, so the measurement is right. But
-  moltest-coverage reports, and applies its floor, at the end of each run: the
-  first executable to finish would judge a partial measurement. Either
-  moltest-coverage learns to defer to the last run, or Molto tells the test
-  binaries which run is last.
 - Whether `molto test -k`-style selection should be able to name an isolated
   executable, or only filter inside them as it does today.
 - Whether a dependency replaced whole should still have its include directories
