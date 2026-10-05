@@ -79,7 +79,7 @@ static bool build_chain(sandbox *at, project_ctx *ctx, dep_graph **graph) {
     return dep_graph_resolve(ctx, graph, err, sizeof err);
 }
 
-MOLTEST(the_lock_records_the_whole_graph_sorted) {
+DESCRIBE(the_lock_records_the_whole_graph_sorted) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -111,7 +111,7 @@ MOLTEST(the_lock_records_the_whole_graph_sorted) {
 
 /* Regenerating an unchanged graph must produce the same bytes, or the file is
    noise in every diff and nobody reads it. */
-MOLTEST(rendering_twice_gives_the_same_bytes) {
+DESCRIBE(rendering_twice_gives_the_same_bytes) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -129,7 +129,7 @@ MOLTEST(rendering_twice_gives_the_same_bytes) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_written_lock_reads_back) {
+DESCRIBE(a_written_lock_reads_back) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -158,7 +158,7 @@ MOLTEST(a_written_lock_reads_back) {
 
 /* A format this reader does not understand is discarded rather than guessed
    at, the same rule the WSDB follows. Re-resolving is always correct. */
-MOLTEST(a_lock_from_the_future_is_refused) {
+DESCRIBE(a_lock_from_the_future_is_refused) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char path[PATH_MAX_LEN];
@@ -173,7 +173,7 @@ MOLTEST(a_lock_from_the_future_is_refused) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_missing_lock_is_reported_and_not_a_crash) {
+DESCRIBE(a_missing_lock_is_reported_and_not_a_crash) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -186,7 +186,7 @@ MOLTEST(a_missing_lock_is_reported_and_not_a_crash) {
 }
 
 /* Editing the manifest makes the lock stale. Adding is the easy half. */
-MOLTEST(a_lock_stops_matching_when_a_dependency_is_added) {
+DESCRIBE(a_lock_stops_matching_when_a_dependency_is_added) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -213,7 +213,7 @@ MOLTEST(a_lock_stops_matching_when_a_dependency_is_added) {
 /* And removing one is the half a check of the direct entries alone would miss:
    every dependency the manifest still names is locked at the right version, and
    the lock is stale anyway because it holds a package nothing reaches. */
-MOLTEST(a_lock_stops_matching_when_a_dependency_is_removed) {
+DESCRIBE(a_lock_stops_matching_when_a_dependency_is_removed) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     EXPECT_TRUE(make_package(&at, "a", NULL));
@@ -244,7 +244,7 @@ MOLTEST(a_lock_stops_matching_when_a_dependency_is_removed) {
 /* A git URL or a directory can carry a quote or a backslash. Writing one
    unescaped produces a lock file that stops parsing, and it would be found by
    whoever owns that path, long after the commit that broke it. */
-MOLTEST(a_quote_in_a_source_survives_the_round_trip) {
+DESCRIBE(a_quote_in_a_source_survives_the_round_trip) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -269,7 +269,7 @@ MOLTEST(a_quote_in_a_source_survives_the_round_trip) {
 /* The same path, through the writer: a real dependency living in a directory
    whose name carries a quote. The package is called `odd` and its directory is
    not, which is what lets the name stay a name while the path stays awkward. */
-MOLTEST(the_writer_escapes_a_quote_in_a_path) {
+DESCRIBE(the_writer_escapes_a_quote_in_a_path) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -321,7 +321,7 @@ MOLTEST(the_writer_escapes_a_quote_in_a_path) {
 /* The lock is written by the build, not by a command of its own, because that
    is where the graph is already in hand. If this stops happening, nothing else
    in this file would notice. */
-MOLTEST(a_build_with_dependencies_writes_the_lock) {
+DESCRIBE(a_build_with_dependencies_writes_the_lock) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     EXPECT_TRUE(make_package(&at, "greet", NULL));
@@ -358,7 +358,7 @@ MOLTEST(a_build_with_dependencies_writes_the_lock) {
 
 /* A project with no dependencies has nothing to lock, and must not litter one
    into every repository that never needed it — molto's own included. */
-MOLTEST(a_build_without_dependencies_writes_no_lock) {
+DESCRIBE(a_build_without_dependencies_writes_no_lock) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -383,7 +383,7 @@ MOLTEST(a_build_without_dependencies_writes_no_lock) {
 
 /* The resolution that produced a lock agrees with it. Anything else here would
    mean a build could never be repeated. */
-MOLTEST(a_resolution_verifies_against_its_own_lock) {
+DESCRIBE(a_resolution_verifies_against_its_own_lock) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -404,7 +404,7 @@ MOLTEST(a_resolution_verifies_against_its_own_lock) {
 /* A coordinate that now points somewhere else. The registry is a remote party
    and a coordinate is supposed to be immutable, so this is the check the lock
    exists for. */
-MOLTEST(a_source_that_moved_is_refused) {
+DESCRIBE(a_source_that_moved_is_refused) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -431,7 +431,7 @@ MOLTEST(a_source_that_moved_is_refused) {
 
 /* A dependency that appeared out of a coordinate that was supposed to be
    frozen. This is the shape a compromised release has. */
-MOLTEST(a_package_the_lock_never_saw_is_refused) {
+DESCRIBE(a_package_the_lock_never_saw_is_refused) {
     sandbox at;
     project_ctx ctx;
     dep_graph *graph = NULL;
@@ -462,7 +462,7 @@ MOLTEST(a_package_the_lock_never_saw_is_refused) {
 
 /* And the build refuses too, rather than warning: a resolution that disagrees
    with the lock is the one case where continuing is the wrong default. */
-MOLTEST(a_build_stops_when_the_lock_disagrees) {
+DESCRIBE(a_build_stops_when_the_lock_disagrees) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     EXPECT_TRUE(make_package(&at, "greet", NULL));
@@ -506,7 +506,7 @@ static lock_host one_host(const char *capability, const char *version) {
     return entry;
 }
 
-MOLTEST(the_lock_records_what_a_host_library_answered) {
+DESCRIBE(the_lock_records_what_a_host_library_answered) {
     const lock_host hosts[] = {one_host("gtk+-3.0", "3.24.33")};
     char *text = lockfile_render("ui", NULL, hosts, 1);
     ASSERT_NOT_NULL(text);
@@ -520,7 +520,7 @@ MOLTEST(the_lock_records_what_a_host_library_answered) {
 
 /* Omitted rather than written empty, like a path dependency's version: "" reads
    as a version that happens to be blank. */
-MOLTEST(a_host_library_with_no_version_records_none) {
+DESCRIBE(a_host_library_with_no_version_records_none) {
     const lock_host hosts[] = {one_host("toykit", "")};
     char *text = lockfile_render("ui", NULL, hosts, 1);
     ASSERT_NOT_NULL(text);
@@ -537,7 +537,7 @@ MOLTEST(a_host_library_with_no_version_records_none) {
 /* A project with host libraries and no dependencies still gets a lock: what it
    borrowed from the machine is worth recording even when it borrowed no
    packages. */
-MOLTEST(a_lock_with_only_host_entries_reads_back) {
+DESCRIBE(a_lock_with_only_host_entries_reads_back) {
     const lock_host hosts[] = {one_host("gtk+-3.0", "3.24.33"), one_host("zlib", "1.2.11")};
     char *text = lockfile_render("ui", NULL, hosts, 2);
     ASSERT_NOT_NULL(text);
@@ -565,7 +565,7 @@ MOLTEST(a_lock_with_only_host_entries_reads_back) {
 /* Reported and never refused, which is the difference between this and
    lockfile_verify: a package resolving to other bytes is a registry rewriting
    history, and a host library on another version is Tuesday. */
-MOLTEST(a_host_library_on_another_version_is_reported_not_refused) {
+DESCRIBE(a_host_library_on_another_version_is_reported_not_refused) {
     lockfile lock = {0};
     lock_host recorded = one_host("gtk+-3.0", "3.24.30");
     lock.hosts = &recorded;
@@ -580,7 +580,7 @@ MOLTEST(a_host_library_on_another_version_is_reported_not_refused) {
 
 /* Nothing to say when either side knows no version: "it changed to unknown" is
    not a fact worth a line of a build's output. */
-MOLTEST(a_host_library_with_no_version_on_either_side_is_quiet) {
+DESCRIBE(a_host_library_with_no_version_on_either_side_is_quiet) {
     lockfile lock = {0};
     lock_host recorded = one_host("toykit", "");
     lock.hosts = &recorded;

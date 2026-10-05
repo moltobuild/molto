@@ -72,7 +72,7 @@ static const char *const RECIPE = "schema = 1\n"
                                   "link = [\"m\"]\n"
                                   "defines = [\"YYJSON_STATIC=1\"]\n";
 
-MOLTEST(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
+DESCRIBE(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_dependency(&at, RECIPE));
@@ -127,7 +127,7 @@ static bool parse_with_relative_dep(project_ctx *out, char *err, size_t err_size
     return project_parse(manifest, out, err, err_size);
 }
 
-MOLTEST(deps_prepare_anchors_a_relative_path_at_the_project_root) {
+DESCRIBE(deps_prepare_anchors_a_relative_path_at_the_project_root) {
     /* The working directory here is not the sandbox, so a path used as written
        cannot resolve. That is the whole bug: every command walks up to find its
        project, so running one from a subdirectory used to send the build
@@ -155,7 +155,7 @@ MOLTEST(deps_prepare_anchors_a_relative_path_at_the_project_root) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_leaves_the_manifest_path_as_it_was_written) {
+DESCRIBE(deps_prepare_leaves_the_manifest_path_as_it_was_written) {
     /* Anchoring happens on the copy that opens the directory and never on what
        the manifest said, because what the manifest said is what the lock file
        records. An anchored one would write this machine's absolute path into a
@@ -181,7 +181,7 @@ MOLTEST(deps_prepare_leaves_the_manifest_path_as_it_was_written) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_records_what_each_package_exports) {
+DESCRIBE(deps_prepare_records_what_each_package_exports) {
     /* The sum of every package's interface is what a compile line needs, and it
        cannot answer which package asked for what. A document's `Dependency`
        node has to, so the export is recorded against the package as well —
@@ -222,7 +222,7 @@ MOLTEST(deps_prepare_records_what_each_package_exports) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_takes_every_source_when_the_recipe_names_none) {
+DESCRIBE(deps_prepare_takes_every_source_when_the_recipe_names_none) {
     static const char *const everything = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                           "name = \"yyjson\"\nversion = \"0.10.0\"\n"
                                           "target = \"any\"\n"
@@ -249,7 +249,7 @@ MOLTEST(deps_prepare_takes_every_source_when_the_recipe_names_none) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_reports_a_source_that_brings_no_recipe) {
+DESCRIBE(deps_prepare_reports_a_source_that_brings_no_recipe) {
     /* [deps] can say where the bytes are but not what to compile out of them,
        so the source has to say it itself. */
     sandbox at;
@@ -271,7 +271,7 @@ MOLTEST(deps_prepare_reports_a_source_that_brings_no_recipe) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_reports_a_source_the_recipe_names_but_does_not_contain) {
+DESCRIBE(deps_prepare_reports_a_source_the_recipe_names_but_does_not_contain) {
     static const char *const missing = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                        "name = \"yyjson\"\nversion = \"0.10.0\"\n"
                                        "target = \"any\"\n"
@@ -298,7 +298,7 @@ MOLTEST(deps_prepare_reports_a_source_the_recipe_names_but_does_not_contain) {
    the compiler as an input — which reports it as an unused linker argument,
    naming neither the recipe nor the key that put it there. `sources` names
    files one by one because it fails closed (RFC-0009). */
-MOLTEST(deps_prepare_reports_a_directory_where_a_source_was_named) {
+DESCRIBE(deps_prepare_reports_a_directory_where_a_source_was_named) {
     static const char *const directory = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                          "name = \"yyjson\"\nversion = \"0.10.0\"\n"
                                          "target = \"any\"\n"
@@ -326,7 +326,7 @@ MOLTEST(deps_prepare_reports_a_directory_where_a_source_was_named) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_refuses_an_artifact_it_cannot_consume) {
+DESCRIBE(deps_prepare_refuses_an_artifact_it_cannot_consume) {
     /* A prebuilt library needs ar, -fPIC and a link step molto does not have. */
     static const char *const prebuilt = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                         "name = \"yyjson\"\nversion = \"0.10.0\"\n"
@@ -349,7 +349,7 @@ MOLTEST(deps_prepare_refuses_an_artifact_it_cannot_consume) {
     sandbox_close(&at);
 }
 
-MOLTEST(deps_prepare_does_nothing_and_touches_nothing_without_deps) {
+DESCRIBE(deps_prepare_does_nothing_and_touches_nothing_without_deps) {
     project_ctx ctx;
     char err[512] = "";
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n", &ctx, err,
@@ -363,7 +363,7 @@ MOLTEST(deps_prepare_does_nothing_and_touches_nothing_without_deps) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(deps_prepare_names_the_dependency_that_failed) {
+DESCRIBE(deps_prepare_names_the_dependency_that_failed) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -431,7 +431,7 @@ static bool mentions(const str_list *list, const char *text) {
    of each other used to share one set of flags, so a define one of them needed
    internally reached the other's preprocessor — and a warning one of them chose
    to silence was silenced for everybody. */
-MOLTEST(one_dependency_does_not_compile_with_another_s_flags) {
+DESCRIBE(one_dependency_does_not_compile_with_another_s_flags) {
     static const char *const alpha = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                      "name = \"alpha\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
                                      "[artifacts]\ntype = \"source\"\n"
@@ -492,7 +492,7 @@ MOLTEST(one_dependency_does_not_compile_with_another_s_flags) {
 /* Isolation cannot mean isolation from what a package actually depends on: its
    sources include its dependency's headers, so that dependency's interface has
    to be on its command line. */
-MOLTEST(a_dependency_compiles_against_what_it_reaches) {
+DESCRIBE(a_dependency_compiles_against_what_it_reaches) {
     static const char *const inner = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                      "name = \"inner\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
                                      "[artifacts]\ntype = \"source\"\n"
@@ -542,7 +542,7 @@ MOLTEST(a_dependency_compiles_against_what_it_reaches) {
 /* The standard travels from the recipe to the unit that compiles that package,
    and each language is decided on its own: a C library with one C++ shim names
    `std` and lets `cpp_std` be whatever the consumer compiles with. */
-MOLTEST(a_unit_carries_the_standard_its_recipe_named) {
+DESCRIBE(a_unit_carries_the_standard_its_recipe_named) {
     static const char *const legacy = "schema = 1\nform = \"source\"\nkind = \"package\"\n"
                                       "name = \"yyjson\"\nversion = \"0.10.0\"\n"
                                       "target = \"any\"\n"
@@ -572,7 +572,7 @@ MOLTEST(a_unit_carries_the_standard_its_recipe_named) {
 
 /* And a recipe that names none leaves both empty, which is how every package
    behaved before the keys existed. */
-MOLTEST(a_unit_whose_recipe_named_no_standard_inherits_the_consumers) {
+DESCRIBE(a_unit_whose_recipe_named_no_standard_inherits_the_consumers) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_dependency(&at, RECIPE));

@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-MOLTEST(profile) {
+DESCRIBE(profile) {
     build_profile profile = profile_debug;
 
     EXPECT_TRUE(profile_parse("debug", &profile) && profile == profile_debug);
@@ -22,7 +22,7 @@ MOLTEST(profile) {
 }
 
 /* RFC-0019: a fifth profile, named like the others. */
-MOLTEST(coverage_is_a_profile) {
+DESCRIBE(coverage_is_a_profile) {
     build_profile profile = profile_debug;
     EXPECT_TRUE(profile_parse("coverage", &profile) && profile == profile_coverage);
     EXPECT_STREQ("coverage", profile_name(profile_coverage));
@@ -30,7 +30,7 @@ MOLTEST(coverage_is_a_profile) {
 
 /* GCC and Clang build it; MSVC has no gcov coverage and is refused. A vendor
    Molto could not name (C_COMPILER) is not refused for being unnamed. */
-MOLTEST(coverage_needs_a_gcc_or_clang_toolchain) {
+DESCRIBE(coverage_needs_a_gcc_or_clang_toolchain) {
     EXPECT_TRUE(profile_coverage_supported("gcc"));
     EXPECT_TRUE(profile_coverage_supported("clang"));
     EXPECT_TRUE(profile_coverage_supported("apple-clang"));

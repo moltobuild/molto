@@ -26,7 +26,7 @@ static void parse_one(const char *line, diagnostic *out) {
     diagnostic_parse_line(line, out);
 }
 
-MOLTEST(diagnostic_parses_a_gcc_warning) {
+DESCRIBE(diagnostic_parses_a_gcc_warning) {
     diagnostic item;
     parse_one("lt.c:1:20: warning: unused variable 'x' [-Wunused-variable]", &item);
 
@@ -39,7 +39,7 @@ MOLTEST(diagnostic_parses_a_gcc_warning) {
     EXPECT_STREQ("-Wunused-variable", item.rule_native);
 }
 
-MOLTEST(diagnostic_parses_a_clang_format_violation) {
+DESCRIBE(diagnostic_parses_a_clang_format_violation) {
     diagnostic item;
     parse_one("a.c:1:4: error: code should be clang-formatted "
               "[-Wclang-format-violations]", &item);
@@ -48,7 +48,7 @@ MOLTEST(diagnostic_parses_a_clang_format_violation) {
     EXPECT_STREQ("clang_format_violations", item.rule);
 }
 
-MOLTEST(diagnostic_cuts_a_clang_tidy_rule_at_the_first_comma) {
+DESCRIBE(diagnostic_cuts_a_clang_tidy_rule_at_the_first_comma) {
     diagnostic item;
     parse_one("c.c:1:18: error: an assignment within an 'if' condition is bug-prone "
               "[bugprone-assignment-in-if-condition,-warnings-as-errors]", &item);
@@ -61,14 +61,14 @@ MOLTEST(diagnostic_cuts_a_clang_tidy_rule_at_the_first_comma) {
     EXPECT_STREQ("an assignment within an 'if' condition is bug-prone", item.message);
 }
 
-MOLTEST(diagnostic_canonicalizes_a_werror_rule) {
+DESCRIBE(diagnostic_canonicalizes_a_werror_rule) {
     diagnostic item;
     parse_one("a.c:2:1: error: declaration shadows a variable [-Werror=shadow]", &item);
     EXPECT_STREQ("shadow", item.rule);
     EXPECT_STREQ("-Werror=shadow", item.rule_native);
 }
 
-MOLTEST(diagnostic_parses_a_fatal_error_as_an_error) {
+DESCRIBE(diagnostic_parses_a_fatal_error_as_an_error) {
     diagnostic item;
     /* Two words, which is why the severity is a table lookup and not a compare. */
     parse_one("a.c:1:10: fatal error: no_such.h: No such file or directory", &item);
@@ -76,14 +76,14 @@ MOLTEST(diagnostic_parses_a_fatal_error_as_an_error) {
     EXPECT_STREQ("no_such.h: No such file or directory", item.message);
 }
 
-MOLTEST(diagnostic_parses_a_note) {
+DESCRIBE(diagnostic_parses_a_note) {
     diagnostic item;
     parse_one("c.c:1:18: note: move it out of the 'if' condition", &item);
     EXPECT_EQ(diagnostic_severity_note, item.severity);
     EXPECT_STREQ("move it out of the 'if' condition", item.message);
 }
 
-MOLTEST(diagnostic_parses_a_line_without_a_column) {
+DESCRIBE(diagnostic_parses_a_line_without_a_column) {
     diagnostic item;
     /* gcc with -fno-diagnostics-show-column. */
     parse_one("a.c:7: warning: something happened", &item);
@@ -95,7 +95,7 @@ MOLTEST(diagnostic_parses_a_line_without_a_column) {
     EXPECT_STREQ("something happened", item.message);
 }
 
-MOLTEST(diagnostic_keeps_a_line_it_cannot_parse) {
+DESCRIBE(diagnostic_keeps_a_line_it_cannot_parse) {
     /* Everything a compiler interleaves around its diagnostics. None of it is
        discarded: it reaches the user in place, exactly as it was written. */
     const char *const opaque[] = {
@@ -114,7 +114,7 @@ MOLTEST(diagnostic_keeps_a_line_it_cannot_parse) {
     }
 }
 
-MOLTEST(diagnostic_tolerates_a_path_that_contains_a_colon) {
+DESCRIBE(diagnostic_tolerates_a_path_that_contains_a_colon) {
     diagnostic item;
     /* Scanning for "colon, digits, colon" rather than the first colon is what
        makes this work. */
@@ -123,14 +123,14 @@ MOLTEST(diagnostic_tolerates_a_path_that_contains_a_colon) {
     EXPECT_EQ(3, (int)item.line);
 }
 
-MOLTEST(diagnostic_leaves_a_bracket_inside_a_message_alone) {
+DESCRIBE(diagnostic_leaves_a_bracket_inside_a_message_alone) {
     diagnostic item;
     parse_one("a.c:1:1: warning: subscript [i] is out of range", &item);
     EXPECT_STREQ("subscript [i] is out of range", item.message);
     EXPECT_STREQ("", item.rule);
 }
 
-MOLTEST(diagnostic_parses_a_whole_transcript_in_order) {
+DESCRIBE(diagnostic_parses_a_whole_transcript_in_order) {
     diagnostic_list list;
     diagnostic_list_init(&list);
     ASSERT_TRUE(diagnostic_parse(gcc_transcript, &list));
@@ -144,7 +144,7 @@ MOLTEST(diagnostic_parses_a_whole_transcript_in_order) {
     diagnostic_list_free(&list);
 }
 
-MOLTEST(diagnostic_drops_the_tally_a_linter_prints) {
+DESCRIBE(diagnostic_drops_the_tally_a_linter_prints) {
     diagnostic_list list;
     diagnostic_list_init(&list);
     ASSERT_TRUE(diagnostic_parse(clang_tidy_transcript, &list));
@@ -160,7 +160,7 @@ MOLTEST(diagnostic_drops_the_tally_a_linter_prints) {
     diagnostic_list_free(&list);
 }
 
-MOLTEST(diagnostic_formats_a_path_relative_to_the_root) {
+DESCRIBE(diagnostic_formats_a_path_relative_to_the_root) {
     diagnostic item;
     parse_one("/home/u/app/src/net.c:42:9: error: bad [naming]", &item);
 
@@ -173,7 +173,7 @@ MOLTEST(diagnostic_formats_a_path_relative_to_the_root) {
     EXPECT_STREQ("/home/u/app/src/net.c:42:9: error: bad [naming]", line);
 }
 
-MOLTEST(diagnostic_formats_what_it_could_not_parse_unchanged) {
+DESCRIBE(diagnostic_formats_what_it_could_not_parse_unchanged) {
     diagnostic item;
     parse_one("      |          ^", &item);
 
@@ -182,7 +182,7 @@ MOLTEST(diagnostic_formats_what_it_could_not_parse_unchanged) {
     EXPECT_STREQ("      |          ^", line);
 }
 
-MOLTEST(diagnostic_formats_without_a_column_or_a_rule) {
+DESCRIBE(diagnostic_formats_without_a_column_or_a_rule) {
     diagnostic item;
     parse_one("a.c:7: warning: plain", &item);
 
@@ -191,7 +191,7 @@ MOLTEST(diagnostic_formats_without_a_column_or_a_rule) {
     EXPECT_STREQ("a.c:7: warning: plain", line);
 }
 
-MOLTEST(diagnostic_writes_json_that_escapes_what_would_break_it) {
+DESCRIBE(diagnostic_writes_json_that_escapes_what_would_break_it) {
     diagnostic item;
     parse_one("a.c:1:1: error: say \"hi\" \\ now", &item);
 
@@ -217,7 +217,7 @@ MOLTEST(diagnostic_writes_json_that_escapes_what_would_break_it) {
     diagnostic_list_free(&list);
 }
 
-MOLTEST(diagnostic_appends_one_list_onto_another_in_order) {
+DESCRIBE(diagnostic_appends_one_list_onto_another_in_order) {
     diagnostic first;
     diagnostic second;
     parse_one("a.c:1:1: error: one", &first);
@@ -240,7 +240,7 @@ MOLTEST(diagnostic_appends_one_list_onto_another_in_order) {
     diagnostic_list_free(&right);
 }
 
-MOLTEST(diagnostic_json_leaves_out_what_a_machine_cannot_act_on) {
+DESCRIBE(diagnostic_json_leaves_out_what_a_machine_cannot_act_on) {
     diagnostic_list list;
     diagnostic_list_init(&list);
     /* A real finding, and the caret line under it. */
@@ -269,7 +269,7 @@ MOLTEST(diagnostic_json_leaves_out_what_a_machine_cannot_act_on) {
 
 /* --- storage form (RFC-0006) --- */
 
-MOLTEST(diagnostics_survive_a_round_trip_through_the_store) {
+DESCRIBE(diagnostics_survive_a_round_trip_through_the_store) {
     diagnostic_list original;
     diagnostic_list_init(&original);
     /* A parsed warning with a rule, a note, and a line the parser could not
@@ -317,7 +317,7 @@ MOLTEST(diagnostics_survive_a_round_trip_through_the_store) {
     diagnostic_list_free(&original);
 }
 
-MOLTEST(an_empty_list_round_trips_as_an_empty_list) {
+DESCRIBE(an_empty_list_round_trips_as_an_empty_list) {
     diagnostic_list original;
     diagnostic_list_init(&original);
     str_list values;
@@ -337,7 +337,7 @@ MOLTEST(an_empty_list_round_trips_as_an_empty_list) {
     diagnostic_list_free(&original);
 }
 
-MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
+DESCRIBE(a_malformed_record_is_refused_rather_than_half_read) {
     diagnostic_list out;
     diagnostic_list_init(&out);
 
@@ -384,7 +384,7 @@ MOLTEST(a_malformed_record_is_refused_rather_than_half_read) {
    Reading it as if it were the current shape would take the next diagnostic's
    file for a number, so it is refused and that file analysed again — which is
    what every unreadable entry costs, and it costs it once. */
-MOLTEST(a_record_from_an_older_molto_is_refused_rather_than_misread) {
+DESCRIBE(a_record_from_an_older_molto_is_refused_rather_than_misread) {
     str_list older;
     str_list_init(&older);
     const char *fields[] = {"src/a.c", "12", "5", "1", "rule", "rule", "message"};
@@ -407,7 +407,7 @@ MOLTEST(a_record_from_an_older_molto_is_refused_rather_than_misread) {
  * one, and it prefixes some of its lines with its own name and not others.
  */
 
-MOLTEST(a_link_failure_with_debug_information_can_be_pointed_at) {
+DESCRIBE(a_link_failure_with_debug_information_can_be_pointed_at) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/ccobS3PB.o: in function `main':\n"
@@ -430,7 +430,7 @@ MOLTEST(a_link_failure_with_debug_information_can_be_pointed_at) {
 /* Without debug information the same failure names an offset into a section
    rather than a place in anyone's code. There is nothing to point at, and
    inventing one would be worse than saying so. */
-MOLTEST(a_link_failure_without_debug_information_carries_no_location) {
+DESCRIBE(a_link_failure_without_debug_information_carries_no_location) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/ccyaAUJD.o: in function `main':\n"
@@ -451,7 +451,7 @@ MOLTEST(a_link_failure_without_debug_information_carries_no_location) {
 /* The tool's own name is stripped where it appears, and looked for nowhere
    else: ld writes it on the second location line of a failure and not on the
    first. */
-MOLTEST(the_linkers_own_name_is_dropped_where_it_appears) {
+DESCRIBE(the_linkers_own_name_is_dropped_where_it_appears) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: cannot find -lnosuchlib: No such file or "
@@ -468,7 +468,7 @@ MOLTEST(the_linkers_own_name_is_dropped_where_it_appears) {
 
 /* A source path is a shape a tool prefix has too, so the prefix is matched on
    the program's name and never on the shape of the line. */
-MOLTEST(a_source_path_is_not_mistaken_for_a_tool_prefix) {
+DESCRIBE(a_source_path_is_not_mistaken_for_a_tool_prefix) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link("/home/u/ld/src/main.c:12: undefined reference to `f'\n",
@@ -482,7 +482,7 @@ MOLTEST(a_source_path_is_not_mistaken_for_a_tool_prefix) {
 }
 
 /* clang's driver ends a failed link with its own summary, in its own words. */
-MOLTEST(the_drivers_closing_summary_is_swallowed_too) {
+DESCRIBE(the_drivers_closing_summary_is_swallowed_too) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link(

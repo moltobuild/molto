@@ -44,7 +44,7 @@ static void document_for(ir_document *doc) {
     ASSERT_TRUE(ir_set_project(doc, "app", "1.0.0", "/w/app", IR_ORIGIN_NATIVE));
 }
 
-MOLTEST(ir_transform_says_what_each_dependency_exports) {
+DESCRIBE(ir_transform_says_what_each_dependency_exports) {
     ir_document doc;
     document_for(&doc);
 
@@ -100,7 +100,7 @@ MOLTEST(ir_transform_says_what_each_dependency_exports) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_gives_a_path_dependency_no_version) {
+DESCRIBE(ir_transform_gives_a_path_dependency_no_version) {
     /* Its bytes are whatever is on disk, so the node says so by having no
        version rather than by inventing one. */
     ir_document doc;
@@ -122,7 +122,7 @@ MOLTEST(ir_transform_gives_a_path_dependency_no_version) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_spells_every_origin_the_document_has) {
+DESCRIBE(ir_transform_spells_every_origin_the_document_has) {
     /* Two enumerations for one idea, translated in one place. A cast would
        compile and would be wrong the day either grows a value. */
     ir_document doc;
@@ -148,7 +148,7 @@ MOLTEST(ir_transform_spells_every_origin_the_document_has) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_says_nothing_when_there_is_nothing_to_say) {
+DESCRIBE(ir_transform_says_nothing_when_there_is_nothing_to_say) {
     /* A project with no dependencies gets no nodes, not empty ones. */
     ir_document doc;
     document_for(&doc);
@@ -164,7 +164,7 @@ MOLTEST(ir_transform_says_nothing_when_there_is_nothing_to_say) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_keeps_what_the_document_already_named) {
+DESCRIBE(ir_transform_keeps_what_the_document_already_named) {
     /* It adds and never replaces. A transform that silently dropped what an
        earlier one wrote would be a composition rule nobody could reason
        about — and composition is the whole argument for transforms. */
@@ -219,7 +219,7 @@ static bool carries_option(const ir_target *target, const char *value) {
     return false;
 }
 
-MOLTEST(ir_transform_folds_a_runtime_dependency_into_every_target) {
+DESCRIBE(ir_transform_folds_a_runtime_dependency_into_every_target) {
     ir_document doc;
     document_with_targets(&doc);
 
@@ -252,7 +252,7 @@ MOLTEST(ir_transform_folds_a_runtime_dependency_into_every_target) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_keeps_a_development_dependency_out_of_the_executable) {
+DESCRIBE(ir_transform_keeps_a_development_dependency_out_of_the_executable) {
     /* The separation RFC-0008 calls enforcement rather than convention: a
        source under src/ that includes one fails to compile, on the first
        build, because the directory was never on its command line. */
@@ -288,7 +288,7 @@ MOLTEST(ir_transform_keeps_a_development_dependency_out_of_the_executable) {
    its compile lines: `--coverage`, `-pthread` and `-fsanitize` are not complete
    without the linker. A development dependency's reach the test link and still
    nothing else. */
-MOLTEST(ir_transform_folds_a_dependency_flag_into_the_link_line) {
+DESCRIBE(ir_transform_folds_a_dependency_flag_into_the_link_line) {
     ir_document doc;
     document_with_targets(&doc);
 
@@ -318,7 +318,7 @@ MOLTEST(ir_transform_folds_a_dependency_flag_into_the_link_line) {
     prepared_deps_free(&dev);
 }
 
-MOLTEST(ir_transform_folds_runtime_before_development) {
+DESCRIBE(ir_transform_folds_runtime_before_development) {
     /* A test target compiles against everything the project does and then some.
        The order is the one the build composes: what everything sees, then what
        only the tests do. */
@@ -351,7 +351,7 @@ MOLTEST(ir_transform_folds_runtime_before_development) {
     prepared_deps_free(&deps_dev);
 }
 
-MOLTEST(ir_transform_says_which_scope_each_dependency_is) {
+DESCRIBE(ir_transform_says_which_scope_each_dependency_is) {
     /* The node says it, so the fold does not have to be told twice — and a
        consumer holding only the bytes can tell a development dependency from a
        runtime one, which is what makes the separation checkable off the
@@ -382,7 +382,7 @@ MOLTEST(ir_transform_says_which_scope_each_dependency_is) {
     prepared_deps_free(&dev);
 }
 
-MOLTEST(ir_transform_folds_from_the_document_alone) {
+DESCRIBE(ir_transform_folds_from_the_document_alone) {
     /* The fold is handed a document and nothing else. A consumer that has only
        the published bytes — no `prepared_deps`, no resolve — folds them exactly
        as the engine does, which is what a transform of RFC-0015 is for. */
@@ -432,7 +432,7 @@ static const ir_target *target_named(const ir_document *doc, const char *name) {
     return NULL;
 }
 
-MOLTEST(ir_transform_describes_a_package_relative_to_its_own_root) {
+DESCRIBE(ir_transform_describes_a_package_relative_to_its_own_root) {
     /* A package's bytes are in the shared cache. Writing them absolute would
        put one machine's home directory in a document two machines are supposed
        to be able to diff. */
@@ -473,7 +473,7 @@ MOLTEST(ir_transform_describes_a_package_relative_to_its_own_root) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_gives_a_package_its_own_standard) {
+DESCRIBE(ir_transform_gives_a_package_its_own_standard) {
     /* A recipe that names one wins; a recipe that names none falls back to the
        consumer's, which is what every package did before recipes could say. */
     ir_document doc;
@@ -515,7 +515,7 @@ MOLTEST(ir_transform_gives_a_package_its_own_standard) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_leaves_a_header_only_package_without_a_target) {
+DESCRIBE(ir_transform_leaves_a_header_only_package_without_a_target) {
     /* There is nothing to compile. An empty target would be a node the engine
        has to know to skip rather than one it never had. */
     ir_document doc;
@@ -533,7 +533,7 @@ MOLTEST(ir_transform_leaves_a_header_only_package_without_a_target) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_refuses_a_source_outside_its_package) {
+DESCRIBE(ir_transform_refuses_a_source_outside_its_package) {
     /* Writing it absolute would be the one thing this transform exists to
        avoid, so it says so instead of doing it. */
     ir_document doc;
@@ -553,7 +553,7 @@ MOLTEST(ir_transform_refuses_a_source_outside_its_package) {
     prepared_deps_free(&deps);
 }
 
-MOLTEST(ir_transform_keeps_the_fold_out_of_a_package) {
+DESCRIBE(ir_transform_keeps_the_fold_out_of_a_package) {
     /* A package is compiled against its own recipe and nothing the consumer
        resolved — not another dependency's headers, and not its own. It is what
        makes one package compile identically everywhere, which is what lets an

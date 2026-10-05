@@ -32,7 +32,7 @@ static const build_unit_label network = {.origin = build_origin_module, .name = 
 static const build_unit_label own = {.origin = build_origin_project};
 static const build_unit_label suite = {.origin = build_origin_tests};
 
-MOLTEST(the_inventory_names_the_work_and_where_it_came_from) {
+DESCRIBE(the_inventory_names_the_work_and_where_it_came_from) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -60,7 +60,7 @@ MOLTEST(the_inventory_names_the_work_and_where_it_came_from) {
 
 /* Grouped by origin, not by the order the passes were planned: a test build
    plans its dependencies, then its own code, then more dependencies. */
-MOLTEST(the_inventory_is_grouped_by_origin) {
+DESCRIBE(the_inventory_is_grouped_by_origin) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -88,7 +88,7 @@ MOLTEST(the_inventory_is_grouped_by_origin) {
 
 /* A package with forty stale sources is one piece of work; two sources of the
    project's own are two, because that is the granularity of an edit. */
-MOLTEST(a_package_is_one_line_however_many_sources_it_has) {
+DESCRIBE(a_package_is_one_line_however_many_sources_it_has) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -121,7 +121,7 @@ MOLTEST(a_package_is_one_line_however_many_sources_it_has) {
 
 /* What was already up to date is counted rather than listed: a hundred lines
    saying nothing happened is not a report. */
-MOLTEST(what_was_not_compiled_is_counted_in_one_line) {
+DESCRIBE(what_was_not_compiled_is_counted_in_one_line) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -140,7 +140,7 @@ MOLTEST(what_was_not_compiled_is_counted_in_one_line) {
     (void)fclose(out);
 }
 
-MOLTEST(one_cached_file_is_not_reported_in_the_plural) {
+DESCRIBE(one_cached_file_is_not_reported_in_the_plural) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -157,7 +157,7 @@ MOLTEST(one_cached_file_is_not_reported_in_the_plural) {
     (void)fclose(out);
 }
 
-MOLTEST(a_build_that_cached_nothing_says_nothing_about_caching) {
+DESCRIBE(a_build_that_cached_nothing_says_nothing_about_caching) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -177,7 +177,7 @@ MOLTEST(a_build_that_cached_nothing_says_nothing_about_caching) {
 /* A bar in a log file is noise and a bar in a pipe is corruption. Neither the
    bar nor the colour it would have been drawn in reaches a stream nobody is
    watching. */
-MOLTEST(a_stream_nobody_watches_gets_no_bar_and_no_escapes) {
+DESCRIBE(a_stream_nobody_watches_gets_no_bar_and_no_escapes) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -202,7 +202,7 @@ MOLTEST(a_stream_nobody_watches_gets_no_bar_and_no_escapes) {
     (void)fclose(out);
 }
 
-MOLTEST(a_finished_build_says_which_profile_and_how_long) {
+DESCRIBE(a_finished_build_says_which_profile_and_how_long) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -223,7 +223,7 @@ MOLTEST(a_finished_build_says_which_profile_and_how_long) {
 /* A build that failed has already said why, in the compiler's words. A tick
    under them would be the report contradicting them; what it closes with is
    the verdict on all of them, once, however many units broke. */
-MOLTEST(a_failed_build_claims_nothing_and_says_so) {
+DESCRIBE(a_failed_build_claims_nothing_and_says_so) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -246,7 +246,7 @@ MOLTEST(a_failed_build_claims_nothing_and_says_so) {
 /* A manifest that would not parse, or a registry that would not answer, is not
    a build that failed: no compiler ever ran. Both have already been reported in
    their own words, and "build failed" underneath them names the wrong thing. */
-MOLTEST(a_failure_before_the_build_is_not_reported_as_the_builds) {
+DESCRIBE(a_failure_before_the_build_is_not_reported_as_the_builds) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -264,7 +264,7 @@ MOLTEST(a_failure_before_the_build_is_not_reported_as_the_builds) {
     (void)fclose(out);
 }
 
-MOLTEST(a_message_reaches_the_stream_whether_or_not_a_bar_is_up) {
+DESCRIBE(a_message_reaches_the_stream_whether_or_not_a_bar_is_up) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -284,7 +284,7 @@ MOLTEST(a_message_reaches_the_stream_whether_or_not_a_bar_is_up) {
 /* Whoever composes a block of text has to ask, because build_report_message
    cannot colour what it is handed. A tmpfile is nobody watching, and no report
    at all is nobody to ask. */
-MOLTEST(a_stream_nobody_watches_wants_no_colour) {
+DESCRIBE(a_stream_nobody_watches_wants_no_colour) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -319,7 +319,7 @@ static void screen_forget(void) {
 /* The region is about to name these one at a time as it compiles them, so
    listing them here as well fills the scrollback with what the region says
    better and then throws the region away. */
-MOLTEST(a_terminal_counts_the_projects_own_sources_instead_of_listing_them) {
+DESCRIBE(a_terminal_counts_the_projects_own_sources_instead_of_listing_them) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -351,7 +351,7 @@ MOLTEST(a_terminal_counts_the_projects_own_sources_instead_of_listing_them) {
 
 /* And the other half of the same rule: a pipe has no region to defer to, so
    the line per source is the whole of the record and stays. */
-MOLTEST(a_stream_nobody_watches_lists_every_source_it_will_compile) {
+DESCRIBE(a_stream_nobody_watches_lists_every_source_it_will_compile) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -373,7 +373,7 @@ MOLTEST(a_stream_nobody_watches_lists_every_source_it_will_compile) {
     (void)fclose(out);
 }
 
-MOLTEST(a_terminal_says_which_files_are_being_compiled_now) {
+DESCRIBE(a_terminal_says_which_files_are_being_compiled_now) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -407,7 +407,7 @@ MOLTEST(a_terminal_says_which_files_are_being_compiled_now) {
 
 /* A row is worth having while the file is compiling and worth nothing after,
    which is the whole reason it lives in a region and not in the scrollback. */
-MOLTEST(a_unit_is_forgotten_when_it_finishes) {
+DESCRIBE(a_unit_is_forgotten_when_it_finishes) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -433,7 +433,7 @@ MOLTEST(a_unit_is_forgotten_when_it_finishes) {
     (void)fclose(out);
 }
 
-MOLTEST(a_region_that_overflows_counts_what_it_does_not_show) {
+DESCRIBE(a_region_that_overflows_counts_what_it_does_not_show) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -465,7 +465,7 @@ MOLTEST(a_region_that_overflows_counts_what_it_does_not_show) {
 
 /* A screen too short to spare three rows keeps the bar and gives up the files:
    a region taller than the screen scrolls its own anchor away. */
-MOLTEST(a_short_screen_gives_up_the_files_and_keeps_the_bar) {
+DESCRIBE(a_short_screen_gives_up_the_files_and_keeps_the_bar) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -489,7 +489,7 @@ MOLTEST(a_short_screen_gives_up_the_files_and_keeps_the_bar) {
 
 /* The bar gives up columns before it gives up the figure: a bar with no number
    beside it says only that something is happening, which its moving said. */
-MOLTEST(a_narrow_terminal_shortens_the_bar_and_keeps_the_figure) {
+DESCRIBE(a_narrow_terminal_shortens_the_bar_and_keeps_the_figure) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -514,7 +514,7 @@ MOLTEST(a_narrow_terminal_shortens_the_bar_and_keeps_the_figure) {
 
 /* Nothing of the region survives the build: what stays on the screen is the
    verdict, on the line the region was standing on. */
-MOLTEST(a_finished_build_leaves_only_its_verdict) {
+DESCRIBE(a_finished_build_leaves_only_its_verdict) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     build_report *report = build_report_create(out);
@@ -555,7 +555,7 @@ MOLTEST(a_finished_build_leaves_only_its_verdict) {
 
 /* No report at all is how the test suite builds hundreds of projects in
    silence, and how a build that could not allocate one carries on. */
-MOLTEST(no_report_is_a_report_that_says_nothing) {
+DESCRIBE(no_report_is_a_report_that_says_nothing) {
     build_report_will_compile(NULL, &sqlite, NULL);
     build_report_skipped(NULL);
     build_report_begin(NULL, 4);

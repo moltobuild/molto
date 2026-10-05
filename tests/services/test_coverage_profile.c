@@ -29,7 +29,7 @@ static bool write_project(const char *root) {
                                "[target]\nstd = \"c17\"\n");
 }
 
-MOLTEST(the_coverage_profile_instruments_the_build) {
+DESCRIBE(the_coverage_profile_instruments_the_build) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_coverage", root, sizeof root));
     ASSERT_TRUE(write_project(root));

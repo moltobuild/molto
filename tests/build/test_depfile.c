@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-MOLTEST(depfile) {
+DESCRIBE(depfile) {
     /* A typical gcc depfile with a line continuation: the target is dropped and
        the three prerequisites are returned in order. */
     const char *typical =
@@ -56,7 +56,7 @@ MOLTEST(depfile) {
     str_list_free(&bare);
 }
 
-MOLTEST(a_drive_letter_does_not_divide_a_depfile) {
+DESCRIBE(a_drive_letter_does_not_divide_a_depfile) {
     /* What gcc writes on Windows. Three colons, and only the middle one is the
        separator; splitting on the first leaves a prerequisite list that starts
        with half of the target. */

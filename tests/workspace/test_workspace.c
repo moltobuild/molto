@@ -8,7 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 
-MOLTEST(workspace) {
+DESCRIBE(workspace) {
     char previous[4096];
     EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
 

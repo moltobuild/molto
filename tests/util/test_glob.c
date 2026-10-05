@@ -71,7 +71,7 @@ static const struct {
     {"", "a", false},
 };
 
-MOLTEST(glob_answers_what_fnmatch_answered) {
+DESCRIBE(glob_answers_what_fnmatch_answered) {
     for(size_t i = 0; i < sizeof CASES / sizeof CASES[0]; i++) {
         const bool got = glob_match(CASES[i].pattern, CASES[i].text);
 
@@ -86,7 +86,7 @@ MOLTEST(glob_answers_what_fnmatch_answered) {
     }
 }
 
-MOLTEST(glob_does_not_go_exponential_on_stars) {
+DESCRIBE(glob_does_not_go_exponential_on_stars) {
     /* The recursive matcher this one replaces would still be running: eight
        stars against sixty characters that never match is 2^60 paths through
        it. Linear here, so the assertion is that it returns at all. */

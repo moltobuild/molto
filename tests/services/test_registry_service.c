@@ -23,7 +23,7 @@
 static const char *const RELEASE_JSON =
     "{\"kind\":\"package\",\"name\":\"sqlite\",\"version\":\"3.53.4\",\"targets\":[]}";
 
-MOLTEST(registry_get_reports_a_registry_it_cannot_reach) {
+DESCRIBE(registry_get_reports_a_registry_it_cannot_reach) {
     /* Port 1 refuses immediately, so this exercises the transport-failure
        branch without waiting for a timeout. A malformed argv would fail here
        too, but differently: curl would complain about its own options rather
@@ -67,7 +67,7 @@ static bool wait_for_server(void) {
     return false;
 }
 
-MOLTEST(registry_get_reads_a_body_and_its_status) {
+DESCRIBE(registry_get_reads_a_body_and_its_status) {
     char directory[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_registry", directory, sizeof directory));
 
@@ -211,15 +211,15 @@ static bool presign_against(const char *status) {
     return true;
 }
 
-MOLTEST(presign_treats_a_registry_that_predates_the_endpoint_as_unsigned) {
+DESCRIBE(presign_treats_a_registry_that_predates_the_endpoint_as_unsigned) {
     (void)presign_against("404");
 }
 
-MOLTEST(presign_treats_a_registry_that_cannot_sign_as_unsigned) { (void)presign_against("501"); }
+DESCRIBE(presign_treats_a_registry_that_cannot_sign_as_unsigned) { (void)presign_against("501"); }
 
 /* Anything else is a real refusal and is reported as one: a registry that says
    the coordinate is taken is not a registry to go around. */
-MOLTEST(presign_reports_a_refusal_that_is_about_the_artifact) {
+DESCRIBE(presign_reports_a_refusal_that_is_about_the_artifact) {
     char directory[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_presign", directory, sizeof directory));
 
@@ -338,7 +338,7 @@ static bool presign_signing(const char *url, bool usable, const char *expected) 
 
 /* The one this was written for: a setting stored with a trailing newline, and
    the newline coming back in the host. */
-MOLTEST(presign_refuses_a_signed_url_with_a_newline_in_its_host) {
+DESCRIBE(presign_refuses_a_signed_url_with_a_newline_in_its_host) {
     (void)presign_signing("https://storage\n.example.com/artifacts/a.tar.gz?"
                           "X-Amz-Signature=deadbeef",
                           false, "control character");
@@ -346,7 +346,7 @@ MOLTEST(presign_refuses_a_signed_url_with_a_newline_in_its_host) {
 
 /* The other way a host is composed wrong: a whole endpoint pasted in where a
    shorter part of one belonged, which reads as a URL and names nothing. */
-MOLTEST(presign_refuses_a_signed_url_whose_host_is_not_a_host) {
+DESCRIBE(presign_refuses_a_signed_url_whose_host_is_not_a_host) {
     (void)presign_signing("https://https://storage.example.com/artifacts/"
                           "a.tar.gz?X-Amz-Signature=deadbeef",
                           false, "not a host");
@@ -354,7 +354,7 @@ MOLTEST(presign_refuses_a_signed_url_whose_host_is_not_a_host) {
 
 /* And the shape of a real one, so the check is known to refuse something
    rather than everything. */
-MOLTEST(presign_accepts_a_signed_url_it_can_use) {
+DESCRIBE(presign_accepts_a_signed_url_it_can_use) {
     (void)presign_signing("https://storage.example.com/"
                           "artifacts/toolchains/llvm-mingw/23.1.0/windows-x86_64.tar.gz?"
                           "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef",
@@ -364,7 +364,7 @@ MOLTEST(presign_accepts_a_signed_url_it_can_use) {
 /* A registry chooses its own storage and RFC-0010 names none of it, so a host
    reached on a port is a host like any other -- and the port is the one branch
    of the check that nothing above walks. */
-MOLTEST(presign_accepts_a_signed_url_whose_host_carries_a_port) {
+DESCRIBE(presign_accepts_a_signed_url_whose_host_carries_a_port) {
     (void)presign_signing("https://storage.example.com:9000/"
                           "artifacts/toolchains/llvm-mingw/23.1.0/windows-x86_64.tar.gz?"
                           "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeef",

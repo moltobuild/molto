@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-MOLTEST(str_list) {
+DESCRIBE(str_list) {
     str_list list;
     str_list_init(&list);
     EXPECT_TRUE(str_list_count(&list) == 0);

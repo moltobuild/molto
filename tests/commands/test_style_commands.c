@@ -40,7 +40,7 @@ static void workspace_leave(workspace *ws) {
     (void)fs_remove_tree(ws->root);
 }
 
-MOLTEST(lint_outside_a_workspace_is_a_manifest_error) {
+DESCRIBE(lint_outside_a_workspace_is_a_manifest_error) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, false));
 
@@ -49,7 +49,7 @@ MOLTEST(lint_outside_a_workspace_is_a_manifest_error) {
     workspace_leave(&ws);
 }
 
-MOLTEST(fmt_outside_a_workspace_is_a_manifest_error) {
+DESCRIBE(fmt_outside_a_workspace_is_a_manifest_error) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, false));
 
@@ -58,17 +58,17 @@ MOLTEST(fmt_outside_a_workspace_is_a_manifest_error) {
     workspace_leave(&ws);
 }
 
-MOLTEST(lint_rejects_an_unknown_profile) {
+DESCRIBE(lint_rejects_an_unknown_profile) {
     /* Validated before the workspace is even looked for: a typo in a flag is
        the user's mistake, not the project's. */
     EXPECT_EQ(exit_usage_error, lint_command_run("relase", false, false, false, NULL, 0));
 }
 
-MOLTEST(lint_rejects_an_unknown_output_format) {
+DESCRIBE(lint_rejects_an_unknown_output_format) {
     EXPECT_EQ(exit_usage_error, lint_command_run(NULL, false, false, false, "yaml", 0));
 }
 
-MOLTEST(lint_accepts_the_formats_it_documents) {
+DESCRIBE(lint_accepts_the_formats_it_documents) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, true));
 
@@ -82,7 +82,7 @@ MOLTEST(lint_accepts_the_formats_it_documents) {
     workspace_leave(&ws);
 }
 
-MOLTEST(fmt_rejects_check_and_diff_together) {
+DESCRIBE(fmt_rejects_check_and_diff_together) {
     /* Two answers to the same question: which one was meant is not guessable. */
     EXPECT_EQ(exit_usage_error, fmt_command_run(true, true, false, false, 0));
 }
@@ -102,7 +102,7 @@ static int rewritten_count(const char *root) {
     return count;
 }
 
-MOLTEST(fmt_counts_the_files_it_rewrote_and_not_the_ones_it_left) {
+DESCRIBE(fmt_counts_the_files_it_rewrote_and_not_the_ones_it_left) {
     workspace ws;
     ASSERT_TRUE(workspace_enter(&ws, true));
 
@@ -167,7 +167,7 @@ static bool workspace_with_sources(workspace *ws) {
     return fs_write_file(path, "int tidy(void) { return 0; }\n");
 }
 
-MOLTEST(fmt_does_not_run_the_formatter_for_a_file_it_already_formatted) {
+DESCRIBE(fmt_does_not_run_the_formatter_for_a_file_it_already_formatted) {
     workspace ws;
     ASSERT_TRUE(workspace_with_sources(&ws));
 
@@ -188,7 +188,7 @@ MOLTEST(fmt_does_not_run_the_formatter_for_a_file_it_already_formatted) {
     workspace_leave(&ws);
 }
 
-MOLTEST(fmt_still_sees_a_file_that_changed_after_it_was_recorded) {
+DESCRIBE(fmt_still_sees_a_file_that_changed_after_it_was_recorded) {
     workspace ws;
     ASSERT_TRUE(workspace_with_sources(&ws));
 
@@ -208,7 +208,7 @@ MOLTEST(fmt_still_sees_a_file_that_changed_after_it_was_recorded) {
     workspace_leave(&ws);
 }
 
-MOLTEST(fmt_formats_everything_again_when_the_style_changes) {
+DESCRIBE(fmt_formats_everything_again_when_the_style_changes) {
     workspace ws;
     ASSERT_TRUE(workspace_with_sources(&ws));
 

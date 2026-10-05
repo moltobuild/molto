@@ -57,7 +57,7 @@ static bool install(const home *box, const char *name) {
     return moltest_fake_program(path, "exit 0\n", NULL, 0);
 }
 
-MOLTEST(plugin_command_lists_an_empty_machine_without_failing) {
+DESCRIBE(plugin_command_lists_an_empty_machine_without_failing) {
     home box;
     ASSERT_TRUE(home_setup(&box));
 
@@ -67,7 +67,7 @@ MOLTEST(plugin_command_lists_an_empty_machine_without_failing) {
     home_teardown(&box);
 }
 
-MOLTEST(plugin_command_defaults_to_listing) {
+DESCRIBE(plugin_command_defaults_to_listing) {
     home box;
     ASSERT_TRUE(home_setup(&box));
     ASSERT_TRUE(install(&box, "deb"));
@@ -78,16 +78,16 @@ MOLTEST(plugin_command_defaults_to_listing) {
     home_teardown(&box);
 }
 
-MOLTEST(plugin_command_refuses_an_action_it_does_not_have) {
+DESCRIBE(plugin_command_refuses_an_action_it_does_not_have) {
     EXPECT_EQ(exit_usage_error, plugin_command_run("instal", NULL, NULL, false));
     EXPECT_EQ(exit_usage_error, plugin_command_run("uninstall", "deb", NULL, false));
 }
 
-MOLTEST(plugin_command_info_needs_a_name) {
+DESCRIBE(plugin_command_info_needs_a_name) {
     EXPECT_EQ(exit_usage_error, plugin_command_run("info", NULL, NULL, false));
 }
 
-MOLTEST(plugin_command_info_reports_a_plugin_that_is_not_there) {
+DESCRIBE(plugin_command_info_reports_a_plugin_that_is_not_there) {
     home box;
     ASSERT_TRUE(home_setup(&box));
 
@@ -98,7 +98,7 @@ MOLTEST(plugin_command_info_reports_a_plugin_that_is_not_there) {
     home_teardown(&box);
 }
 
-MOLTEST(plugin_command_info_works_without_a_recipe) {
+DESCRIBE(plugin_command_info_works_without_a_recipe) {
     home box;
     ASSERT_TRUE(home_setup(&box));
     ASSERT_TRUE(install(&box, "deb"));
@@ -110,7 +110,7 @@ MOLTEST(plugin_command_info_works_without_a_recipe) {
     home_teardown(&box);
 }
 
-MOLTEST(cli_has_command_knows_the_built_ins) {
+DESCRIBE(cli_has_command_knows_the_built_ins) {
     /* What tells `plugin list` that a `molto-build` on PATH is unreachable. */
     EXPECT_TRUE(cli_has_command("build"));
     EXPECT_TRUE(cli_has_command("plugin"));
@@ -118,15 +118,15 @@ MOLTEST(cli_has_command_knows_the_built_ins) {
     EXPECT_FALSE(cli_has_command(""));
 }
 
-MOLTEST(plugin_command_install_needs_a_name) {
+DESCRIBE(plugin_command_install_needs_a_name) {
     EXPECT_EQ(exit_usage_error, plugin_command_run("install", NULL, NULL, true));
 }
 
-MOLTEST(plugin_command_remove_needs_a_name) {
+DESCRIBE(plugin_command_remove_needs_a_name) {
     EXPECT_EQ(exit_usage_error, plugin_command_run("remove", NULL, NULL, false));
 }
 
-MOLTEST(plugin_command_refuses_to_remove_what_it_did_not_install) {
+DESCRIBE(plugin_command_refuses_to_remove_what_it_did_not_install) {
     home box;
     ASSERT_TRUE(home_setup(&box));
 
@@ -137,7 +137,7 @@ MOLTEST(plugin_command_refuses_to_remove_what_it_did_not_install) {
     home_teardown(&box);
 }
 
-MOLTEST(plugin_command_removes_what_it_installed) {
+DESCRIBE(plugin_command_removes_what_it_installed) {
     home box;
     ASSERT_TRUE(home_setup(&box));
     ASSERT_TRUE(install(&box, "deb"));

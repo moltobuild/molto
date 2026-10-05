@@ -180,7 +180,7 @@ static int run_fmt(const fmt_fixture *fixture, fmt_mode mode, FILE *diff_stream,
     return fmt_project(fixture->root, &request, result);
 }
 
-MOLTEST(fmt_formats_the_sources_in_place) {
+DESCRIBE(fmt_formats_the_sources_in_place) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -196,7 +196,7 @@ MOLTEST(fmt_formats_the_sources_in_place) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_also_formats_the_headers) {
+DESCRIBE(fmt_also_formats_the_headers) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -214,7 +214,7 @@ MOLTEST(fmt_also_formats_the_headers) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_check_reports_what_would_change_and_writes_nothing) {
+DESCRIBE(fmt_check_reports_what_would_change_and_writes_nothing) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -236,7 +236,7 @@ MOLTEST(fmt_check_reports_what_would_change_and_writes_nothing) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_diff_prints_a_diff_and_writes_nothing) {
+DESCRIBE(fmt_diff_prints_a_diff_and_writes_nothing) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -266,7 +266,7 @@ MOLTEST(fmt_diff_prints_a_diff_and_writes_nothing) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_reports_nothing_for_a_project_already_formatted) {
+DESCRIBE(fmt_reports_nothing_for_a_project_already_formatted) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
     ASSERT_TRUE(write_source(fixture.root, "src/main.c",
@@ -282,7 +282,7 @@ MOLTEST(fmt_reports_nothing_for_a_project_already_formatted) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_skips_the_paths_format_json_excludes) {
+DESCRIBE(fmt_skips_the_paths_format_json_excludes) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
     ASSERT_TRUE(write_source(fixture.root, "src/vendor/third.c",
@@ -302,7 +302,7 @@ MOLTEST(fmt_skips_the_paths_format_json_excludes) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_generates_the_config_under_bin_and_not_in_the_tree) {
+DESCRIBE(fmt_generates_the_config_under_bin_and_not_in_the_tree) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -328,7 +328,7 @@ MOLTEST(fmt_generates_the_config_under_bin_and_not_in_the_tree) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(fmt_refuses_a_configuration_it_cannot_translate) {
+DESCRIBE(fmt_refuses_a_configuration_it_cannot_translate) {
     fmt_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
     ASSERT_TRUE(write_source(fixture.root, "format.json",

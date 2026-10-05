@@ -44,7 +44,7 @@ static int run_app(int argc, char **argv) {
     return cli_app_run(&app, argc, argv);
 }
 
-MOLTEST(cli) {
+DESCRIBE(cli) {
     EXPECT_TRUE(strlen(cli_version()) > 0);
 
     /* Value option "--opt value" plus a positional. */
@@ -135,7 +135,7 @@ static bool manifest_version(const char *text, char *out, size_t out_size) {
     return true;
 }
 
-MOLTEST(cli_reports_the_version_the_manifest_declares) {
+DESCRIBE(cli_reports_the_version_the_manifest_declares) {
     char *text = fs_read_file(MANIFEST_PATH);
     if(text == NULL)
         SKIP("the manifest is only there when the suite runs from the repository root");
@@ -148,7 +148,7 @@ MOLTEST(cli_reports_the_version_the_manifest_declares) {
     EXPECT_STREQ(declared, cli_version());
 }
 
-MOLTEST(cli_refuses_a_jobs_count_that_is_not_one) {
+DESCRIBE(cli_refuses_a_jobs_count_that_is_not_one) {
     /* Every one of these is rejected before the command looks for a workspace,
        so nothing is compiled here — which is also what makes the check worth
        having: a build told to take two workers and silently taking the machine
@@ -205,7 +205,7 @@ static int run_app_with_fallback(int argc, char **argv, bool claim, int code) {
     return cli_app_run(&app, argc, argv);
 }
 
-MOLTEST(cli_hands_an_unknown_name_to_the_fallback) {
+DESCRIBE(cli_hands_an_unknown_name_to_the_fallback) {
     char *argv[] = { "testapp", "deb", "--output", "x.deb" };
     EXPECT_EQ(7, run_app_with_fallback(4, argv, true, 7));
 
@@ -219,7 +219,7 @@ MOLTEST(cli_hands_an_unknown_name_to_the_fallback) {
     EXPECT_STREQ("--output", fallback.argv0);
 }
 
-MOLTEST(cli_reports_the_usual_error_when_the_fallback_declines) {
+DESCRIBE(cli_reports_the_usual_error_when_the_fallback_declines) {
     char *argv[] = { "testapp", "typo" };
     EXPECT_EQ(exit_usage_error, run_app_with_fallback(2, argv, false, 0));
 
@@ -228,7 +228,7 @@ MOLTEST(cli_reports_the_usual_error_when_the_fallback_declines) {
     EXPECT_TRUE(fallback.called);
 }
 
-MOLTEST(cli_never_offers_a_built_in_command_to_the_fallback) {
+DESCRIBE(cli_never_offers_a_built_in_command_to_the_fallback) {
     /* The table is searched first, so nothing installed can take a name Molto
        already answers. */
     char *argv[] = { "testapp", "do", "x" };
@@ -238,12 +238,12 @@ MOLTEST(cli_never_offers_a_built_in_command_to_the_fallback) {
     EXPECT_TRUE(seen.called);
 }
 
-MOLTEST(cli_without_a_fallback_still_refuses_an_unknown_name) {
+DESCRIBE(cli_without_a_fallback_still_refuses_an_unknown_name) {
     char *argv[] = { "testapp", "deb" };
     EXPECT_EQ(exit_usage_error, run_app(2, argv));
 }
 
-MOLTEST(only_build_takes_a_target) {
+DESCRIBE(only_build_takes_a_target) {
     /* `--target` reads as "build for that platform". `run` and `test` finish by
        starting what they built, and a binary for another platform does not
        start here — so taking the flag and ignoring it is worse than refusing

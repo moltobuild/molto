@@ -54,7 +54,7 @@ MOLTEST_FAKE(fake_host_pkg_config) {
 
 static const char *const ANSWERS = "behave fake_host_pkg_config\n";
 
-MOLTEST(a_host_capability_answers_with_its_includes_and_links) {
+DESCRIBE(a_host_capability_answers_with_its_includes_and_links) {
     stub at;
     ASSERT_TRUE(stub_open(&at, ANSWERS));
 
@@ -80,7 +80,7 @@ MOLTEST(a_host_capability_answers_with_its_includes_and_links) {
 /* `-pthread` and `-D_REENTRANT` are in that answer and must not be in the
    build: a resolver contributing a define would decide a consumer's ABI from
    outside the manifest anyone reviewed. */
-MOLTEST(a_host_answer_contributes_nothing_but_includes_and_links) {
+DESCRIBE(a_host_answer_contributes_nothing_but_includes_and_links) {
     stub at;
     ASSERT_TRUE(stub_open(&at, ANSWERS));
 
@@ -97,7 +97,7 @@ MOLTEST(a_host_answer_contributes_nothing_but_includes_and_links) {
 
 /* "Not installed" and "no resolver" send a reader to different places, so they
    are different messages. */
-MOLTEST(a_capability_the_resolver_does_not_know_says_so) {
+DESCRIBE(a_capability_the_resolver_does_not_know_says_so) {
     stub at;
     ASSERT_TRUE(stub_open(&at, ANSWERS));
 
@@ -109,7 +109,7 @@ MOLTEST(a_capability_the_resolver_does_not_know_says_so) {
     stub_close(&at);
 }
 
-MOLTEST(a_missing_resolver_is_reported_as_the_machine_and_not_the_package) {
+DESCRIBE(a_missing_resolver_is_reported_as_the_machine_and_not_the_package) {
     ASSERT_EQ(0, setenv("MOLTO_PKG_CONFIG", "/nonexistent/pkg-config", 1));
 
     host_answer answer;
@@ -121,7 +121,7 @@ MOLTEST(a_missing_resolver_is_reported_as_the_machine_and_not_the_package) {
     (void)unsetenv("MOLTO_PKG_CONFIG");
 }
 
-MOLTEST(a_capability_with_no_name_is_refused) {
+DESCRIBE(a_capability_with_no_name_is_refused) {
     host_answer answer;
     char err[512] = "";
     EXPECT_FALSE(host_resolve("", &answer, err, sizeof err));
@@ -131,7 +131,7 @@ MOLTEST(a_capability_with_no_name_is_refused) {
    time by `-rpath`, and they are one fact spelled twice. Keeping only the first
    produces a binary that links and then cannot start — which is what SDL3 in a
    custom prefix did before this. */
-MOLTEST(a_host_answer_keeps_the_rpath_that_makes_its_library_runnable) {
+DESCRIBE(a_host_answer_keeps_the_rpath_that_makes_its_library_runnable) {
     stub at;
     ASSERT_TRUE(stub_open(&at, ANSWERS));
 

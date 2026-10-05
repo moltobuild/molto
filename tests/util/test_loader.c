@@ -19,7 +19,7 @@ static size_t written_to(FILE *file) {
 /* A spinner in a log file is noise and a spinner in a pipe is corruption of
    whatever was being piped — so a redirected stream gets no loader, and not
    even the escape that would clear a row nobody drew. */
-MOLTEST(a_redirected_stream_gets_no_loader_and_no_bytes) {
+DESCRIBE(a_redirected_stream_gets_no_loader_and_no_bytes) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -34,7 +34,7 @@ MOLTEST(a_redirected_stream_gets_no_loader_and_no_bytes) {
 
 /* Returning nothing is how the decision stays out of the caller: a command
    starts a loader and stops it without ever asking whether it got one. */
-MOLTEST(stopping_a_loader_that_was_never_started_does_nothing) {
+DESCRIBE(stopping_a_loader_that_was_never_started_does_nothing) {
     loader_stop(NULL);
     loader_stop(loader_start(NULL, "analyzing ..."));
 }

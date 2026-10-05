@@ -30,7 +30,7 @@ static dep_conflict with_proposal(void) {
     return conflict;
 }
 
-MOLTEST(the_message_names_both_versions_and_who_asked_for_each) {
+DESCRIBE(the_message_names_both_versions_and_who_asked_for_each) {
     const dep_conflict conflict = a_conflict();
     char text[1024] = "";
 
@@ -45,7 +45,7 @@ MOLTEST(the_message_names_both_versions_and_who_asked_for_each) {
 
 /* The root package is named by its relationship to the reader: they are the
    one being asked, and "required by molto" would tell them nothing. */
-MOLTEST(a_direct_dependency_is_attributed_to_this_project) {
+DESCRIBE(a_direct_dependency_is_attributed_to_this_project) {
     dep_conflict conflict = a_conflict();
     conflict.other_required_by[0] = '\0';
     char text[1024] = "";
@@ -55,7 +55,7 @@ MOLTEST(a_direct_dependency_is_attributed_to_this_project) {
     EXPECT_NOT_NULL(strstr(text, "required by this project"));
 }
 
-MOLTEST(a_proposal_says_what_to_change_and_what_it_settles_on) {
+DESCRIBE(a_proposal_says_what_to_change_and_what_it_settles_on) {
     const dep_conflict conflict = with_proposal();
     char text[1024] = "";
 
@@ -66,7 +66,7 @@ MOLTEST(a_proposal_says_what_to_change_and_what_it_settles_on) {
 
 /* Finding nothing is not a dead end: the user still declared two versions and
    can change either, and the message has to say so. */
-MOLTEST(without_a_proposal_the_message_still_leaves_an_action) {
+DESCRIBE(without_a_proposal_the_message_still_leaves_an_action) {
     const dep_conflict conflict = a_conflict();
     char text[1024] = "";
 
@@ -90,7 +90,7 @@ static bool answer_with(const char *typed) {
     return accepted;
 }
 
-MOLTEST(the_question_defaults_to_yes_as_its_prompt_promises) {
+DESCRIBE(the_question_defaults_to_yes_as_its_prompt_promises) {
     EXPECT_TRUE(answer_with("\n"));
     EXPECT_TRUE(answer_with("y\n"));
     EXPECT_TRUE(answer_with("Y\n"));

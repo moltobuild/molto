@@ -58,7 +58,7 @@ static void fixture_teardown(workspace_fixture *fixture) {
     (void)fs_remove_tree(fixture->root);
 }
 
-MOLTEST(wsdb_records_and_queries_an_object) {
+DESCRIBE(wsdb_records_and_queries_an_object) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -74,7 +74,7 @@ MOLTEST(wsdb_records_and_queries_an_object) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_allows_a_single_writer) {
+DESCRIBE(wsdb_allows_a_single_writer) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -87,7 +87,7 @@ MOLTEST(wsdb_allows_a_single_writer) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_ignores_a_touch_that_does_not_change_content) {
+DESCRIBE(wsdb_ignores_a_touch_that_does_not_change_content) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -104,7 +104,7 @@ MOLTEST(wsdb_ignores_a_touch_that_does_not_change_content) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_detects_a_changed_prerequisite) {
+DESCRIBE(wsdb_detects_a_changed_prerequisite) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -119,7 +119,7 @@ MOLTEST(wsdb_detects_a_changed_prerequisite) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_persists_across_sessions) {
+DESCRIBE(wsdb_persists_across_sessions) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -136,7 +136,7 @@ MOLTEST(wsdb_persists_across_sessions) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_prunes_orphaned_objects) {
+DESCRIBE(wsdb_prunes_orphaned_objects) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -170,7 +170,7 @@ MOLTEST(wsdb_prunes_orphaned_objects) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_recovers_from_a_corrupt_database) {
+DESCRIBE(wsdb_recovers_from_a_corrupt_database) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -218,7 +218,7 @@ static bool write_wsdb_artifact(FILE *file, int kind, const char *key, const cha
     return fwrite(&prereq_count, sizeof prereq_count, 1, file) == 1;
 }
 
-MOLTEST(wsdb_discards_a_database_with_an_unknown_entry_kind) {
+DESCRIBE(wsdb_discards_a_database_with_an_unknown_entry_kind) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -247,7 +247,7 @@ MOLTEST(wsdb_discards_a_database_with_an_unknown_entry_kind) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_reports_a_state_it_could_not_save) {
+DESCRIBE(wsdb_reports_a_state_it_could_not_save) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -280,7 +280,7 @@ MOLTEST(wsdb_reports_a_state_it_could_not_save) {
 
 /* --- analysis results (RFC-0006) --- */
 
-MOLTEST(wsdb_replays_a_result_until_a_prerequisite_changes) {
+DESCRIBE(wsdb_replays_a_result_until_a_prerequisite_changes) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -317,7 +317,7 @@ MOLTEST(wsdb_replays_a_result_until_a_prerequisite_changes) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_tells_a_clean_file_apart_from_one_never_analysed) {
+DESCRIBE(wsdb_tells_a_clean_file_apart_from_one_never_analysed) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -347,7 +347,7 @@ MOLTEST(wsdb_tells_a_clean_file_apart_from_one_never_analysed) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_survives_a_result_round_trip_through_the_file) {
+DESCRIBE(wsdb_survives_a_result_round_trip_through_the_file) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -378,7 +378,7 @@ MOLTEST(wsdb_survives_a_result_round_trip_through_the_file) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_refuses_a_result_that_watches_nothing) {
+DESCRIBE(wsdb_refuses_a_result_that_watches_nothing) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 
@@ -397,7 +397,7 @@ MOLTEST(wsdb_refuses_a_result_that_watches_nothing) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_keeps_two_objects_that_share_a_header_independent) {
+DESCRIBE(wsdb_keeps_two_objects_that_share_a_header_independent) {
     /* The bug this exists for.
      *
      * `molto test` builds src/ and tests/ in two passes. Both include the same
@@ -452,7 +452,7 @@ MOLTEST(wsdb_keeps_two_objects_that_share_a_header_independent) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(wsdb_carries_per_object_prerequisites_across_a_reopen) {
+DESCRIBE(wsdb_carries_per_object_prerequisites_across_a_reopen) {
     /* The same independence has to survive being written to disk and read
        back, or the bug returns on the next invocation of molto. */
     workspace_fixture fixture;
@@ -479,7 +479,7 @@ MOLTEST(wsdb_carries_per_object_prerequisites_across_a_reopen) {
  * Hashing whatever arrived before the failure would answer for a file nobody
  * read — and answer it identically next time, which is a stale object called
  * fresh for as long as the failure lasts. */
-MOLTEST(wsdb_rebuilds_when_a_prerequisite_cannot_be_read) {
+DESCRIBE(wsdb_rebuilds_when_a_prerequisite_cannot_be_read) {
     workspace_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture));
 

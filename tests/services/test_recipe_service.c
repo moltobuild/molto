@@ -65,7 +65,7 @@ static void check_coordinate(doc_view doc) {
     EXPECT_STREQ("any", coordinate.target);
 }
 
-MOLTEST(recipe_reads_its_coordinate_from_either_encoding) { for_both_encodings(check_coordinate); }
+DESCRIBE(recipe_reads_its_coordinate_from_either_encoding) { for_both_encodings(check_coordinate); }
 
 static void check_artifacts(doc_view doc) {
     recipe_artifacts artifacts;
@@ -89,7 +89,7 @@ static void check_artifacts(doc_view doc) {
     EXPECT_EQ(0u, artifacts.options.flag_count);
 }
 
-MOLTEST(recipe_reads_the_artifacts_table_from_either_encoding) {
+DESCRIBE(recipe_reads_the_artifacts_table_from_either_encoding) {
     for_both_encodings(check_artifacts);
 }
 
@@ -147,7 +147,7 @@ static bool read_build_of(const char *text, recipe_build *out, char *err, size_t
 #define MINIMUM                                                                                    \
     "kind = \"package\"\nname = \"x\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
 
-MOLTEST(recipe_assumes_what_a_recipe_without_the_new_keys_meant) {
+DESCRIBE(recipe_assumes_what_a_recipe_without_the_new_keys_meant) {
     /* schema and form are both new, and the recipes published before they
        existed cannot be made to declare them. */
     recipe_coordinate coordinate;
@@ -158,7 +158,7 @@ MOLTEST(recipe_assumes_what_a_recipe_without_the_new_keys_meant) {
     EXPECT_EQ(recipe_form_binary, coordinate.form);
 }
 
-MOLTEST(recipe_rejects_a_schema_it_cannot_read) {
+DESCRIBE(recipe_rejects_a_schema_it_cannot_read) {
     /* A later schema may give an existing key a new meaning, so reading it
        optimistically is reading it wrong. Written against the ceiling rather
        than a number, so raising it does not quietly turn this into a test of
@@ -172,7 +172,7 @@ MOLTEST(recipe_rejects_a_schema_it_cannot_read) {
     EXPECT_NOT_NULL(strstr(err, "upgrade molto"));
 }
 
-MOLTEST(recipe_reads_the_schema_a_plugin_declares) {
+DESCRIBE(recipe_reads_the_schema_a_plugin_declares) {
     /* Schema 2 is `[plugin]` (RFC-0014), and a plugin recipe is required to
        declare it — so a reader that refused it could not read what the
        registry serves. */
@@ -182,14 +182,14 @@ MOLTEST(recipe_reads_the_schema_a_plugin_declares) {
     EXPECT_EQ(2, coordinate.schema);
 }
 
-MOLTEST(recipe_rejects_an_unknown_form) {
+DESCRIBE(recipe_rejects_an_unknown_form) {
     recipe_coordinate coordinate;
     char err[256] = "";
     EXPECT_FALSE(read_coordinate_of("form = \"recipe\"\n" MINIMUM, &coordinate, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "unknown recipe form"));
 }
 
-MOLTEST(recipe_reports_a_coordinate_that_is_incomplete) {
+DESCRIBE(recipe_reports_a_coordinate_that_is_incomplete) {
     recipe_coordinate coordinate;
     char err[256] = "";
     EXPECT_FALSE(read_coordinate_of("kind = \"package\"\nname = \"x\"\n", &coordinate, err,
@@ -197,7 +197,7 @@ MOLTEST(recipe_reports_a_coordinate_that_is_incomplete) {
     EXPECT_NOT_NULL(strstr(err, "version"));
 }
 
-MOLTEST(recipe_defaults_the_artifact_type_to_static) {
+DESCRIBE(recipe_defaults_the_artifact_type_to_static) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of("[artifacts]\ninclude = [\"include\"]\n", &artifacts, err,
@@ -205,7 +205,7 @@ MOLTEST(recipe_defaults_the_artifact_type_to_static) {
     EXPECT_EQ(recipe_artifact_static, artifacts.type);
 }
 
-MOLTEST(recipe_rejects_an_artifact_type_nothing_can_build) {
+DESCRIBE(recipe_rejects_an_artifact_type_nothing_can_build) {
     recipe_artifacts artifacts;
     char err[256] = "";
     EXPECT_FALSE(read_artifacts_of("[artifacts]\ntype = \"header_only\"\n", &artifacts, err,
@@ -213,7 +213,7 @@ MOLTEST(recipe_rejects_an_artifact_type_nothing_can_build) {
     EXPECT_NOT_NULL(strstr(err, "source, static or shared"));
 }
 
-MOLTEST(recipe_without_an_artifacts_table_is_not_an_error) {
+DESCRIBE(recipe_without_an_artifacts_table_is_not_an_error) {
     /* A binary recipe describes itself with [package] instead. */
     recipe_artifacts artifacts;
     char err[256] = "";
@@ -222,7 +222,7 @@ MOLTEST(recipe_without_an_artifacts_table_is_not_an_error) {
     EXPECT_EQ(recipe_artifact_static, artifacts.type);
 }
 
-MOLTEST(recipe_refuses_a_sources_list_that_is_not_a_list) {
+DESCRIBE(recipe_refuses_a_sources_list_that_is_not_a_list) {
     /* Silently reading nothing here compiles nothing, and the link failure
        that follows names none of it. */
     recipe_artifacts artifacts;
@@ -232,7 +232,7 @@ MOLTEST(recipe_refuses_a_sources_list_that_is_not_a_list) {
     EXPECT_NOT_NULL(strstr(err, "list of strings"));
 }
 
-MOLTEST(recipe_refuses_more_sources_than_it_can_hold) {
+DESCRIBE(recipe_refuses_more_sources_than_it_can_hold) {
     char text[8192] = "[artifacts]\nsources = [";
     for (int i = 0; i < RECIPE_MAX_SOURCES + 1; i++) {
         char entry[32];
@@ -247,7 +247,7 @@ MOLTEST(recipe_refuses_more_sources_than_it_can_hold) {
     EXPECT_NOT_NULL(strstr(err, "more than"));
 }
 
-MOLTEST(recipe_compiles_only_the_sources_it_names) {
+DESCRIBE(recipe_compiles_only_the_sources_it_names) {
     /* The reason `sources` exists: the amalgamation ships shell.c, which has
        its own main(), and compiling the whole drop links two of them. */
     recipe_artifacts artifacts;
@@ -259,7 +259,7 @@ MOLTEST(recipe_compiles_only_the_sources_it_names) {
     EXPECT_FALSE(recipe_artifacts_wants(&artifacts, "shell.c"));
 }
 
-MOLTEST(recipe_takes_everything_when_it_names_no_sources) {
+DESCRIBE(recipe_takes_everything_when_it_names_no_sources) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of("[artifacts]\ninclude = [\".\"]\n", &artifacts, err, sizeof err));
@@ -267,7 +267,7 @@ MOLTEST(recipe_takes_everything_when_it_names_no_sources) {
     EXPECT_TRUE(recipe_artifacts_wants(&artifacts, "anything.c"));
 }
 
-MOLTEST(recipe_applies_exclude_after_sources) {
+DESCRIBE(recipe_applies_exclude_after_sources) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of("[artifacts]\nexclude = [\"shell.c\"]\n", &artifacts, err,
@@ -336,14 +336,14 @@ static void check_scoped(doc_view doc) {
     EXPECT_STREQ("-fno-strict-aliasing", artifacts.private_options.flags[0]);
 }
 
-MOLTEST(a_recipe_keeps_its_private_options_out_of_its_interface) {
+DESCRIBE(a_recipe_keeps_its_private_options_out_of_its_interface) {
     for_both(SCOPED_TOML, SCOPED_JSON, check_scoped);
 }
 
 /* A recipe that only ever needed to silence one warning declares nothing
    directly under `[artifacts]`. Asking whether that table exists would skip the
    whole read and lose the one thing the recipe was written to say. */
-MOLTEST(a_recipe_whose_only_statement_is_private_is_still_read) {
+DESCRIBE(a_recipe_whose_only_statement_is_private_is_still_read) {
     static const char *const private_only = "schema = 1\nform = \"source\"\n" MINIMUM
                                             "[artifacts.private]\nflags = [\"-Wno-unused\"]\n";
     recipe_artifacts artifacts;
@@ -358,7 +358,7 @@ MOLTEST(a_recipe_whose_only_statement_is_private_is_still_read) {
 
 /* Nothing private is the ordinary case, and it has to read as empty rather
    than as whatever the interface said. */
-MOLTEST(a_recipe_without_the_private_table_keeps_nothing_back) {
+DESCRIBE(a_recipe_without_the_private_table_keeps_nothing_back) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of(SQLITE_TOML, &artifacts, err, sizeof err));
@@ -396,13 +396,13 @@ static void check_std(doc_view doc) {
     EXPECT_STREQ("c++17", artifacts.cpp_std);
 }
 
-MOLTEST(a_recipe_may_name_the_standard_its_sources_compile_with) {
+DESCRIBE(a_recipe_may_name_the_standard_its_sources_compile_with) {
     for_both(STD_TOML, STD_JSON, check_std);
 }
 
 /* Saying nothing is how a package says it never had an opinion, and an empty
    standard is what makes it inherit the consumer's. */
-MOLTEST(a_recipe_that_names_no_standard_inherits_one) {
+DESCRIBE(a_recipe_that_names_no_standard_inherits_one) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of(SQLITE_TOML, &artifacts, err, sizeof err));
@@ -412,7 +412,7 @@ MOLTEST(a_recipe_that_names_no_standard_inherits_one) {
 
 /* Each language decides separately: naming one leaves the other inherited,
    which is what a C library with a single C++ shim needs. */
-MOLTEST(one_standard_named_leaves_the_other_alone) {
+DESCRIBE(one_standard_named_leaves_the_other_alone) {
     recipe_artifacts artifacts;
     char err[256] = "";
     ASSERT_TRUE(read_artifacts_of("[artifacts]\nstd = \"c11\"\n", &artifacts, err, sizeof err));
@@ -423,7 +423,7 @@ MOLTEST(one_standard_named_leaves_the_other_alone) {
 /* A recipe is written by one person and read by everyone who depends on them,
    so the typo has to fail here rather than in their build, under a compiler
    option none of them wrote. */
-MOLTEST(a_recipe_rejects_a_standard_molto_cannot_place) {
+DESCRIBE(a_recipe_rejects_a_standard_molto_cannot_place) {
     recipe_artifacts artifacts;
     char err[256] = "";
     EXPECT_FALSE(read_artifacts_of("[artifacts]\nstd = \"C99\"\n", &artifacts, err, sizeof err));
@@ -433,7 +433,7 @@ MOLTEST(a_recipe_rejects_a_standard_molto_cannot_place) {
 
 /* `c++20` is a real standard and still the wrong answer to `std`. Checking each
    key against its own language is what catches it. */
-MOLTEST(a_recipe_rejects_a_standard_of_the_other_language) {
+DESCRIBE(a_recipe_rejects_a_standard_of_the_other_language) {
     recipe_artifacts artifacts;
     char err[256] = "";
     EXPECT_FALSE(read_artifacts_of("[artifacts]\nstd = \"c++20\"\n", &artifacts, err, sizeof err));
@@ -449,14 +449,14 @@ MOLTEST(a_recipe_rejects_a_standard_of_the_other_language) {
 
 /* Absent is `none`, which is the rule `schema` and `form` already follow and is
    what every source recipe published before this key meant. */
-MOLTEST(a_recipe_with_no_build_table_needs_no_build_system) {
+DESCRIBE(a_recipe_with_no_build_table_needs_no_build_system) {
     recipe_build build;
     char err[256] = "";
     EXPECT_TRUE(read_build_of("[artifacts]\ntype = \"source\"\n", &build, err, sizeof err));
     EXPECT_EQ(recipe_build_none, build.system);
 }
 
-MOLTEST(a_recipe_reads_every_build_system_the_format_names) {
+DESCRIBE(a_recipe_reads_every_build_system_the_format_names) {
     static const struct {
         const char *name;
         recipe_build_system system;
@@ -483,14 +483,14 @@ MOLTEST(a_recipe_reads_every_build_system_the_format_names) {
 /* Neither `sh -c` on a stranger's word nor a quiet fall back to `none`: one
    would run what the recipe named and the other would compile sources that were
    told they need configuring first (RFC-0009). */
-MOLTEST(a_recipe_rejects_a_build_system_molto_does_not_know) {
+DESCRIBE(a_recipe_rejects_a_build_system_molto_does_not_know) {
     recipe_build build;
     char err[256] = "";
     EXPECT_FALSE(read_build_of("[build]\nsystem = \"scons\"\n", &build, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "scons"));
 }
 
-MOLTEST(a_recipe_rejects_a_build_system_that_is_not_a_string) {
+DESCRIBE(a_recipe_rejects_a_build_system_that_is_not_a_string) {
     recipe_build build;
     char err[256] = "";
     EXPECT_FALSE(read_build_of("[build]\nsystem = 3\n", &build, err, sizeof err));
@@ -499,14 +499,14 @@ MOLTEST(a_recipe_rejects_a_build_system_that_is_not_a_string) {
 
 /* --- the files a recipe copies into place --- */
 
-MOLTEST(a_recipe_with_no_provide_list_copies_nothing) {
+DESCRIBE(a_recipe_with_no_provide_list_copies_nothing) {
     recipe_provide provide;
     char err[256] = "";
     EXPECT_TRUE(read_provide_of("[build]\nsystem = \"none\"\n", &provide, err, sizeof err));
     EXPECT_EQ(0u, provide.count);
 }
 
-MOLTEST(a_recipe_reads_what_it_provides_in_order) {
+DESCRIBE(a_recipe_reads_what_it_provides_in_order) {
     recipe_provide provide;
     char err[256] = "";
     ASSERT_TRUE(read_provide_of("[[provide]]\nfile = \"pnglibconf.h\"\n"
@@ -521,7 +521,7 @@ MOLTEST(a_recipe_reads_what_it_provides_in_order) {
 
 /* Half an entry says half a thing, and guessing the other half is how a recipe
    comes to mean something nobody wrote. */
-MOLTEST(a_recipe_rejects_a_provision_missing_either_half) {
+DESCRIBE(a_recipe_rejects_a_provision_missing_either_half) {
     recipe_provide provide;
     char err[256] = "";
     EXPECT_FALSE(read_provide_of("[[provide]]\nfile = \"config.h\"\n", &provide, err, sizeof err));
@@ -535,7 +535,7 @@ MOLTEST(a_recipe_rejects_a_provision_missing_either_half) {
 
 /* Reported rather than truncated: an entry silently dropped is a header that is
    never written and a compiler error naming neither the recipe nor the key. */
-MOLTEST(a_recipe_rejects_more_provisions_than_the_format_allows) {
+DESCRIBE(a_recipe_rejects_more_provisions_than_the_format_allows) {
     char text[1024] = "";
     size_t used = 0;
     for (int i = 0; i < RECIPE_MAX_PROVIDE + 1; i++) {

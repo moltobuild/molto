@@ -26,7 +26,7 @@ static char *heap_string(const char *text) {
     return copy;
 }
 
-MOLTEST(str_map) {
+DESCRIBE(str_map) {
     str_map *map = str_map_create(counting_free);
     EXPECT_TRUE(map != NULL);
     EXPECT_TRUE(str_map_size(map) == 0);

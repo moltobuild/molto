@@ -35,7 +35,7 @@ static library_names named_for(const char *platform, artifact_kind kind, const c
     return names;
 }
 
-MOLTEST(an_executable_is_called_what_the_package_is_called) {
+DESCRIBE(an_executable_is_called_what_the_package_is_called) {
     const library_names names = named(artifact_executable, "calculator", "0.1.0");
     EXPECT_STREQ("calculator", names.file);
 
@@ -57,19 +57,19 @@ MOLTEST(an_executable_is_called_what_the_package_is_called) {
  * The suffix is real and still needed -- it goes on in `build_service`, where
  * the path on disk is composed and a filename is what is wanted.
  */
-MOLTEST(an_executables_name_carries_no_platform_of_its_own) {
+DESCRIBE(an_executables_name_carries_no_platform_of_its_own) {
     const library_names names = named(artifact_executable, "calculator", "0.1.0");
     EXPECT_STREQ("calculator", names.file);
     EXPECT_EQ(NULL, strstr(names.file, ".exe"));
 }
 
-MOLTEST(a_static_library_takes_the_lib_prefix_and_the_a_suffix) {
+DESCRIBE(a_static_library_takes_the_lib_prefix_and_the_a_suffix) {
     const library_names names = named(artifact_static, "calculator", "0.1.0");
     EXPECT_STREQ("libcalculator.a", names.file);
     EXPECT_STREQ("", names.soname);
 }
 
-MOLTEST(a_shared_library_carries_its_whole_version_in_the_file) {
+DESCRIBE(a_shared_library_carries_its_whole_version_in_the_file) {
     const library_names names = named(artifact_shared, "calculator", "1.2.3");
     EXPECT_STREQ("libcalculator.so.1.2.3", names.file);
 }
@@ -77,7 +77,7 @@ MOLTEST(a_shared_library_carries_its_whole_version_in_the_file) {
 /* The soname carries the major and nothing else, which is the whole convention:
    a program linked against `libcalculator.so.1` keeps running when 1.2.3 is
    replaced by 1.9.0, and stops when it is replaced by 2.0.0. */
-MOLTEST(a_soname_carries_only_the_major) {
+DESCRIBE(a_soname_carries_only_the_major) {
     const library_names names = named(artifact_shared, "calculator", "1.2.3");
     EXPECT_STREQ("libcalculator.so.1", names.soname);
 
@@ -88,12 +88,12 @@ MOLTEST(a_soname_carries_only_the_major) {
     EXPECT_STREQ("libcalculator.so.2", breaking.soname);
 }
 
-MOLTEST(the_unversioned_name_is_what_a_link_resolves_through) {
+DESCRIBE(the_unversioned_name_is_what_a_link_resolves_through) {
     const library_names names = named(artifact_shared, "calculator", "1.2.3");
     EXPECT_STREQ("libcalculator.so", names.devlink);
 }
 
-MOLTEST(a_zero_major_is_a_soname_like_any_other) {
+DESCRIBE(a_zero_major_is_a_soname_like_any_other) {
     /* The version `molto new` writes. It has to produce a loadable library or
        every project's first shared build is broken. */
     const library_names names = named(artifact_shared, "calculator", "0.1.0");
@@ -110,7 +110,7 @@ MOLTEST(a_zero_major_is_a_soname_like_any_other) {
  * produce `libcalculator.dylib.0.1.0`, which nothing loads and which reads
  * plausible enough to survive a review.
  */
-MOLTEST(a_shared_library_on_darwin_is_a_dylib_with_the_version_in_the_middle) {
+DESCRIBE(a_shared_library_on_darwin_is_a_dylib_with_the_version_in_the_middle) {
     const library_names names = named_for("aarch64-darwin", artifact_shared, "calculator", "0.1.0");
     EXPECT_STREQ("libcalculator.0.1.0.dylib", names.file);
     EXPECT_STREQ("libcalculator.0.dylib", names.soname);
@@ -127,7 +127,7 @@ MOLTEST(a_shared_library_on_darwin_is_a_dylib_with_the_version_in_the_middle) {
  * is handed a root and a profile and is never told which platform this is
  * (RFC-0018).
  */
-MOLTEST(the_name_a_library_records_is_spelled_by_its_linker) {
+DESCRIBE(the_name_a_library_records_is_spelled_by_its_linker) {
     const library_names gnu =
         named_for("x86_64-unknown-linux-gnu", artifact_shared, "calculator", "0.1.0");
     EXPECT_STREQ("-Wl,-soname,libcalculator.so.0", gnu.name_option);
@@ -142,7 +142,7 @@ MOLTEST(the_name_a_library_records_is_spelled_by_its_linker) {
 
 /* Every spelling a person might reach for at `--target`, and the one the
    registry actually uses. A triple that is not any of them is not a Mac. */
-MOLTEST(darwin_is_recognised_by_the_names_people_write) {
+DESCRIBE(darwin_is_recognised_by_the_names_people_write) {
     static const char *const macs[] = {"aarch64-darwin", "x86_64-apple-darwin", "arm64-macos"};
     for(size_t i = 0; i < sizeof macs / sizeof macs[0]; i++) {
         const library_names names = named_for(macs[i], artifact_shared, "calculator", "0.1.0");
@@ -155,7 +155,7 @@ MOLTEST(darwin_is_recognised_by_the_names_people_write) {
 
 /* The kinds that carry no recorded name carry no option either, on any
    platform: an executable has nothing to record and a `.a` is not loaded. */
-MOLTEST(only_a_shared_library_records_a_name) {
+DESCRIBE(only_a_shared_library_records_a_name) {
     EXPECT_STREQ("", named_for("aarch64-darwin", artifact_executable, "calculator", "0.1.0")
                          .name_option);
     EXPECT_STREQ("", named_for("aarch64-darwin", artifact_static, "calculator", "0.1.0")
@@ -164,7 +164,7 @@ MOLTEST(only_a_shared_library_records_a_name) {
 
 /* A guess would put the wrong number in a soname, which is the one place a
    wrong number is a promise about ABI. */
-MOLTEST(a_version_that_is_not_semver_cannot_name_a_shared_library) {
+DESCRIBE(a_version_that_is_not_semver_cannot_name_a_shared_library) {
     library_names names;
     char err[256] = "";
     EXPECT_FALSE(library_names_of(artifact_shared, "calculator", "nightly", NULL, &names, err,
@@ -174,7 +174,7 @@ MOLTEST(a_version_that_is_not_semver_cannot_name_a_shared_library) {
 
 /* The same version names a static library perfectly well, because nothing about
    a `.a` depends on it. */
-MOLTEST(a_static_library_needs_no_version_at_all) {
+DESCRIBE(a_static_library_needs_no_version_at_all) {
     library_names names;
     char err[256] = "";
     EXPECT_TRUE(library_names_of(artifact_static, "calculator", "nightly", NULL, &names, err,
@@ -182,14 +182,14 @@ MOLTEST(a_static_library_needs_no_version_at_all) {
     EXPECT_STREQ("libcalculator.a", names.file);
 }
 
-MOLTEST(source_is_a_recipe_s_business_and_not_something_to_build) {
+DESCRIBE(source_is_a_recipe_s_business_and_not_something_to_build) {
     library_names names;
     char err[256] = "";
     EXPECT_FALSE(library_names_of(artifact_source, "calculator", "1.0.0", NULL, &names, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "registry"));
 }
 
-MOLTEST(a_package_with_no_name_cannot_be_built) {
+DESCRIBE(a_package_with_no_name_cannot_be_built) {
     library_names names;
     char err[256] = "";
     EXPECT_FALSE(library_names_of(artifact_static, "", "1.0.0", NULL, &names, err, sizeof err));

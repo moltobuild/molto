@@ -28,7 +28,7 @@ static resolved_tool linter_backend(void) {
     return tool;
 }
 
-MOLTEST(translate_maps_every_canonical_key_to_clang_format) {
+DESCRIBE(translate_maps_every_canonical_key_to_clang_format) {
     style_config config;
     style_config_defaults(&config);
     resolved_tool backend = formatter_backend();
@@ -48,7 +48,7 @@ MOLTEST(translate_maps_every_canonical_key_to_clang_format) {
     EXPECT_NOT_NULL(strstr(text, "SpaceBeforeParens: Never"));
 }
 
-MOLTEST(translate_emits_the_modern_enum_and_not_the_legacy_boolean) {
+DESCRIBE(translate_emits_the_modern_enum_and_not_the_legacy_boolean) {
     style_config config;
     style_config_defaults(&config);
     resolved_tool backend = formatter_backend();
@@ -69,7 +69,7 @@ MOLTEST(translate_emits_the_modern_enum_and_not_the_legacy_boolean) {
     EXPECT_NULL(strstr(text, "ReflowComments: Always"));
 }
 
-MOLTEST(translate_maps_each_brace_style_to_its_own_backend_value) {
+DESCRIBE(translate_maps_each_brace_style_to_its_own_backend_value) {
     resolved_tool backend = formatter_backend();
     const struct { brace_style style; const char *native; } cases[] = {
         { brace_style_attach, "BreakBeforeBraces: Attach" },
@@ -91,7 +91,7 @@ MOLTEST(translate_maps_each_brace_style_to_its_own_backend_value) {
     }
 }
 
-MOLTEST(translate_refuses_a_backend_it_cannot_speak_for) {
+DESCRIBE(translate_refuses_a_backend_it_cannot_speak_for) {
     style_config config;
     style_config_defaults(&config);
     snprintf(config.backend, sizeof config.backend, "%s", "uncrustify@0.78.1");
@@ -106,7 +106,7 @@ MOLTEST(translate_refuses_a_backend_it_cannot_speak_for) {
     EXPECT_NOT_NULL(strstr(err, "clang-format"));
 }
 
-MOLTEST(translate_refuses_a_pin_this_machine_does_not_have) {
+DESCRIBE(translate_refuses_a_pin_this_machine_does_not_have) {
     style_config config;
     style_config_defaults(&config);
     snprintf(config.backend, sizeof config.backend, "%s", "clang-format@18.1.8");
@@ -122,7 +122,7 @@ MOLTEST(translate_refuses_a_pin_this_machine_does_not_have) {
     EXPECT_NOT_NULL(strstr(err, "22.1.8"));
 }
 
-MOLTEST(translate_accepts_a_pin_that_matches) {
+DESCRIBE(translate_accepts_a_pin_that_matches) {
     style_config config;
     style_config_defaults(&config);
     snprintf(config.backend, sizeof config.backend, "%s", "clang-format@22.1.8");
@@ -134,7 +134,7 @@ MOLTEST(translate_accepts_a_pin_that_matches) {
                                             err, sizeof err));
 }
 
-MOLTEST(translate_parses_a_c_project_as_c_and_not_as_the_newest_cpp) {
+DESCRIBE(translate_parses_a_c_project_as_c_and_not_as_the_newest_cpp) {
     style_config config;
     style_config_defaults(&config);
     resolved_tool backend = formatter_backend();
@@ -151,7 +151,7 @@ MOLTEST(translate_parses_a_c_project_as_c_and_not_as_the_newest_cpp) {
     EXPECT_NOT_NULL(strstr(text, "Standard: c++03"));
 }
 
-MOLTEST(translate_parses_a_cpp_project_as_the_standard_it_declared) {
+DESCRIBE(translate_parses_a_cpp_project_as_the_standard_it_declared) {
     resolved_tool backend = formatter_backend();
     const struct { const char *declared; const char *native; } cases[] = {
         { "c++11",   "Standard: c++11" },
@@ -175,7 +175,7 @@ MOLTEST(translate_parses_a_cpp_project_as_the_standard_it_declared) {
     }
 }
 
-MOLTEST(translate_falls_back_to_the_newest_for_a_standard_it_does_not_know) {
+DESCRIBE(translate_falls_back_to_the_newest_for_a_standard_it_does_not_know) {
     style_config config;
     style_config_defaults(&config);
     resolved_tool backend = formatter_backend();
@@ -189,7 +189,7 @@ MOLTEST(translate_falls_back_to_the_newest_for_a_standard_it_does_not_know) {
     EXPECT_NOT_NULL(strstr(text, "Standard: Latest"));
 }
 
-MOLTEST(translate_indents_with_tabs_without_aligning_with_them) {
+DESCRIBE(translate_indents_with_tabs_without_aligning_with_them) {
     style_config config;
     style_config_defaults(&config);
     config.style.use_tabs = true;
@@ -206,7 +206,7 @@ MOLTEST(translate_indents_with_tabs_without_aligning_with_them) {
     EXPECT_NULL(strstr(text, "UseTab: Always"));
 }
 
-MOLTEST(translate_does_not_repeat_a_check_the_preset_already_enabled) {
+DESCRIBE(translate_does_not_repeat_a_check_the_preset_already_enabled) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto; /* already asks for bugprone-* */
@@ -228,7 +228,7 @@ MOLTEST(translate_does_not_repeat_a_check_the_preset_already_enabled) {
     EXPECT_NULL(strstr(first + 1, "bugprone-*"));
 }
 
-MOLTEST(translate_still_subtracts_a_check_the_preset_enabled) {
+DESCRIBE(translate_still_subtracts_a_check_the_preset_enabled) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto;
@@ -247,7 +247,7 @@ MOLTEST(translate_still_subtracts_a_check_the_preset_enabled) {
     EXPECT_NOT_NULL(strstr(text, "-bugprone-*"));
 }
 
-MOLTEST(translate_makes_a_preset_check_fatal_when_a_rule_raises_it) {
+DESCRIBE(translate_makes_a_preset_check_fatal_when_a_rule_raises_it) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto;
@@ -266,7 +266,7 @@ MOLTEST(translate_makes_a_preset_check_fatal_when_a_rule_raises_it) {
     EXPECT_NOT_NULL(strstr(text, "WarningsAsErrors: 'bugprone-*'"));
 }
 
-MOLTEST(translate_builds_the_check_lists_from_the_rules) {
+DESCRIBE(translate_builds_the_check_lists_from_the_rules) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_none;
@@ -301,7 +301,7 @@ MOLTEST(translate_builds_the_check_lists_from_the_rules) {
  * body and every bug in a header went unread -- 79 files and 7,207 lines in
  * this repository alone, silently.
  */
-MOLTEST(translate_asks_the_backend_to_read_the_project_s_own_headers) {
+DESCRIBE(translate_asks_the_backend_to_read_the_project_s_own_headers) {
     lint_config config;
     lint_config_defaults(&config);
 
@@ -319,7 +319,7 @@ MOLTEST(translate_asks_the_backend_to_read_the_project_s_own_headers) {
 
 /* A path is not a regular expression. A dot in a directory name would match any
    character, so `/w/app.v2` would also claim `/w/appXv2`. */
-MOLTEST(translate_escapes_a_project_path_before_it_becomes_a_pattern) {
+DESCRIBE(translate_escapes_a_project_path_before_it_becomes_a_pattern) {
     lint_config config;
     lint_config_defaults(&config);
 
@@ -334,7 +334,7 @@ MOLTEST(translate_escapes_a_project_path_before_it_becomes_a_pattern) {
 
 /* Off is a decision a project can take, and then the filter is absent rather
    than empty: an empty pattern is one clang-tidy would have to interpret. */
-MOLTEST(translate_leaves_the_headers_alone_when_asked_to) {
+DESCRIBE(translate_leaves_the_headers_alone_when_asked_to) {
     lint_config config;
     lint_config_defaults(&config);
     config.headers = false;
@@ -356,7 +356,7 @@ MOLTEST(translate_leaves_the_headers_alone_when_asked_to) {
  * was a rule a project could set to `error`, run, and never see fail -- worse
  * than a missing rule, because the file said it was on.
  */
-MOLTEST(translate_tells_the_naming_rule_what_snake_case_means) {
+DESCRIBE(translate_tells_the_naming_rule_what_snake_case_means) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "naming_snake_case");
@@ -382,7 +382,7 @@ MOLTEST(translate_tells_the_naming_rule_what_snake_case_means) {
 }
 
 /* A project with an opinion overrides the default, and only the one it named. */
-MOLTEST(translate_prefers_what_the_file_said_over_the_default) {
+DESCRIBE(translate_prefers_what_the_file_said_over_the_default) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "function_complexity");
@@ -407,7 +407,7 @@ MOLTEST(translate_prefers_what_the_file_said_over_the_default) {
    RFC-0005 gives for a rule a backend cannot express: a setting written into a
    generated file that the backend then ignores is a setting nobody can tell is
    not working. */
-MOLTEST(translate_refuses_an_option_the_rule_does_not_take) {
+DESCRIBE(translate_refuses_an_option_the_rule_does_not_take) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "bugprone");
@@ -429,7 +429,7 @@ MOLTEST(translate_refuses_an_option_the_rule_does_not_take) {
 /* A rule that is off is not configured. clang-tidy would take the option and
    still report nothing, which reads as a broken rule rather than a disabled
    one to whoever comes looking. */
-MOLTEST(translate_does_not_configure_a_rule_it_just_subtracted) {
+DESCRIBE(translate_does_not_configure_a_rule_it_just_subtracted) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "naming_snake_case");
@@ -448,7 +448,7 @@ MOLTEST(translate_does_not_configure_a_rule_it_just_subtracted) {
 /* The two rules this file gained, and the concepts they name. `concurrency-*`
    matters here in particular: molto compiles under a pool of workers, so a call
    that is not safe to make from two threads is not a hypothetical. */
-MOLTEST(translate_names_the_two_rules_a_threaded_c_project_wants) {
+DESCRIBE(translate_names_the_two_rules_a_threaded_c_project_wants) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "thread_safety");
@@ -470,7 +470,7 @@ MOLTEST(translate_names_the_two_rules_a_threaded_c_project_wants) {
     EXPECT_NOT_NULL(strstr(text, "readability-function-cognitive-complexity.Threshold: '25'"));
 }
 
-MOLTEST(translate_refuses_a_rule_it_cannot_express) {
+DESCRIBE(translate_refuses_a_rule_it_cannot_express) {
     lint_config config;
     lint_config_defaults(&config);
     snprintf(config.rules[0].name, LINT_RULE_NAME_MAX, "%s", "no_such_rule");
@@ -486,7 +486,7 @@ MOLTEST(translate_refuses_a_rule_it_cannot_express) {
     EXPECT_NOT_NULL(strstr(err, "clang-tidy"));
 }
 
-MOLTEST(translate_writes_the_config_under_bin_and_not_in_the_tree) {
+DESCRIBE(translate_writes_the_config_under_bin_and_not_in_the_tree) {
     char root[64];
     ASSERT_TRUE(moltest_temp_dir("molto_translate", root, sizeof root));
 
@@ -517,7 +517,7 @@ MOLTEST(translate_writes_the_config_under_bin_and_not_in_the_tree) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(translate_can_refuse_one_check_without_giving_up_its_family) {
+DESCRIBE(translate_can_refuse_one_check_without_giving_up_its_family) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto; /* asks for bugprone-* */
@@ -546,7 +546,7 @@ MOLTEST(translate_can_refuse_one_check_without_giving_up_its_family) {
    analyzer the molto preset deliberately leaves out. A list that does not open
    by clearing it runs an analysis nobody configured, at a cost nobody agreed
    to, and its contents change with the version of clang-tidy on the machine. */
-MOLTEST(translate_opens_the_check_list_by_clearing_the_backend_default) {
+DESCRIBE(translate_opens_the_check_list_by_clearing_the_backend_default) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto;
@@ -565,7 +565,7 @@ MOLTEST(translate_opens_the_check_list_by_clearing_the_backend_default) {
 /* The same for a project that asked for no preset at all: an empty canonical
    model must translate to an empty analysis, not to whichever checks the
    backend happens to run when it is told nothing. */
-MOLTEST(translate_clears_the_default_even_with_no_preset_and_no_rules) {
+DESCRIBE(translate_clears_the_default_even_with_no_preset_and_no_rules) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_none;
@@ -583,7 +583,7 @@ MOLTEST(translate_clears_the_default_even_with_no_preset_and_no_rules) {
 /* The analyzer separates its families with a dot. Spelled with the hyphen the
    rest of clang-tidy uses, the pattern matches no check at all, and the rule
    this project documents turns nothing on. */
-MOLTEST(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
+DESCRIBE(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_none;
@@ -611,7 +611,7 @@ MOLTEST(translate_spells_an_analyzer_family_the_way_the_analyzer_does) {
    families that say something about C on this platform — not osx, not
    cplusplus — and not unix.Stream, which reads every `while(fread(...))` in
    this repository as a read past the end of the file. */
-MOLTEST(translate_asks_the_analyzer_only_for_what_says_something_about_c) {
+DESCRIBE(translate_asks_the_analyzer_only_for_what_says_something_about_c) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_molto;
@@ -639,7 +639,7 @@ MOLTEST(translate_asks_the_analyzer_only_for_what_says_something_about_c) {
    minus in front of the list would negate its first element and leave the rest
    running — and the check the rule already subtracts must not come back on,
    which is what re-emitting it without its minus would do. */
-MOLTEST(translate_turns_a_rule_off_check_by_check) {
+DESCRIBE(translate_turns_a_rule_off_check_by_check) {
     lint_config config;
     lint_config_defaults(&config);
     config.preset = style_preset_none;

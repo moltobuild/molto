@@ -88,7 +88,7 @@ static bool build_sample(ir_document *doc) {
 
 /* --- the model and the wire --- */
 
-MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
+DESCRIBE(ir_writes_a_document_that_reads_back_as_itself) {
     ir_document written;
     ASSERT_TRUE(build_sample(&written));
 
@@ -151,7 +151,7 @@ MOLTEST(ir_writes_a_document_that_reads_back_as_itself) {
     ir_document_free(&written);
 }
 
-MOLTEST(ir_writes_the_same_bytes_twice) {
+DESCRIBE(ir_writes_the_same_bytes_twice) {
     /* `molto metadata`'s rule, and for the same reason: a dump that differs
        between runs cannot be diffed, and a document that cannot be diffed
        cannot be reviewed or cached (RFC-0013). */
@@ -171,7 +171,7 @@ MOLTEST(ir_writes_the_same_bytes_twice) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_omits_what_a_document_does_not_say) {
+DESCRIBE(ir_omits_what_a_document_does_not_say) {
     /* What is not there and what is there and blank are different documents:
        an absent artifact and an absent install name are omitted, not written
        empty, so a reader can tell a producer that said nothing from one that
@@ -192,7 +192,7 @@ MOLTEST(ir_omits_what_a_document_does_not_say) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_omits_the_version_of_a_path_dependency) {
+DESCRIBE(ir_omits_the_version_of_a_path_dependency) {
     /* Its bytes are whatever is on disk, so there is no version to state —
        the same omission `molto metadata` already makes. */
     ir_document doc;
@@ -215,7 +215,7 @@ MOLTEST(ir_omits_the_version_of_a_path_dependency) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_frees_a_document_twice_without_complaint) {
+DESCRIBE(ir_frees_a_document_twice_without_complaint) {
     ir_document doc;
     ASSERT_TRUE(build_sample(&doc));
     ir_document_free(&doc);
@@ -296,7 +296,7 @@ static void assert_sample(const ir_document *doc) {
     EXPECT_EQ(0u, doc->targets[1].include_count);
 }
 
-MOLTEST(ir_reads_the_same_document_from_toml) {
+DESCRIBE(ir_reads_the_same_document_from_toml) {
     char err[512] = "";
     toml_document *parsed = toml_parse(SAMPLE_TOML, err, sizeof err);
     ASSERT_NOT_NULL(parsed);
@@ -310,7 +310,7 @@ MOLTEST(ir_reads_the_same_document_from_toml) {
     toml_free(parsed);
 }
 
-MOLTEST(ir_reads_the_same_document_from_json) {
+DESCRIBE(ir_reads_the_same_document_from_json) {
     ir_document doc;
     char err[512] = "";
     ASSERT_TRUE(ir_read_json(SAMPLE_JSON, &doc, err, sizeof err));
@@ -338,7 +338,7 @@ static void refused(const char *json, const char *needle) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_schema_it_does_not_speak) {
+DESCRIBE(ir_refuses_a_schema_it_does_not_speak) {
     refused("{\"schema\":4,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "schema 4");
@@ -352,7 +352,7 @@ MOLTEST(ir_refuses_a_schema_it_does_not_speak) {
     refused("{\"projects\":[]}", "no 'schema'");
 }
 
-MOLTEST(ir_refuses_an_unknown_node_type) {
+DESCRIBE(ir_refuses_an_unknown_node_type) {
     /* The directional rule of RFC-0013. An engine that skipped a node type it
        did not know would build something other than what it was handed, and
        report success — a green build of the wrong thing. */
@@ -362,7 +362,7 @@ MOLTEST(ir_refuses_an_unknown_node_type) {
             "'toolchains'");
 }
 
-MOLTEST(ir_refuses_a_build_step_by_name) {
+DESCRIBE(ir_refuses_a_build_step_by_name) {
     /* Refused by name rather than as an unknown key, because the node type
        exists in the specification and the reason it is absent is a reason a
        plugin author needs to read: it lowers to a command. */
@@ -371,7 +371,7 @@ MOLTEST(ir_refuses_a_build_step_by_name) {
             "BuildStep");
 }
 
-MOLTEST(ir_refuses_a_generated_source_by_name) {
+DESCRIBE(ir_refuses_a_generated_source_by_name) {
     /* The one case where "ignore what you don't know" points the wrong way: a
        GeneratedSource is a Source with two extra attributes, so ignoring them
        would compile a file nobody produced. */
@@ -382,7 +382,7 @@ MOLTEST(ir_refuses_a_generated_source_by_name) {
             "GeneratedSource");
 }
 
-MOLTEST(ir_refuses_a_vocabulary_it_does_not_know) {
+DESCRIBE(ir_refuses_a_vocabulary_it_does_not_know) {
     static const char *const PREFIX =
         "{\"schema\":3,\"projects\":[{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\","
         "\"origin\":\"native\",";
@@ -417,7 +417,7 @@ MOLTEST(ir_refuses_a_vocabulary_it_does_not_know) {
     refused(json, "'build'");
 }
 
-MOLTEST(ir_refuses_a_dependency_that_does_not_say_who_may_use_it) {
+DESCRIBE(ir_refuses_a_dependency_that_does_not_say_who_may_use_it) {
     /* Not defaulted to `runtime`. A missing scope has two readings — "everything
        compiles against this" and "the producer did not say" — and picking the
        first hands a development dependency to src/, which is the one thing
@@ -428,7 +428,7 @@ MOLTEST(ir_refuses_a_dependency_that_does_not_say_who_may_use_it) {
             "missing a 'scope'");
 }
 
-MOLTEST(ir_refuses_a_document_that_is_not_exactly_one_project) {
+DESCRIBE(ir_refuses_a_document_that_is_not_exactly_one_project) {
     refused("{\"schema\":3,\"projects\":[]}", "exactly one");
     refused("{\"schema\":3,\"projects\":["
             "{\"name\":\"a\",\"version\":\"1\",\"root\":\"/w\",\"origin\":\"native\"},"
@@ -436,7 +436,7 @@ MOLTEST(ir_refuses_a_document_that_is_not_exactly_one_project) {
             "exactly one");
 }
 
-MOLTEST(ir_refuses_a_node_missing_what_it_is) {
+DESCRIBE(ir_refuses_a_node_missing_what_it_is) {
     refused("{\"schema\":3,\"projects\":[{\"version\":\"1\",\"root\":\"/w\","
             "\"origin\":\"native\"}]}",
             "'name'");
@@ -449,7 +449,7 @@ MOLTEST(ir_refuses_a_node_missing_what_it_is) {
             "'language'");
 }
 
-MOLTEST(ir_ignores_an_attribute_it_does_not_know) {
+DESCRIBE(ir_ignores_an_attribute_it_does_not_know) {
     /* The other half of the rule, and the reason a schema can grow at all: an
        attribute refines work that is already described, so skipping one leaves
        the work described. */
@@ -497,7 +497,7 @@ static void rejects(const ir_document *doc, const char *needle) {
     }
 }
 
-MOLTEST(ir_validates_a_document_that_stays_inside_its_bounds) {
+DESCRIBE(ir_validates_a_document_that_stays_inside_its_bounds) {
     ir_document doc;
     ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
     ASSERT_NOT_NULL(target);
@@ -512,7 +512,7 @@ MOLTEST(ir_validates_a_document_that_stays_inside_its_bounds) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_path_that_climbs_out_of_the_workspace) {
+DESCRIBE(ir_refuses_a_path_that_climbs_out_of_the_workspace) {
     ir_document doc;
     ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
     ASSERT_NOT_NULL(target);
@@ -521,7 +521,7 @@ MOLTEST(ir_refuses_a_path_that_climbs_out_of_the_workspace) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_an_absolute_path_outside_the_workspace) {
+DESCRIBE(ir_refuses_an_absolute_path_outside_the_workspace) {
     ir_document doc;
     ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
     ASSERT_NOT_NULL(target);
@@ -531,7 +531,7 @@ MOLTEST(ir_refuses_an_absolute_path_outside_the_workspace) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_allows_a_path_into_the_global_cache) {
+DESCRIBE(ir_allows_a_path_into_the_global_cache) {
     /* A dependency's sources live there, so the cache is a bound and not an
        exception to one. */
     ir_document doc;
@@ -548,7 +548,7 @@ MOLTEST(ir_allows_a_path_into_the_global_cache) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_anchors_a_package_target_at_the_dependency_root) {
+DESCRIBE(ir_anchors_a_package_target_at_the_dependency_root) {
     /* A dependency's bytes are in the shared cache, outside Project.root. The
        target names the package, so its sources stay relative — which is what
        keeps two machines producing the same document (RFC-0013). */
@@ -574,7 +574,7 @@ MOLTEST(ir_anchors_a_package_target_at_the_dependency_root) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_target_naming_a_package_the_document_does_not_describe) {
+DESCRIBE(ir_refuses_a_target_naming_a_package_the_document_does_not_describe) {
     /* Not a fallback to the project root. Falling back would anchor a
        dependency's sources somewhere they are not, and the document would look
        fine until a compile reported a missing file. */
@@ -587,7 +587,7 @@ MOLTEST(ir_refuses_a_target_naming_a_package_the_document_does_not_describe) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_holds_a_package_target_to_the_same_bounds) {
+DESCRIBE(ir_holds_a_package_target_to_the_same_bounds) {
     /* Naming a package moves the anchor, it does not lift the fence: a source
        that climbs out of the cache is refused exactly as one climbing out of
        the workspace is. */
@@ -607,7 +607,7 @@ MOLTEST(ir_holds_a_package_target_to_the_same_bounds) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_allows_a_path_under_a_root_the_caller_authorised) {
+DESCRIBE(ir_allows_a_path_under_a_root_the_caller_authorised) {
     /* The fourth bound. A `[deps]` entry of `{ path = "../greet" }` puts a
        sibling checkout on the compile line, and that directory is none of the
        three — it is authorised by the manifest the user wrote, which is what
@@ -636,7 +636,7 @@ MOLTEST(ir_allows_a_path_under_a_root_the_caller_authorised) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
+DESCRIBE(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
     /*
      * The same directory, spelled two ways, and both spellings authorise it.
      *
@@ -722,7 +722,7 @@ MOLTEST(ir_knows_a_bound_reached_through_a_link_is_the_same_bound) {
     (void)fs_remove_tree(made);
 }
 
-MOLTEST(ir_refuses_a_path_that_is_inside_the_workspace_and_links_out_of_it) {
+DESCRIBE(ir_refuses_a_path_that_is_inside_the_workspace_and_links_out_of_it) {
     /*
      * The other half of the rule, and until now nothing asserted it.
      *
@@ -775,7 +775,7 @@ MOLTEST(ir_refuses_a_path_that_is_inside_the_workspace_and_links_out_of_it) {
     (void)fs_remove_tree(elsewhere);
 }
 
-MOLTEST(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
+DESCRIBE(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
     /* An authorised root is a bound and not a hole: a recipe that names a
        directory above its own package — and a recipe is something a remote
        party wrote — is refused exactly as one climbing out of the workspace. */
@@ -799,7 +799,7 @@ MOLTEST(ir_refuses_a_path_that_climbs_out_of_an_authorised_root) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_does_not_mistake_a_sibling_directory_for_the_workspace) {
+DESCRIBE(ir_does_not_mistake_a_sibling_directory_for_the_workspace) {
     /* Compared segment-wise: `/w/app-evil` shares a prefix with `/w/app` and is
        not inside it. A prefix test alone would let it through. */
     ir_document doc;
@@ -809,7 +809,7 @@ MOLTEST(ir_does_not_mistake_a_sibling_directory_for_the_workspace) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_an_artifact_outside_the_build_directory) {
+DESCRIBE(ir_refuses_an_artifact_outside_the_build_directory) {
     /* A target writing into src/ is editing the user's code as a side effect of
        a build. */
     ir_document doc;
@@ -820,7 +820,7 @@ MOLTEST(ir_refuses_an_artifact_outside_the_build_directory) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_two_targets_with_one_name) {
+DESCRIBE(ir_refuses_two_targets_with_one_name) {
     ir_document doc;
     ASSERT_NOT_NULL(minimal(&doc, IR_ORIGIN_NATIVE));
     ASSERT_NOT_NULL(ir_add_target(&doc, "app", ir_target_object));
@@ -828,7 +828,7 @@ MOLTEST(ir_refuses_two_targets_with_one_name) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_dependency_on_a_target_that_is_not_there) {
+DESCRIBE(ir_refuses_a_dependency_on_a_target_that_is_not_there) {
     ir_document doc;
     ir_target *target = minimal(&doc, IR_ORIGIN_NATIVE);
     ASSERT_NOT_NULL(target);
@@ -837,7 +837,7 @@ MOLTEST(ir_refuses_a_dependency_on_a_target_that_is_not_there) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_cycle_before_the_scheduler_finds_it) {
+DESCRIBE(ir_refuses_a_cycle_before_the_scheduler_finds_it) {
     /* Reported against the document at the edge that closes it, never
        discovered as a deadlock (RFC-0013). */
     ir_document doc;
@@ -873,7 +873,7 @@ static bool validate_with_option(const char *origin, const char *option, char *e
     return ok;
 }
 
-MOLTEST(ir_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
+DESCRIBE(ir_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     /* A plugin denied the network, the filesystem and everything else can still
        return this. The sandbox decides what a plugin can touch; validation
        decides what molto will do on its behalf. */
@@ -897,7 +897,7 @@ MOLTEST(ir_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     }
 }
 
-MOLTEST(ir_refuses_a_plugin_option_that_redirects_the_toolchain) {
+DESCRIBE(ir_refuses_a_plugin_option_that_redirects_the_toolchain) {
     /* The toolchain is pickup's answer, not a frontend's opinion (RFC-0003). */
     static const char *const REFUSED[] = {
         "-B/tmp/bin",
@@ -916,7 +916,7 @@ MOLTEST(ir_refuses_a_plugin_option_that_redirects_the_toolchain) {
     }
 }
 
-MOLTEST(ir_refuses_a_plugin_naming_its_own_output) {
+DESCRIBE(ir_refuses_a_plugin_naming_its_own_output) {
     /* The engine composes output paths; a producer naming one is describing
        where its object goes, which is not its decision. */
     char err[512] = "";
@@ -924,7 +924,7 @@ MOLTEST(ir_refuses_a_plugin_naming_its_own_output) {
     EXPECT_FALSE(validate_with_option("meson", "--output=/tmp/a.o", err, sizeof err));
 }
 
-MOLTEST(ir_holds_the_native_frontend_to_the_looser_rules) {
+DESCRIBE(ir_holds_the_native_frontend_to_the_looser_rules) {
     /* The asymmetry is deliberate and it is not a statement about trust:
        Project.toml is a file in the user's repository, which their reviewer read
        and their version control records. `flags` is passed verbatim by contract
@@ -944,7 +944,7 @@ MOLTEST(ir_holds_the_native_frontend_to_the_looser_rules) {
     ir_document_free(&doc);
 }
 
-MOLTEST(ir_refuses_a_plugin_option_wherever_it_hides) {
+DESCRIBE(ir_refuses_a_plugin_option_wherever_it_hides) {
     /* Every array a producer fills is checked, not only a target's own: a rule
        that covered the obvious one would be a rule with a way around it. */
     ir_document doc;

@@ -71,7 +71,7 @@ static bool parse_root(const sandbox *at, const char *const *names, size_t count
 
 /* The point of the whole exercise: the manifest names one dependency and the
    build gets three, because each recipe named the next. */
-MOLTEST(the_graph_reaches_past_what_the_manifest_declared) {
+DESCRIBE(the_graph_reaches_past_what_the_manifest_declared) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -109,7 +109,7 @@ MOLTEST(the_graph_reaches_past_what_the_manifest_declared) {
 
 /* The edges, recorded per node, are what a lock file writes as `dependencies`
    and what makes the graph reconstructible without walking it again. */
-MOLTEST(a_node_records_its_own_edges_sorted) {
+DESCRIBE(a_node_records_its_own_edges_sorted) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -140,7 +140,7 @@ MOLTEST(a_node_records_its_own_edges_sorted) {
 
 /* Two dependents on one package is one node, not two. Anything else is two
    copies of the same library in one link. */
-MOLTEST(a_package_reached_twice_is_one_node) {
+DESCRIBE(a_package_reached_twice_is_one_node) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -168,7 +168,7 @@ MOLTEST(a_package_reached_twice_is_one_node) {
 /* A cycle is not an error and must not hang. With `type = "source"` both drops
    land in one binary, so `a` needing `b` needing `a` describes a build that
    works; the visited set is what makes it terminate. */
-MOLTEST(a_cycle_terminates_and_is_not_an_error) {
+DESCRIBE(a_cycle_terminates_and_is_not_an_error) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -194,7 +194,7 @@ MOLTEST(a_cycle_terminates_and_is_not_an_error) {
 /* One name pointed at two different directories is two packages wearing one
    name. Unifying them would be the duplicate-symbol problem again, so the walk
    refuses and says who asked for each. */
-MOLTEST(one_name_from_two_sources_is_a_conflict) {
+DESCRIBE(one_name_from_two_sources_is_a_conflict) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -229,7 +229,7 @@ MOLTEST(one_name_from_two_sources_is_a_conflict) {
 
 /* A dependency that fails deep in the graph says where it was reached from.
    "could not read x" without that is a name the manifest never mentions. */
-MOLTEST(a_failure_names_who_required_it) {
+DESCRIBE(a_failure_names_who_required_it) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -252,7 +252,7 @@ MOLTEST(a_failure_names_who_required_it) {
 
 /* No dependencies is an empty graph, not a failure, and it must not go looking
    for a registry to tell it so. */
-MOLTEST(no_dependencies_is_an_empty_graph) {
+DESCRIBE(no_dependencies_is_an_empty_graph) {
     project_ctx ctx;
     char err[512] = "";
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n", &ctx, err,
@@ -296,7 +296,7 @@ static bool make_package_under(const sandbox *at, const char *subdir, const char
    characters was dropped, silently, in the one message whose whole job is to
    say which two things disagree — so two dependencies under a long enough
    prefix were reported as the same string twice. */
-MOLTEST(a_conflict_between_two_long_paths_names_both_of_them) {
+DESCRIBE(a_conflict_between_two_long_paths_names_both_of_them) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -344,7 +344,7 @@ MOLTEST(a_conflict_between_two_long_paths_names_both_of_them) {
 
 /* A conflict is reported as data as well as as a message, so a caller can ask
    the user about it instead of only printing it (RFC-0008). */
-MOLTEST(a_conflict_is_reported_as_the_two_claims_and_who_made_them) {
+DESCRIBE(a_conflict_is_reported_as_the_two_claims_and_who_made_them) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -381,7 +381,7 @@ MOLTEST(a_conflict_is_reported_as_the_two_claims_and_who_made_them) {
 
 /* Nothing set means nothing to ask about: a caller distinguishes a conflict
    from an unreachable registry by whether the name is filled in. */
-MOLTEST(an_ordinary_failure_leaves_the_conflict_record_empty) {
+DESCRIBE(an_ordinary_failure_leaves_the_conflict_record_empty) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -408,7 +408,7 @@ MOLTEST(an_ordinary_failure_leaves_the_conflict_record_empty) {
 /* The closure is what a dependency is allowed to see: its own dependencies and
    theirs, so the headers it includes are on its command line and nothing else
    is (RFC-0008). */
-MOLTEST(a_package_reaches_what_its_dependencies_reach) {
+DESCRIBE(a_package_reaches_what_its_dependencies_reach) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -457,7 +457,7 @@ MOLTEST(a_package_reaches_what_its_dependencies_reach) {
 
 /* Two dependents on one package see it once each, and neither sees the other:
    the closure is per package, not the union the build used to hand out. */
-MOLTEST(a_closure_leaves_out_the_siblings) {
+DESCRIBE(a_closure_leaves_out_the_siblings) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -494,7 +494,7 @@ MOLTEST(a_closure_leaves_out_the_siblings) {
 /* The walk that built the graph closes cycles by visiting a name once. This one
    walks a graph already built, so it closes them itself — and a package is
    never in its own closure, however it loops back. */
-MOLTEST(a_closure_over_a_cycle_terminates) {
+DESCRIBE(a_closure_over_a_cycle_terminates) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -528,7 +528,7 @@ MOLTEST(a_closure_over_a_cycle_terminates) {
    compile, so there is no extra fetch and no second reader. It is what turns a
    resolved graph into something that can name the licence of every component
    it links. */
-MOLTEST(a_node_carries_what_its_recipe_says_about_itself) {
+DESCRIBE(a_node_carries_what_its_recipe_says_about_itself) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -567,7 +567,7 @@ MOLTEST(a_node_carries_what_its_recipe_says_about_itself) {
    from what parses them, and both spell the scheme from the same constant —
    but the mapping is what a report and a lock file both depend on, so it is
    pinned here rather than assumed. */
-MOLTEST(a_source_string_says_which_kind_of_origin_it_names) {
+DESCRIBE(a_source_string_says_which_kind_of_origin_it_names) {
     EXPECT_EQ(dep_source_version, dep_graph_source_kind("registry+https://molto.dev"));
     EXPECT_EQ(dep_source_git, dep_graph_source_kind("git+https://example.test/x.git#5a1e8ff"));
     EXPECT_EQ(dep_source_path, dep_graph_source_kind("path+/home/someone/modules/net"));
@@ -577,7 +577,7 @@ MOLTEST(a_source_string_says_which_kind_of_origin_it_names) {
 /* Anything unreadable is a path: bytes nobody can go back for. Answering
    "registry" would be the one wrong answer, because that is the kind whose
    version and checksum are claims someone is expected to verify. */
-MOLTEST(an_unreadable_source_is_not_taken_for_a_registry_package) {
+DESCRIBE(an_unreadable_source_is_not_taken_for_a_registry_package) {
     EXPECT_EQ(dep_source_path, dep_graph_source_kind(""));
     EXPECT_EQ(dep_source_path, dep_graph_source_kind("https://example.test/x.tar.gz"));
     EXPECT_EQ(dep_source_path, dep_graph_source_kind("registry"));
@@ -590,7 +590,7 @@ MOLTEST(an_unreadable_source_is_not_taken_for_a_registry_package) {
    of honouring the recipe: it is a green build of something the recipe said
    needs configuring first, which is what happened while nothing read the
    table. */
-MOLTEST(a_dependency_built_by_a_build_system_molto_cannot_run_is_refused) {
+DESCRIBE(a_dependency_built_by_a_build_system_molto_cannot_run_is_refused) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -615,7 +615,7 @@ MOLTEST(a_dependency_built_by_a_build_system_molto_cannot_run_is_refused) {
 
 /* The one value molto can honour, and the reason the refusal above is a
    refusal rather than the whole table being rejected. */
-MOLTEST(a_dependency_that_names_no_build_system_resolves) {
+DESCRIBE(a_dependency_that_names_no_build_system_resolves) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -636,7 +636,7 @@ MOLTEST(a_dependency_that_names_no_build_system_resolves) {
 
 /* Reached through another package rather than named by the manifest: the
    refusal is on the walk, so depth does not get around it. */
-MOLTEST(a_transitive_dependency_naming_a_build_system_is_refused_too) {
+DESCRIBE(a_transitive_dependency_naming_a_build_system_is_refused_too) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -666,7 +666,7 @@ MOLTEST(a_transitive_dependency_naming_a_build_system_is_refused_too) {
 /* The walk is where a provision is applied, because it is the first moment both
    halves exist: a registry dependency knows its recipe before its bytes, and a
    carried one has bytes before its recipe can be read. */
-MOLTEST(the_walk_provides_the_file_a_recipe_says_its_build_needs) {
+DESCRIBE(the_walk_provides_the_file_a_recipe_says_its_build_needs) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -696,7 +696,7 @@ MOLTEST(the_walk_provides_the_file_a_recipe_says_its_build_needs) {
 
 /* And a provision that cannot be applied stops the resolution rather than
    leaving a drop the compiler will fail on for a reason it cannot explain. */
-MOLTEST(a_provision_the_walk_cannot_apply_fails_the_resolution) {
+DESCRIBE(a_provision_the_walk_cannot_apply_fails_the_resolution) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 

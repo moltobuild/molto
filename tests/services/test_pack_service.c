@@ -14,7 +14,7 @@
  * publishes and then cannot be opened on the machine it was built for.
  */
 
-MOLTEST(a_windows_target_packs_as_gzip) {
+DESCRIBE(a_windows_target_packs_as_gzip) {
     /* Not a preference. The tar.exe Windows ships is bsdtar with libarchive
        linked against zlib alone, so gzip is the only packing pickup can open
        there -- which is what a toolchain running on Windows is packed for. */
@@ -22,7 +22,7 @@ MOLTEST(a_windows_target_packs_as_gzip) {
     EXPECT_STREQ("tar.gz", pack_default_format("windows-aarch64"));
 }
 
-MOLTEST(every_other_target_packs_as_zstd) {
+DESCRIBE(every_other_target_packs_as_zstd) {
     EXPECT_STREQ("tar.zst", pack_default_format("linux-x86_64"));
     EXPECT_STREQ("tar.zst", pack_default_format("darwin-aarch64"));
     EXPECT_STREQ("tar.zst", pack_default_format("any"));
@@ -30,18 +30,18 @@ MOLTEST(every_other_target_packs_as_zstd) {
 
 /* A target nobody named is not a Windows one, and guessing gzip for it would
    cost every other platform half its compression. */
-MOLTEST(an_absent_target_is_not_a_windows_one) {
+DESCRIBE(an_absent_target_is_not_a_windows_one) {
     EXPECT_STREQ("tar.zst", pack_default_format(NULL));
     EXPECT_STREQ("tar.zst", pack_default_format(""));
 }
 
 /* `windows` is not `windows-`: a target has to name an architecture, and a
    prefix match without the separator would take `windowsomething` with it. */
-MOLTEST(the_windows_test_is_on_the_whole_prefix) {
+DESCRIBE(the_windows_test_is_on_the_whole_prefix) {
     EXPECT_STREQ("tar.zst", pack_default_format("windows"));
 }
 
-MOLTEST(only_two_packings_are_known) {
+DESCRIBE(only_two_packings_are_known) {
     EXPECT_TRUE(pack_format_is_known("tar.zst"));
     EXPECT_TRUE(pack_format_is_known("tar.gz"));
 
@@ -54,7 +54,7 @@ MOLTEST(only_two_packings_are_known) {
     EXPECT_FALSE(pack_format_is_known(NULL));
 }
 
-MOLTEST(an_archive_is_named_for_its_coordinate) {
+DESCRIBE(an_archive_is_named_for_its_coordinate) {
     char name[128] = "";
     EXPECT_TRUE(pack_archive_name("llvm-mingw", "23.1.0", "windows-x86_64", "tar.gz", name,
                                   sizeof name));
@@ -63,13 +63,13 @@ MOLTEST(an_archive_is_named_for_its_coordinate) {
 
 /* Refused rather than truncated: a clipped name is a name pickup will not
    find, and finding that out after the upload is the expensive way. */
-MOLTEST(a_name_that_would_not_fit_is_refused) {
+DESCRIBE(a_name_that_would_not_fit_is_refused) {
     char name[8] = "";
     EXPECT_FALSE(pack_archive_name("llvm-mingw", "23.1.0", "windows-x86_64", "tar.gz", name,
                                    sizeof name));
 }
 
-MOLTEST(packing_refuses_a_format_it_does_not_write) {
+DESCRIBE(packing_refuses_a_format_it_does_not_write) {
     char dir[512];
     ASSERT_TRUE(moltest_temp_dir("molto_pack", dir, sizeof dir));
 
@@ -81,7 +81,7 @@ MOLTEST(packing_refuses_a_format_it_does_not_write) {
     EXPECT_TRUE(strlen(err) > 0);
 }
 
-MOLTEST(packing_refuses_something_that_is_not_a_directory) {
+DESCRIBE(packing_refuses_something_that_is_not_a_directory) {
     char dir[512];
     ASSERT_TRUE(moltest_temp_dir("molto_pack", dir, sizeof dir));
 
@@ -107,7 +107,7 @@ MOLTEST(packing_refuses_something_that_is_not_a_directory) {
  * can do neither is a machine that cannot publish, and the test says so with
  * the message rather than failing silently.
  */
-MOLTEST(packing_writes_an_archive_of_the_tree) {
+DESCRIBE(packing_writes_an_archive_of_the_tree) {
     char dir[512];
     ASSERT_TRUE(moltest_temp_dir("molto_pack", dir, sizeof dir));
 

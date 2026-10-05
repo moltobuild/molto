@@ -118,7 +118,7 @@ static void read_log(const sandbox *box, char *out, size_t size) {
 
 /* --- names --- */
 
-MOLTEST(plugin_name_valid_accepts_what_a_recipe_would_carry) {
+DESCRIBE(plugin_name_valid_accepts_what_a_recipe_would_carry) {
     EXPECT_TRUE(plugin_name_valid("deb"));
     EXPECT_TRUE(plugin_name_valid("appimage"));
     EXPECT_TRUE(plugin_name_valid("my-plugin"));
@@ -127,7 +127,7 @@ MOLTEST(plugin_name_valid_accepts_what_a_recipe_would_carry) {
     EXPECT_TRUE(plugin_name_valid("7zip"));
 }
 
-MOLTEST(plugin_name_valid_refuses_a_name_that_could_leave_the_directory) {
+DESCRIBE(plugin_name_valid_refuses_a_name_that_could_leave_the_directory) {
     /* The name becomes a filename, so a separator or a `..` is the whole
        reason this check exists. */
     EXPECT_FALSE(plugin_name_valid("../evil"));
@@ -136,7 +136,7 @@ MOLTEST(plugin_name_valid_refuses_a_name_that_could_leave_the_directory) {
     EXPECT_FALSE(plugin_name_valid("a.b"));
 }
 
-MOLTEST(plugin_name_valid_refuses_the_rest) {
+DESCRIBE(plugin_name_valid_refuses_the_rest) {
     EXPECT_FALSE(plugin_name_valid(NULL));
     EXPECT_FALSE(plugin_name_valid(""));
     EXPECT_FALSE(plugin_name_valid("Deb"));  /* uppercase */
@@ -152,7 +152,7 @@ MOLTEST(plugin_name_valid_refuses_the_rest) {
 
 /* --- where they are looked for --- */
 
-MOLTEST(plugin_dir_hangs_off_home) {
+DESCRIBE(plugin_dir_hangs_off_home) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -163,7 +163,7 @@ MOLTEST(plugin_dir_hangs_off_home) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_resolve_finds_nothing_when_nothing_provides_it) {
+DESCRIBE(plugin_resolve_finds_nothing_when_nothing_provides_it) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -173,7 +173,7 @@ MOLTEST(plugin_resolve_finds_nothing_when_nothing_provides_it) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_resolve_finds_one_on_path) {
+DESCRIBE(plugin_resolve_finds_one_on_path) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.elsewhere, "deb", 0));
@@ -185,7 +185,7 @@ MOLTEST(plugin_resolve_finds_one_on_path) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_resolve_prefers_the_installed_one_over_path) {
+DESCRIBE(plugin_resolve_prefers_the_installed_one_over_path) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.elsewhere, "deb", 0));
@@ -200,7 +200,7 @@ MOLTEST(plugin_resolve_prefers_the_installed_one_over_path) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_resolve_ignores_a_file_that_is_not_executable) {
+DESCRIBE(plugin_resolve_ignores_a_file_that_is_not_executable) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -214,7 +214,7 @@ MOLTEST(plugin_resolve_ignores_a_file_that_is_not_executable) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_resolve_refuses_an_invalid_name_without_looking) {
+DESCRIBE(plugin_resolve_refuses_an_invalid_name_without_looking) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -227,7 +227,7 @@ MOLTEST(plugin_resolve_refuses_an_invalid_name_without_looking) {
 
 /* --- running one --- */
 
-MOLTEST(plugin_run_propagates_the_plugins_own_exit_code) {
+DESCRIBE(plugin_run_propagates_the_plugins_own_exit_code) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.elsewhere, "deb", 7));
@@ -242,7 +242,7 @@ MOLTEST(plugin_run_propagates_the_plugins_own_exit_code) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_run_hands_the_arguments_through_untouched) {
+DESCRIBE(plugin_run_hands_the_arguments_through_untouched) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.elsewhere, "deb", 0));
@@ -260,7 +260,7 @@ MOLTEST(plugin_run_hands_the_arguments_through_untouched) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_run_reports_a_plugin_that_never_ran) {
+DESCRIBE(plugin_run_reports_a_plugin_that_never_ran) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -302,7 +302,7 @@ static bool write_recipe(const sandbox *box, const char *name, const char *body)
     return fs_write_file(path, body);
 }
 
-MOLTEST(plugin_read_recipe_reads_what_the_plugin_declared) {
+DESCRIBE(plugin_read_recipe_reads_what_the_plugin_declared) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "deb", 0));
@@ -327,7 +327,7 @@ MOLTEST(plugin_read_recipe_reads_what_the_plugin_declared) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_says_so_when_there_is_none) {
+DESCRIBE(plugin_read_recipe_says_so_when_there_is_none) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.elsewhere, "hello", 0));
@@ -341,7 +341,7 @@ MOLTEST(plugin_read_recipe_says_so_when_there_is_none) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_refuses_one_without_a_plugin_table) {
+DESCRIBE(plugin_read_recipe_refuses_one_without_a_plugin_table) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
@@ -357,7 +357,7 @@ MOLTEST(plugin_read_recipe_refuses_one_without_a_plugin_table) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_refuses_a_plugin_table_under_the_schema_that_added_it) {
+DESCRIBE(plugin_read_recipe_refuses_a_plugin_table_under_the_schema_that_added_it) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
@@ -375,7 +375,7 @@ MOLTEST(plugin_read_recipe_refuses_a_plugin_table_under_the_schema_that_added_it
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_refuses_a_plugin_table_with_no_schema_at_all) {
+DESCRIBE(plugin_read_recipe_refuses_a_plugin_table_with_no_schema_at_all) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
@@ -393,7 +393,7 @@ MOLTEST(plugin_read_recipe_refuses_a_plugin_table_with_no_schema_at_all) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_refuses_one_that_provides_no_capability) {
+DESCRIBE(plugin_read_recipe_refuses_one_that_provides_no_capability) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
@@ -408,7 +408,7 @@ MOLTEST(plugin_read_recipe_refuses_one_that_provides_no_capability) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_read_recipe_keeps_a_permission_it_does_not_recognise) {
+DESCRIBE(plugin_read_recipe_keeps_a_permission_it_does_not_recognise) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(write_recipe(&box, "deb",
@@ -430,7 +430,7 @@ MOLTEST(plugin_read_recipe_keeps_a_permission_it_does_not_recognise) {
 
 /* --- listing --- */
 
-MOLTEST(plugin_list_finds_nothing_when_nothing_is_installed) {
+DESCRIBE(plugin_list_finds_nothing_when_nothing_is_installed) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -442,7 +442,7 @@ MOLTEST(plugin_list_finds_nothing_when_nothing_is_installed) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_reports_both_origins) {
+DESCRIBE(plugin_list_reports_both_origins) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "deb", 0));
@@ -462,7 +462,7 @@ MOLTEST(plugin_list_reports_both_origins) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_names_a_plugin_once_however_many_places_hold_it) {
+DESCRIBE(plugin_list_names_a_plugin_once_however_many_places_hold_it) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "deb", 0));
@@ -479,7 +479,7 @@ MOLTEST(plugin_list_names_a_plugin_once_however_many_places_hold_it) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_sorts_by_name) {
+DESCRIBE(plugin_list_sorts_by_name) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "rpm", 0));
@@ -499,7 +499,7 @@ MOLTEST(plugin_list_sorts_by_name) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_says_which_ones_carry_a_recipe) {
+DESCRIBE(plugin_list_says_which_ones_carry_a_recipe) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "deb", 0));
@@ -517,7 +517,7 @@ MOLTEST(plugin_list_says_which_ones_carry_a_recipe) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_ignores_what_is_not_a_plugin) {
+DESCRIBE(plugin_list_ignores_what_is_not_a_plugin) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -540,7 +540,7 @@ MOLTEST(plugin_list_ignores_what_is_not_a_plugin) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(plugin_list_reports_a_listing_that_does_not_fit) {
+DESCRIBE(plugin_list_reports_a_listing_that_does_not_fit) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(plant(&box, box.installed, "deb", 0));

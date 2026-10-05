@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-MOLTEST(test_command) {
+DESCRIBE(test_command) {
     char root[MOLTEST_PATH];
     EXPECT_TRUE(moltest_temp_dir("molto_test_cmd", root, sizeof root));
 
@@ -61,7 +61,7 @@ MOLTEST(test_command) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
+DESCRIBE(test_command_runs_the_binaries_with_the_projects_env) {
     /* The manifest exports [env] to the compiler and to `molto run`; a test
        binary is a program the project asked to be run too, and used to be the
        one place the table did not reach. */
@@ -107,7 +107,7 @@ MOLTEST(test_command_runs_the_binaries_with_the_projects_env) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(test_build_prunes_a_deleted_test) {
+DESCRIBE(test_build_prunes_a_deleted_test) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_test_prune", root, sizeof root));
 
@@ -160,7 +160,7 @@ MOLTEST(test_build_prunes_a_deleted_test) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(test_command_forwards_what_follows_the_double_dash) {
+DESCRIBE(test_command_forwards_what_follows_the_double_dash) {
     /* `molto test -- -v -k json` reaches the suite as its own arguments: the
        bootstrap's `make test TEST_ARGS=...` and CI's `-v` go through here. */
     char root[MOLTEST_PATH];

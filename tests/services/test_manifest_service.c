@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-MOLTEST(manifest_service) {
+DESCRIBE(manifest_service) {
     /* Valid snake_case names. */
     EXPECT_TRUE(manifest_is_valid_name("my_app"));
     EXPECT_TRUE(manifest_is_valid_name("http2"));
@@ -38,7 +38,7 @@ MOLTEST(manifest_service) {
     EXPECT_TRUE(manifest_render_default("Bad Name", project_kind_library) == NULL);
 }
 
-MOLTEST(manifest_accepts_an_exact_version) {
+DESCRIBE(manifest_accepts_an_exact_version) {
     char operator_found[8] = "";
     EXPECT_TRUE(manifest_is_exact_version("3.53.4", operator_found, sizeof operator_found));
     EXPECT_TRUE(manifest_is_exact_version("0.1.0", operator_found, sizeof operator_found));
@@ -47,7 +47,7 @@ MOLTEST(manifest_accepts_an_exact_version) {
     EXPECT_STREQ("", operator_found);
 }
 
-MOLTEST(manifest_rejects_a_version_range) {
+DESCRIBE(manifest_rejects_a_version_range) {
     /* RFC-0008: a range is a standing authorisation to run code that does not
        exist yet. The operator is reported so the message can name it. */
     static const struct {
@@ -67,7 +67,7 @@ MOLTEST(manifest_rejects_a_version_range) {
     }
 }
 
-MOLTEST(manifest_rejects_a_version_that_is_not_one) {
+DESCRIBE(manifest_rejects_a_version_that_is_not_one) {
     /* Semver validates as well as orders, so a typo is caught here rather than
        compared byte by byte against whatever a registry serves. */
     static const char *const bad[] = { "", "3.5", "3", "latest", "v3.5.0", "3.5.x", "a.b.c",
@@ -79,7 +79,7 @@ MOLTEST(manifest_rejects_a_version_that_is_not_one) {
     EXPECT_FALSE(manifest_is_exact_version(NULL, NULL, 0));
 }
 
-MOLTEST(manifest_declares_a_language_standard) {
+DESCRIBE(manifest_declares_a_language_standard) {
     char *toml = manifest_render_default("my_app", project_kind_binary);
     ASSERT_NOT_NULL(toml);
 
@@ -105,7 +105,7 @@ MOLTEST(manifest_declares_a_language_standard) {
     free(toml);
 }
 
-MOLTEST(manifest_declares_the_project_include_directory) {
+DESCRIBE(manifest_declares_the_project_include_directory) {
     char *toml = manifest_render_default("my_app", project_kind_binary);
     ASSERT_NOT_NULL(toml);
 
@@ -138,7 +138,7 @@ static bool read_about_toml(const char *text, const char *table, manifest_about 
     return ok;
 }
 
-MOLTEST(manifest_reads_about_from_either_table) {
+DESCRIBE(manifest_reads_about_from_either_table) {
     /* One reader, two names. A manifest writes this under [package] and a
        recipe under [about] (RFC-0009), and the two must agree about what the
        keys mean — which they cannot do if each has its own reader. */
@@ -170,7 +170,7 @@ MOLTEST(manifest_reads_about_from_either_table) {
     }
 }
 
-MOLTEST(manifest_reads_about_from_a_registry_answer) {
+DESCRIBE(manifest_reads_about_from_a_registry_answer) {
     /* The same recipe arrives as TOML from disk and as JSON inside a registry's
        answer (RFC-0010). doc_view is what keeps that one document rather than
        two, and this is the half that never has a local file to diff against. */
@@ -191,7 +191,7 @@ MOLTEST(manifest_reads_about_from_a_registry_answer) {
     json_free(doc);
 }
 
-MOLTEST(manifest_about_is_entirely_optional) {
+DESCRIBE(manifest_about_is_entirely_optional) {
     manifest_about about;
     char err[256] = "";
 
@@ -210,7 +210,7 @@ MOLTEST(manifest_about_is_entirely_optional) {
     EXPECT_STREQ("", about.license);
 }
 
-MOLTEST(manifest_about_refuses_a_value_that_does_not_fit) {
+DESCRIBE(manifest_about_refuses_a_value_that_does_not_fit) {
     /* Truncating would record a description nobody wrote. The manifest's rule
        everywhere else is that a limit is an error, and this is no different. */
     char long_value[MANIFEST_DESCRIPTION_MAX + 8];
@@ -226,7 +226,7 @@ MOLTEST(manifest_about_refuses_a_value_that_does_not_fit) {
     EXPECT_NOT_NULL(strstr(err, "description"));
 }
 
-MOLTEST(manifest_about_refuses_a_value_of_the_wrong_type) {
+DESCRIBE(manifest_about_refuses_a_value_of_the_wrong_type) {
     /* Declared and not a string is not the same as absent: the first is a
        mistake worth naming, the second is the default. */
     manifest_about about;
@@ -236,7 +236,7 @@ MOLTEST(manifest_about_refuses_a_value_of_the_wrong_type) {
     EXPECT_NOT_NULL(strstr(err, "description"));
 }
 
-MOLTEST(manifest_about_refuses_more_authors_than_it_holds) {
+DESCRIBE(manifest_about_refuses_more_authors_than_it_holds) {
     char list[MANIFEST_MAX_AUTHORS * 8 + 16] = "";
     for (size_t i = 0; i <= MANIFEST_MAX_AUTHORS; i++)
         snprintf(list + strlen(list), sizeof list - strlen(list), "%s\"a\"", i == 0 ? "" : ", ");
@@ -250,7 +250,7 @@ MOLTEST(manifest_about_refuses_more_authors_than_it_holds) {
     EXPECT_NOT_NULL(strstr(err, "authors"));
 }
 
-MOLTEST(manifest_accepts_an_spdx_expression) {
+DESCRIBE(manifest_accepts_an_spdx_expression) {
     static const char *const good[] = {
         "MIT",
         "Apache-2.0",
@@ -266,7 +266,7 @@ MOLTEST(manifest_accepts_an_spdx_expression) {
         EXPECT_TRUE(manifest_is_valid_license(good[i]));
 }
 
-MOLTEST(manifest_rejects_a_license_that_is_not_an_expression) {
+DESCRIBE(manifest_rejects_a_license_that_is_not_an_expression) {
     /* Syntax only. The SPDX identifier list is deliberately not embedded — it
        would be a list that expires — so what is caught here is the shape: a
        dangling operator, an unbalanced paren, two identifiers with nothing
@@ -281,7 +281,7 @@ MOLTEST(manifest_rejects_a_license_that_is_not_an_expression) {
     EXPECT_FALSE(manifest_is_valid_license(NULL));
 }
 
-MOLTEST(manifest_about_refuses_a_malformed_license) {
+DESCRIBE(manifest_about_refuses_a_malformed_license) {
     manifest_about about;
     char err[256] = "";
     EXPECT_FALSE(read_about_toml("[package]\nlicense = \"MIT OR\"\n", "package", &about, err,
@@ -289,7 +289,7 @@ MOLTEST(manifest_about_refuses_a_malformed_license) {
     EXPECT_NOT_NULL(strstr(err, "license"));
 }
 
-MOLTEST(manifest_for_a_library_is_static_and_tested_with_moltest) {
+DESCRIBE(manifest_for_a_library_is_static_and_tested_with_moltest) {
     char *toml = manifest_render_default("my_lib", project_kind_library);
     ASSERT_NOT_NULL(toml);
 
@@ -309,7 +309,7 @@ MOLTEST(manifest_for_a_library_is_static_and_tested_with_moltest) {
     free(toml);
 }
 
-MOLTEST(manifest_for_a_binary_names_its_artifact) {
+DESCRIBE(manifest_for_a_binary_names_its_artifact) {
     char *toml = manifest_render_default("my_app", project_kind_binary);
     ASSERT_NOT_NULL(toml);
 

@@ -149,7 +149,7 @@ static bool read_source_json(const char *text, source_spec *out, char *err, size
     return ok;
 }
 
-MOLTEST(source_reads_an_archive_origin) {
+DESCRIBE(source_reads_an_archive_origin) {
     source_spec spec;
     char err[256] = "";
     ASSERT_TRUE(read_source("[source]\n"
@@ -164,7 +164,7 @@ MOLTEST(source_reads_an_archive_origin) {
     EXPECT_STREQ("sqlite-amalgamation", spec.strip_prefix);
 }
 
-MOLTEST(source_reads_a_git_origin_and_its_reference) {
+DESCRIBE(source_reads_a_git_origin_and_its_reference) {
     source_spec spec;
     char err[256] = "";
     ASSERT_TRUE(read_source("[source]\ngit = \"https://x/y.git\"\nrev = \"abc123\"\n", &spec, err,
@@ -176,7 +176,7 @@ MOLTEST(source_reads_a_git_origin_and_its_reference) {
     EXPECT_STREQ("", spec.sha256);
 }
 
-MOLTEST(source_refuses_an_archive_with_no_digest) {
+DESCRIBE(source_refuses_an_archive_with_no_digest) {
     /* A URL promises a location, not content: an upstream that re-rolls its
        tarball would change what every consumer compiles, silently. */
     source_spec spec;
@@ -186,14 +186,14 @@ MOLTEST(source_refuses_an_archive_with_no_digest) {
     EXPECT_NOT_NULL(strstr(err, "sha256"));
 }
 
-MOLTEST(source_refuses_a_digest_that_is_not_one) {
+DESCRIBE(source_refuses_a_digest_that_is_not_one) {
     source_spec spec;
     char err[256] = "";
     EXPECT_FALSE(read_source("[source]\narchive = \"https://x/y.tar.gz\"\nsha256 = \"beef\"\n",
                              &spec, err, sizeof err));
 }
 
-MOLTEST(source_refuses_two_origins) {
+DESCRIBE(source_refuses_two_origins) {
     source_spec spec;
     char err[256] = "";
     EXPECT_FALSE(read_source("[source]\ngit = \"https://x/y.git\"\npath = \"vendor/y\"\n", &spec,
@@ -201,14 +201,14 @@ MOLTEST(source_refuses_two_origins) {
     EXPECT_NOT_NULL(strstr(err, "more than one origin"));
 }
 
-MOLTEST(source_refuses_a_tag_and_a_rev_together) {
+DESCRIBE(source_refuses_a_tag_and_a_rev_together) {
     source_spec spec;
     char err[256] = "";
     EXPECT_FALSE(read_source("[source]\ngit = \"https://x/y.git\"\ntag = \"v1\"\nrev = \"abc\"\n",
                              &spec, err, sizeof err));
 }
 
-MOLTEST(source_reads_a_declared_compression_format) {
+DESCRIBE(source_reads_a_declared_compression_format) {
     /* Declared rather than inferred: an extension is a naming convention, not
        a fact about the bytes. */
     source_spec spec;
@@ -224,7 +224,7 @@ MOLTEST(source_reads_a_declared_compression_format) {
     EXPECT_STREQ("tar.xz", source_compression_name(spec.compression));
 }
 
-MOLTEST(source_without_a_compression_format_still_infers_one) {
+DESCRIBE(source_without_a_compression_format_still_infers_one) {
     /* The key is new, and the recipes written before it existed keep working. */
     source_spec spec;
     char err[256] = "";
@@ -237,7 +237,7 @@ MOLTEST(source_without_a_compression_format_still_infers_one) {
     EXPECT_EQ(source_compression_infer, spec.compression);
 }
 
-MOLTEST(source_accepts_every_compression_it_can_unpack) {
+DESCRIBE(source_accepts_every_compression_it_can_unpack) {
     static const char *const formats[] = { "zip", "tar", "tar.gz", "tar.bz2", "tar.xz", "tar.zst" };
 
     for (size_t i = 0; i < sizeof formats / sizeof formats[0]; i++) {
@@ -255,7 +255,7 @@ MOLTEST(source_accepts_every_compression_it_can_unpack) {
     }
 }
 
-MOLTEST(source_refuses_a_compression_it_cannot_unpack) {
+DESCRIBE(source_refuses_a_compression_it_cannot_unpack) {
     /* A rejected recipe on the machine that reads it beats an empty directory
        on the machine that builds it. */
     source_spec spec;
@@ -269,7 +269,7 @@ MOLTEST(source_refuses_a_compression_it_cannot_unpack) {
     EXPECT_NOT_NULL(strstr(err, "tar.zst"));
 }
 
-MOLTEST(source_refuses_a_compression_format_beside_a_clone) {
+DESCRIBE(source_refuses_a_compression_format_beside_a_clone) {
     /* A git checkout is not packed, so the key describes nothing there — and a
        recipe that sets it believes something about what molto will do. */
     source_spec spec;
@@ -279,13 +279,13 @@ MOLTEST(source_refuses_a_compression_format_beside_a_clone) {
     EXPECT_NOT_NULL(strstr(err, "not one"));
 }
 
-MOLTEST(source_refuses_a_recipe_with_no_source_table) {
+DESCRIBE(source_refuses_a_recipe_with_no_source_table) {
     source_spec spec;
     char err[256] = "";
     EXPECT_FALSE(read_source("[build]\nsystem = \"none\"\n", &spec, err, sizeof err));
 }
 
-MOLTEST(source_reads_the_same_spec_from_a_registry_json_recipe) {
+DESCRIBE(source_reads_the_same_spec_from_a_registry_json_recipe) {
     /* The half with no local file anyone can diff against: if the two readers
        ever stop agreeing, a dependency resolved from the registry is fetched
        differently from the same recipe on disk. */
@@ -311,7 +311,7 @@ MOLTEST(source_reads_the_same_spec_from_a_registry_json_recipe) {
     EXPECT_STREQ(from_toml.strip_prefix, from_json.strip_prefix);
 }
 
-MOLTEST(source_validates_a_spec_a_manifest_built_by_hand) {
+DESCRIBE(source_validates_a_spec_a_manifest_built_by_hand) {
     /* A [deps] entry produces this struct without ever going through a
        [source] table, and it owes the same two rules. */
     source_spec spec;
@@ -331,7 +331,7 @@ MOLTEST(source_validates_a_spec_a_manifest_built_by_hand) {
     EXPECT_FALSE(source_spec_validate(&spec, err, sizeof err));
 }
 
-MOLTEST(source_addresses_the_cache_by_coordinate) {
+DESCRIBE(source_addresses_the_cache_by_coordinate) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -343,7 +343,7 @@ MOLTEST(source_addresses_the_cache_by_coordinate) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_caches_an_archive_under_its_digest) {
+DESCRIBE(source_caches_an_archive_under_its_digest) {
     /* Content-addressed: two recipes naming the same bytes share one entry,
        and a dependency with no version of its own still has a key. */
     source_spec spec;
@@ -358,7 +358,7 @@ MOLTEST(source_caches_an_archive_under_its_digest) {
     EXPECT_STREQ(spec.sha256, key);
 }
 
-MOLTEST(source_caches_a_git_rev_under_the_rev_itself) {
+DESCRIBE(source_caches_a_git_rev_under_the_rev_itself) {
     /* A commit id is already the answer, so asking the remote would be one
        round trip to be told what was written. */
     source_spec spec;
@@ -374,7 +374,7 @@ MOLTEST(source_caches_a_git_rev_under_the_rev_itself) {
     EXPECT_STREQ("8bc411b5985233d9c31c50c8f7336cb7c0411b15", key);
 }
 
-MOLTEST(source_resolves_a_git_tag_to_a_commit) {
+DESCRIBE(source_resolves_a_git_tag_to_a_commit) {
     /* RFC-0008: a branch, a tag and a rev all resolve to a commit id, and the
        commit id is what gets recorded. A local repository stands in for a
        remote one — git does not care which. */
@@ -413,7 +413,7 @@ MOLTEST(source_resolves_a_git_tag_to_a_commit) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_reports_a_reference_the_repository_does_not_have) {
+DESCRIBE(source_reports_a_reference_the_repository_does_not_have) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -442,7 +442,7 @@ MOLTEST(source_reports_a_reference_the_repository_does_not_have) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_has_no_cache_key_for_a_path) {
+DESCRIBE(source_has_no_cache_key_for_a_path) {
     source_spec spec;
     memset(&spec, 0, sizeof spec);
     spec.origin = source_origin_path;
@@ -453,7 +453,7 @@ MOLTEST(source_has_no_cache_key_for_a_path) {
     EXPECT_NOT_NULL(strstr(err, "never cached"));
 }
 
-MOLTEST(source_refuses_a_coordinate_that_could_escape_the_cache) {
+DESCRIBE(source_refuses_a_coordinate_that_could_escape_the_cache) {
     /* The coordinate comes out of a recipe, and a recipe comes from a
        registry. A target of ".." would otherwise put a fetch anywhere. */
     sandbox at;
@@ -469,7 +469,7 @@ MOLTEST(source_refuses_a_coordinate_that_could_escape_the_cache) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_verifies_an_archive_where_sha256sum_is_not_the_tool) {
+DESCRIBE(source_verifies_an_archive_where_sha256sum_is_not_the_tool) {
     /*
      * The verification molto does before it trusts a byte, on a machine that
      * does not have GNU coreutils.
@@ -536,7 +536,7 @@ MOLTEST(source_verifies_an_archive_where_sha256sum_is_not_the_tool) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_fetches_verifies_and_strips_an_archive) {
+DESCRIBE(source_fetches_verifies_and_strips_an_archive) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -565,7 +565,7 @@ MOLTEST(source_fetches_verifies_and_strips_an_archive) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_unpacks_a_zip_by_what_upstream_called_it) {
+DESCRIBE(source_unpacks_a_zip_by_what_upstream_called_it) {
     /* The format is decided by the extension, so the download has to keep the
        name the URL gave it. Saved under a name of molto's own choosing it has
        none, and sqlite.org's .zip was handed to tar, which said so. */
@@ -598,7 +598,7 @@ MOLTEST(source_unpacks_a_zip_by_what_upstream_called_it) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_believes_the_recipe_over_the_extension) {
+DESCRIBE(source_believes_the_recipe_over_the_extension) {
     /* The case the key exists for: a URL that ends in .zip and serves a
        tarball. Inference reaches for unzip and fails; the declared format is
        the fact. */
@@ -639,7 +639,7 @@ MOLTEST(source_believes_the_recipe_over_the_extension) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_refuses_bytes_that_are_not_the_ones_the_recipe_names) {
+DESCRIBE(source_refuses_bytes_that_are_not_the_ones_the_recipe_names) {
     /* The point of the digest. Nothing is left in the cache afterwards: a
        failed fetch that leaves a tree behind is a tree the next build reads. */
     sandbox at;
@@ -665,7 +665,7 @@ MOLTEST(source_refuses_bytes_that_are_not_the_ones_the_recipe_names) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_fetches_a_coordinate_once) {
+DESCRIBE(source_fetches_a_coordinate_once) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -694,7 +694,7 @@ MOLTEST(source_fetches_a_coordinate_once) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_refuses_a_strip_prefix_that_is_not_there) {
+DESCRIBE(source_refuses_a_strip_prefix_that_is_not_there) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -718,7 +718,7 @@ MOLTEST(source_refuses_a_strip_prefix_that_is_not_there) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_uses_a_local_path_where_it_is) {
+DESCRIBE(source_uses_a_local_path_where_it_is) {
     /* Not copied: a recipe being developed has to keep tracking the edits
        being made to the directory it names. */
     sandbox at;
@@ -738,7 +738,7 @@ MOLTEST(source_uses_a_local_path_where_it_is) {
     sandbox_close(&at);
 }
 
-MOLTEST(source_reports_a_local_path_that_is_not_a_directory) {
+DESCRIBE(source_reports_a_local_path_that_is_not_a_directory) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -782,7 +782,7 @@ static recipe_provide one_provision(const char *file, const char *from) {
     return provide;
 }
 
-MOLTEST(a_provision_writes_the_file_a_configure_step_would_have) {
+DESCRIBE(a_provision_writes_the_file_a_configure_step_would_have) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char drop[PATH_MAX_LEN];
@@ -804,7 +804,7 @@ MOLTEST(a_provision_writes_the_file_a_configure_step_would_have) {
 
 /* A path origin is used where it lies and carries no stamp, so this runs again
    on every build. Identical bytes mean the copy already happened. */
-MOLTEST(a_provision_already_applied_is_not_an_error) {
+DESCRIBE(a_provision_already_applied_is_not_an_error) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char drop[PATH_MAX_LEN];
@@ -819,7 +819,7 @@ MOLTEST(a_provision_already_applied_is_not_an_error) {
 }
 
 /* The line between completing a configuration and patching one. */
-MOLTEST(a_provision_refuses_to_overwrite_what_upstream_shipped) {
+DESCRIBE(a_provision_refuses_to_overwrite_what_upstream_shipped) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char drop[PATH_MAX_LEN];
@@ -833,7 +833,7 @@ MOLTEST(a_provision_refuses_to_overwrite_what_upstream_shipped) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_provision_stays_inside_the_source_it_completes) {
+DESCRIBE(a_provision_stays_inside_the_source_it_completes) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char drop[PATH_MAX_LEN];
@@ -857,7 +857,7 @@ MOLTEST(a_provision_stays_inside_the_source_it_completes) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_provision_naming_a_file_the_source_lacks_is_refused) {
+DESCRIBE(a_provision_naming_a_file_the_source_lacks_is_refused) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     char drop[PATH_MAX_LEN];
@@ -871,7 +871,7 @@ MOLTEST(a_provision_naming_a_file_the_source_lacks_is_refused) {
     sandbox_close(&at);
 }
 
-MOLTEST(providing_nothing_touches_nothing) {
+DESCRIBE(providing_nothing_touches_nothing) {
     const recipe_provide empty = {0};
     char err[256] = "";
     EXPECT_TRUE(source_provide("/nonexistent/path", &empty, err, sizeof err));

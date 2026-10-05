@@ -30,7 +30,7 @@ static const char *sample_document(void) {
         "note = \"tab\\there\"\n";
 }
 
-MOLTEST(toml_parses_sections_and_strings) {
+DESCRIBE(toml_parses_sections_and_strings) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -48,7 +48,7 @@ MOLTEST(toml_parses_sections_and_strings) {
     toml_free(doc);
 }
 
-MOLTEST(toml_parses_integers) {
+DESCRIBE(toml_parses_integers) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -61,7 +61,7 @@ MOLTEST(toml_parses_integers) {
     toml_free(doc);
 }
 
-MOLTEST(toml_parses_booleans) {
+DESCRIBE(toml_parses_booleans) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -74,7 +74,7 @@ MOLTEST(toml_parses_booleans) {
     toml_free(doc);
 }
 
-MOLTEST(toml_getters_reject_wrong_type_or_missing_key) {
+DESCRIBE(toml_getters_reject_wrong_type_or_missing_key) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -86,7 +86,7 @@ MOLTEST(toml_getters_reject_wrong_type_or_missing_key) {
     toml_free(doc);
 }
 
-MOLTEST(toml_binds_a_schema_into_a_struct) {
+DESCRIBE(toml_binds_a_schema_into_a_struct) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -106,7 +106,7 @@ MOLTEST(toml_binds_a_schema_into_a_struct) {
     toml_free(doc);
 }
 
-MOLTEST(toml_bind_keeps_defaults_and_rejects_mismatch) {
+DESCRIBE(toml_bind_keeps_defaults_and_rejects_mismatch) {
     char err[256] = "";
     toml_document *doc = toml_parse(sample_document(), err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -129,7 +129,7 @@ MOLTEST(toml_bind_keeps_defaults_and_rejects_mismatch) {
     toml_free(doc);
 }
 
-MOLTEST(toml_parses_string_arrays) {
+DESCRIBE(toml_parses_string_arrays) {
     char err[256] = "";
     toml_document *doc = toml_parse(
         "[target]\nlink = [\"m\", \"pthread\"]\nempty = []\n", err, sizeof err);
@@ -158,7 +158,7 @@ MOLTEST(toml_parses_string_arrays) {
     EXPECT_NULL(toml_parse("[t]\nx = [\"a\", \"b\"\n", err, sizeof err));
 }
 
-MOLTEST(toml_reads_an_inline_table_as_a_subsection) {
+DESCRIBE(toml_reads_an_inline_table_as_a_subsection) {
     /* This used to be skipped in silence: the dependency was written, the file
        parsed, and nothing was there. It now reads back exactly as the
        equivalent [deps.http] header would. */
@@ -175,7 +175,7 @@ MOLTEST(toml_reads_an_inline_table_as_a_subsection) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reads_every_member_of_an_inline_table) {
+DESCRIBE(toml_reads_every_member_of_an_inline_table) {
     char err[256] = "";
     toml_document *doc =
         toml_parse("[deps]\nsqlite = { git = \"https://x/y.git\", tag = \"3.53.4\" }\n", err,
@@ -191,7 +191,7 @@ MOLTEST(toml_reads_every_member_of_an_inline_table) {
     toml_free(doc);
 }
 
-MOLTEST(toml_enumerates_an_inline_table_like_any_other_section) {
+DESCRIBE(toml_enumerates_an_inline_table_like_any_other_section) {
     /* A dependency reader has to discover the keys it was given, because which
        source a dependency uses is what the keys say. */
     char err[256] = "";
@@ -210,7 +210,7 @@ MOLTEST(toml_enumerates_an_inline_table_like_any_other_section) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reads_values_of_every_type_inside_an_inline_table) {
+DESCRIBE(toml_reads_values_of_every_type_inside_an_inline_table) {
     char err[256] = "";
     toml_document *doc = toml_parse(
         "[build]\ncfg = { jobs = true, level = 3, args = [\"--a\", \"--b\"] }\n", err, sizeof err);
@@ -233,7 +233,7 @@ MOLTEST(toml_reads_values_of_every_type_inside_an_inline_table) {
     toml_free(doc);
 }
 
-MOLTEST(toml_keeps_a_comma_inside_a_string_out_of_the_split) {
+DESCRIBE(toml_keeps_a_comma_inside_a_string_out_of_the_split) {
     char err[256] = "";
     toml_document *doc =
         toml_parse("[about]\nwho = { name = \"Doe, J\", role = \"author\" }\n", err, sizeof err);
@@ -248,7 +248,7 @@ MOLTEST(toml_keeps_a_comma_inside_a_string_out_of_the_split) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reads_a_nested_inline_table) {
+DESCRIBE(toml_reads_a_nested_inline_table) {
     char err[256] = "";
     toml_document *doc =
         toml_parse("[deps]\nhttp = { git = \"u\", opts = { tls = true } }\n", err, sizeof err);
@@ -260,7 +260,7 @@ MOLTEST(toml_reads_a_nested_inline_table) {
     toml_free(doc);
 }
 
-MOLTEST(toml_refuses_an_empty_inline_table) {
+DESCRIBE(toml_refuses_an_empty_inline_table) {
     /* It declares nothing, so it leaves no entry behind, so no reader can see
        it — and the only thing it has ever been is a half-written dependency.
        Real TOML allows it; this parser is a subset that fails closed. */
@@ -269,7 +269,7 @@ MOLTEST(toml_refuses_an_empty_inline_table) {
     EXPECT_NOT_NULL(strstr(err, "empty inline table"));
 }
 
-MOLTEST(toml_still_tolerates_a_trailing_comma) {
+DESCRIBE(toml_still_tolerates_a_trailing_comma) {
     /* Distinct from the case above: this table declares something. */
     char err[256] = "";
     toml_document *doc = toml_parse("[deps]\nhttp = { path = \"m\", }\n", err, sizeof err);
@@ -281,7 +281,7 @@ MOLTEST(toml_still_tolerates_a_trailing_comma) {
     toml_free(doc);
 }
 
-MOLTEST(toml_section_members_lists_values_and_tables_in_declaration_order) {
+DESCRIBE(toml_section_members_lists_values_and_tables_in_declaration_order) {
     /* The reason this exists: `sqlite = { … }` stores nothing under "deps", so
        toml_section_keys sees only yyjson and a [deps] reader built on it would
        read half the manifest without complaining. */
@@ -305,7 +305,7 @@ MOLTEST(toml_section_members_lists_values_and_tables_in_declaration_order) {
     toml_free(doc);
 }
 
-MOLTEST(toml_section_members_lists_a_child_once_and_never_a_grandchild) {
+DESCRIBE(toml_section_members_lists_a_child_once_and_never_a_grandchild) {
     char err[256] = "";
     toml_document *doc =
         toml_parse("[deps]\nhttp = { git = \"u\", opts = { tls = true } }\n", err, sizeof err);
@@ -320,7 +320,7 @@ MOLTEST(toml_section_members_lists_a_child_once_and_never_a_grandchild) {
     toml_free(doc);
 }
 
-MOLTEST(toml_section_members_of_the_root_lists_keys_and_top_level_tables) {
+DESCRIBE(toml_section_members_of_the_root_lists_keys_and_top_level_tables) {
     char err[256] = "";
     toml_document *doc =
         toml_parse("schema = 1\nform = \"source\"\n[source]\ngit = \"u\"\n[build]\nsystem = "
@@ -340,7 +340,7 @@ MOLTEST(toml_section_members_of_the_root_lists_keys_and_top_level_tables) {
     toml_free(doc);
 }
 
-MOLTEST(toml_section_members_is_empty_for_a_section_nobody_declared) {
+DESCRIBE(toml_section_members_is_empty_for_a_section_nobody_declared) {
     char err[256] = "";
     toml_document *doc = toml_parse("[package]\nname = \"x\"\n", err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -353,7 +353,7 @@ MOLTEST(toml_section_members_is_empty_for_a_section_nobody_declared) {
     toml_free(doc);
 }
 
-MOLTEST(toml_section_members_leaves_an_array_of_tables_to_its_own_accessor) {
+DESCRIBE(toml_section_members_leaves_an_array_of_tables_to_its_own_accessor) {
     char err[256] = "";
     toml_document *doc = toml_parse("name = \"x\"\n[[tool]]\npath = \"a\"\n", err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -368,7 +368,7 @@ MOLTEST(toml_section_members_leaves_an_array_of_tables_to_its_own_accessor) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reports_an_inline_table_that_is_never_closed) {
+DESCRIBE(toml_reports_an_inline_table_that_is_never_closed) {
     /* TOML forbids a newline inside an inline table, so this is not a value
        continued on the next line: it is one that never ends. Reporting it here
        is the difference between a named error and 'expected =' three lines
@@ -378,19 +378,19 @@ MOLTEST(toml_reports_an_inline_table_that_is_never_closed) {
     EXPECT_NOT_NULL(strstr(err, "unterminated inline table"));
 }
 
-MOLTEST(toml_reports_a_malformed_member_instead_of_dropping_it) {
+DESCRIBE(toml_reports_a_malformed_member_instead_of_dropping_it) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("[deps]\nhttp = { path }\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "expected '='"));
 }
 
-MOLTEST(toml_reports_characters_after_an_inline_table) {
+DESCRIBE(toml_reports_characters_after_an_inline_table) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("[deps]\nhttp = { path = \"m\" } junk\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "trailing characters"));
 }
 
-MOLTEST(toml_reports_malformed_input_with_a_line) {
+DESCRIBE(toml_reports_malformed_input_with_a_line) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("[package\nname = \"x\"\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
@@ -406,7 +406,7 @@ MOLTEST(toml_reports_malformed_input_with_a_line) {
     EXPECT_NULL(toml_parse("[package]\nn = 99999999999999999999999999\n", err, sizeof err));
 }
 
-MOLTEST(toml_accepts_an_empty_document) {
+DESCRIBE(toml_accepts_an_empty_document) {
     char err[256] = "";
     toml_document *doc = toml_parse("# just a comment\n\n", err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -431,7 +431,7 @@ static const char pickup_tools_answer[] =
     "version = \"LLVM version 22.1.8\"\n"
     "source = \"pickup\"\n";
 
-MOLTEST(toml_reads_the_answer_of_pickup_tools) {
+DESCRIBE(toml_reads_the_answer_of_pickup_tools) {
     char err[256] = "";
     toml_document *doc = toml_parse(pickup_tools_answer, err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -458,7 +458,7 @@ MOLTEST(toml_reads_the_answer_of_pickup_tools) {
     toml_free(doc);
 }
 
-MOLTEST(toml_counts_no_tables_for_an_array_that_is_not_there) {
+DESCRIBE(toml_counts_no_tables_for_an_array_that_is_not_there) {
     char err[256] = "";
     toml_document *doc = toml_parse("[package]\nname = \"x\"\n", err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -467,7 +467,7 @@ MOLTEST(toml_counts_no_tables_for_an_array_that_is_not_there) {
     toml_free(doc);
 }
 
-MOLTEST(toml_keeps_interleaved_arrays_of_tables_apart) {
+DESCRIBE(toml_keeps_interleaved_arrays_of_tables_apart) {
     char err[256] = "";
     toml_document *doc = toml_parse("[[a]]\nx = 1\n[[b]]\nx = 2\n[[a]]\nx = 3\n",
                                     err, sizeof err);
@@ -485,7 +485,7 @@ MOLTEST(toml_keeps_interleaved_arrays_of_tables_apart) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reports_a_malformed_array_of_tables) {
+DESCRIBE(toml_reports_a_malformed_array_of_tables) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("[[tool]\nkind = \"linter\"\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
@@ -495,7 +495,7 @@ MOLTEST(toml_reports_a_malformed_array_of_tables) {
     EXPECT_NOT_NULL(strstr(err, "empty"));
 }
 
-MOLTEST(toml_reads_an_array_written_across_lines) {
+DESCRIBE(toml_reads_an_array_written_across_lines) {
     char err[256] = "";
     toml_document *doc = toml_parse("provides = [\n"
                                     "    \"constexpr\",\n"
@@ -521,7 +521,7 @@ MOLTEST(toml_reads_an_array_written_across_lines) {
     toml_free(doc);
 }
 
-MOLTEST(toml_keeps_a_section_after_a_multiline_array) {
+DESCRIBE(toml_keeps_a_section_after_a_multiline_array) {
     char err[256] = "";
     toml_document *doc = toml_parse("std = [\n  \"c17\"\n]\n[toolchain]\nvendor = \"clang\"\n",
                                     err, sizeof err);
@@ -534,7 +534,7 @@ MOLTEST(toml_keeps_a_section_after_a_multiline_array) {
     toml_free(doc);
 }
 
-MOLTEST(toml_does_not_gather_lines_for_a_bracket_inside_a_string) {
+DESCRIBE(toml_does_not_gather_lines_for_a_bracket_inside_a_string) {
     /* A '[' in a string opens nothing: the next line is its own key. */
     char err[256] = "";
     toml_document *doc = toml_parse("description = \"a [ thing\"\nname = \"clang\"\n",
@@ -548,7 +548,7 @@ MOLTEST(toml_does_not_gather_lines_for_a_bracket_inside_a_string) {
     toml_free(doc);
 }
 
-MOLTEST(toml_reports_an_array_that_is_never_closed) {
+DESCRIBE(toml_reports_an_array_that_is_never_closed) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("provides = [\n  \"constexpr\",\n", err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "unterminated array"));
@@ -556,7 +556,7 @@ MOLTEST(toml_reports_an_array_that_is_never_closed) {
 
 /* --- arrays of tables inside arrays of tables (RFC-0013) --- */
 
-MOLTEST(toml_keeps_a_nested_array_of_tables_with_its_parent) {
+DESCRIBE(toml_keeps_a_nested_array_of_tables_with_its_parent) {
     /* The shape an IR document has: a list of targets, each with its own list
        of sources. Stored under a bare `targets.sources` the two lists would
        merge, and a reader asking for the first target's sources would be handed
@@ -596,7 +596,7 @@ MOLTEST(toml_keeps_a_nested_array_of_tables_with_its_parent) {
     toml_free(doc);
 }
 
-MOLTEST(toml_keeps_a_plain_table_with_the_array_element_it_is_written_under) {
+DESCRIBE(toml_keeps_a_plain_table_with_the_array_element_it_is_written_under) {
     /* [targets.artifact] is that target's artifact. Stored unqualified, the
        second element's table would overwrite the first's. */
     char err[256] = "";
@@ -620,7 +620,7 @@ MOLTEST(toml_keeps_a_plain_table_with_the_array_element_it_is_written_under) {
     toml_free(doc);
 }
 
-MOLTEST(toml_leaves_a_table_under_a_plain_parent_unqualified) {
+DESCRIBE(toml_leaves_a_table_under_a_plain_parent_unqualified) {
     /* Qualifying only applies to an ancestor that is an array of tables. A
        plain [a.b] is still a.b, or every existing recipe would move. */
     char err[256] = "";

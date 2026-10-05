@@ -69,7 +69,7 @@ static const char *answer(directory_fn fn, char *out, size_t size) {
     return out;
 }
 
-MOLTEST(the_molto_home_override_answers_whole) {
+DESCRIBE(the_molto_home_override_answers_whole) {
     environment saved;
     save(&saved);
 
@@ -87,7 +87,7 @@ MOLTEST(the_molto_home_override_answers_whole) {
     restore(&saved);
 }
 
-MOLTEST(a_subdirectory_hangs_off_the_data_directory) {
+DESCRIBE(a_subdirectory_hangs_off_the_data_directory) {
     environment saved;
     save(&saved);
 
@@ -102,7 +102,7 @@ MOLTEST(a_subdirectory_hangs_off_the_data_directory) {
 
 /* The migration's source, which does not move with the override: the override
    is where molto works now, and `~/.molto` is where an older one worked. */
-MOLTEST(the_legacy_home_hangs_off_home) {
+DESCRIBE(the_legacy_home_hangs_off_home) {
     environment saved;
     save(&saved);
 
@@ -120,7 +120,7 @@ MOLTEST(the_legacy_home_hangs_off_home) {
 /* One place on Windows, %APPDATA%\molto, whatever the XDG variables say: they
    are a Unix convention, and a Windows user who happens to export one did not
    mean molto's credential to follow it. */
-MOLTEST(windows_keeps_everything_under_appdata) {
+DESCRIBE(windows_keeps_everything_under_appdata) {
     environment saved;
     save(&saved);
 
@@ -138,7 +138,7 @@ MOLTEST(windows_keeps_everything_under_appdata) {
     restore(&saved);
 }
 
-MOLTEST(windows_without_appdata_has_no_answer) {
+DESCRIBE(windows_without_appdata_has_no_answer) {
     environment saved;
     save(&saved);
 
@@ -159,7 +159,7 @@ MOLTEST(windows_without_appdata_has_no_answer) {
  * MSYS2 and git-bash define the other one. It still decides where the old
  * `.molto` is looked for.
  */
-MOLTEST(windows_falls_back_to_the_user_profile) {
+DESCRIBE(windows_falls_back_to_the_user_profile) {
     environment saved;
     save(&saved);
 
@@ -177,7 +177,7 @@ MOLTEST(windows_falls_back_to_the_user_profile) {
    comes back in Molto's one separator: composed onto with '/', a backslash path
    becomes a directory a cached dependency's objects cannot be mirrored under
    (`obj/C/\\Users\\...`), which is how a git dependency failed to build. */
-MOLTEST(windows_answers_in_one_separator) {
+DESCRIBE(windows_answers_in_one_separator) {
     environment saved;
     save(&saved);
 
@@ -198,7 +198,7 @@ MOLTEST(windows_answers_in_one_separator) {
 /* HOME still wins where a shell went to the trouble of setting it: someone in
    MSYS2 means the home that shell gave them, and molto should agree with
    everything else run from there. */
-MOLTEST(home_beats_the_user_profile_when_both_are_set) {
+DESCRIBE(home_beats_the_user_profile_when_both_are_set) {
     environment saved;
     save(&saved);
 
@@ -212,7 +212,7 @@ MOLTEST(home_beats_the_user_profile_when_both_are_set) {
     restore(&saved);
 }
 #else
-MOLTEST(the_directories_follow_xdg_defaults_under_home) {
+DESCRIBE(the_directories_follow_xdg_defaults_under_home) {
     environment saved;
     save(&saved);
 
@@ -226,7 +226,7 @@ MOLTEST(the_directories_follow_xdg_defaults_under_home) {
     restore(&saved);
 }
 
-MOLTEST(the_xdg_variables_move_each_directory) {
+DESCRIBE(the_xdg_variables_move_each_directory) {
     environment saved;
     save(&saved);
 
@@ -245,7 +245,7 @@ MOLTEST(the_xdg_variables_move_each_directory) {
 
 /* The specification says to ignore a relative one, and an empty one is the
    same mistake: either would put a credential wherever the command ran. */
-MOLTEST(an_empty_or_relative_xdg_variable_is_ignored) {
+DESCRIBE(an_empty_or_relative_xdg_variable_is_ignored) {
     environment saved;
     save(&saved);
 
@@ -265,7 +265,7 @@ MOLTEST(an_empty_or_relative_xdg_variable_is_ignored) {
 /* An override set to nothing is not an override. Without this an exported but
    empty variable would answer the empty path, and every molto file would be
    written at the root of the current drive. */
-MOLTEST(an_empty_override_is_no_override) {
+DESCRIBE(an_empty_override_is_no_override) {
     environment saved;
     save(&saved);
 
@@ -280,7 +280,7 @@ MOLTEST(an_empty_override_is_no_override) {
 
 /* Nothing to fall back to, and saying so is the point: a Unix with no HOME has
    no home, and inventing one would put a credential somewhere nobody looks. */
-MOLTEST(no_home_is_no_answer) {
+DESCRIBE(no_home_is_no_answer) {
     environment saved;
     save(&saved);
 
@@ -356,7 +356,7 @@ static bool exists_in(const char *root, const char *relative) {
     return in(root, relative, path, sizeof path) && fs_path_exists(path);
 }
 
-MOLTEST(the_migration_moves_the_credential_and_the_plugins) {
+DESCRIBE(the_migration_moves_the_credential_and_the_plugins) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
 
@@ -378,7 +378,7 @@ MOLTEST(the_migration_moves_the_credential_and_the_plugins) {
     migration_close(&at);
 }
 
-MOLTEST(the_migrated_credential_stays_readable_only_by_its_owner) {
+DESCRIBE(the_migrated_credential_stays_readable_only_by_its_owner) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
 
@@ -396,7 +396,7 @@ MOLTEST(the_migrated_credential_stays_readable_only_by_its_owner) {
     migration_close(&at);
 }
 
-MOLTEST(the_migration_happens_once) {
+DESCRIBE(the_migration_happens_once) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
 
@@ -410,7 +410,7 @@ MOLTEST(the_migration_happens_once) {
 
 /* `$MOLTO_HOME` is the directory in use, laid out the old way: nothing in
    `~/.molto` is molto's to move while it is set. */
-MOLTEST(the_migration_leaves_alone_a_machine_with_an_override) {
+DESCRIBE(the_migration_leaves_alone_a_machine_with_an_override) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
     ASSERT_EQ(0, setenv("MOLTO_HOME", at.legacy, 1));
@@ -425,7 +425,7 @@ MOLTEST(the_migration_leaves_alone_a_machine_with_an_override) {
 
 /* A newer credential is the one somebody logged in with since: the old one
    does not get to replace it, and `~/.molto` stays rather than losing it. */
-MOLTEST(the_migration_never_overwrites_what_is_already_there) {
+DESCRIBE(the_migration_never_overwrites_what_is_already_there) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
     char path[PRIVATE_HOME_MAX];
@@ -447,7 +447,7 @@ MOLTEST(the_migration_never_overwrites_what_is_already_there) {
 
 /* Plugins installed by the new molto before the old ones were moved: both
    sets end up in one directory. */
-MOLTEST(the_migration_merges_plugins_into_an_existing_directory) {
+DESCRIBE(the_migration_merges_plugins_into_an_existing_directory) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
     char path[PRIVATE_HOME_MAX];
@@ -464,7 +464,7 @@ MOLTEST(the_migration_merges_plugins_into_an_existing_directory) {
 }
 
 /* Something molto did not put there is not molto's to delete. */
-MOLTEST(the_migration_keeps_the_old_directory_while_it_holds_anything_else) {
+DESCRIBE(the_migration_keeps_the_old_directory_while_it_holds_anything_else) {
     migration at;
     ASSERT_TRUE(migration_open(&at));
     char path[PRIVATE_HOME_MAX];
@@ -479,7 +479,7 @@ MOLTEST(the_migration_keeps_the_old_directory_while_it_holds_anything_else) {
     migration_close(&at);
 }
 
-MOLTEST(the_migration_has_nothing_to_do_without_an_old_directory) {
+DESCRIBE(the_migration_has_nothing_to_do_without_an_old_directory) {
     environment saved;
     save(&saved);
     char home[PRIVATE_HOME_MAX];

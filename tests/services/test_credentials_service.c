@@ -48,7 +48,7 @@ static void restore_home(void) {
     molto_home_override_restore(&previous_override);
 }
 
-MOLTEST(credentials_round_trip_what_was_saved) {
+DESCRIBE(credentials_round_trip_what_was_saved) {
     with_private_home();
 
     const credentials saved = {.registry = "https://registry.example.com",
@@ -66,7 +66,7 @@ MOLTEST(credentials_round_trip_what_was_saved) {
     restore_home();
 }
 
-MOLTEST(credentials_are_readable_only_by_their_owner) {
+DESCRIBE(credentials_are_readable_only_by_their_owner) {
     with_private_home();
 
     const credentials saved = {
@@ -92,7 +92,7 @@ MOLTEST(credentials_are_readable_only_by_their_owner) {
 
 /* A credential is configuration, so it lives in the config directory rather
    than beside the plugins or in the cache. */
-MOLTEST(credentials_live_in_the_config_directory) {
+DESCRIBE(credentials_live_in_the_config_directory) {
     with_private_home();
 
     char path[1200];
@@ -104,7 +104,7 @@ MOLTEST(credentials_live_in_the_config_directory) {
     restore_home();
 }
 
-MOLTEST(credentials_report_that_nobody_logged_in) {
+DESCRIBE(credentials_report_that_nobody_logged_in) {
     with_private_home();
 
     credentials loaded = {0};
@@ -115,7 +115,7 @@ MOLTEST(credentials_report_that_nobody_logged_in) {
     restore_home();
 }
 
-MOLTEST(credentials_replace_what_was_there) {
+DESCRIBE(credentials_replace_what_was_there) {
     with_private_home();
 
     char err[256] = "";

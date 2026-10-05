@@ -16,7 +16,7 @@ static const char *full_manifest(void) {
         "debug_info = true\n";
 }
 
-MOLTEST(project_parses_package_fields) {
+DESCRIBE(project_parses_package_fields) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
@@ -25,7 +25,7 @@ MOLTEST(project_parses_package_fields) {
     EXPECT_STREQ("1.2.3", ctx.version);
 }
 
-MOLTEST(project_applies_declared_profile) {
+DESCRIBE(project_applies_declared_profile) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
@@ -35,7 +35,7 @@ MOLTEST(project_applies_declared_profile) {
     EXPECT_TRUE(ctx.profile.release.debug_info);
 }
 
-MOLTEST(project_keeps_builtin_profile_defaults) {
+DESCRIBE(project_keeps_builtin_profile_defaults) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
@@ -53,7 +53,7 @@ MOLTEST(project_keeps_builtin_profile_defaults) {
     EXPECT_TRUE(ctx.profile.coverage.debug_info);
 }
 
-MOLTEST(project_reads_the_coverage_profile_like_any_other) {
+DESCRIBE(project_reads_the_coverage_profile_like_any_other) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n"
@@ -68,7 +68,7 @@ MOLTEST(project_reads_the_coverage_profile_like_any_other) {
     EXPECT_STREQ("-fno-inline", ctx.profile_options.coverage.flags[0]);
 }
 
-MOLTEST(project_defaults_optional_fields) {
+DESCRIBE(project_defaults_optional_fields) {
     char err[256] = "";
     project_ctx minimal;
     ASSERT_TRUE(project_parse("[package]\nname = \"tiny\"\n", &minimal, err, sizeof err));
@@ -80,7 +80,7 @@ MOLTEST(project_defaults_optional_fields) {
     EXPECT_EQ(0, minimal.target.link_count);
 }
 
-MOLTEST(project_rejects_invalid_manifests) {
+DESCRIBE(project_rejects_invalid_manifests) {
     char err[256] = "";
     project_ctx ctx;
 
@@ -108,7 +108,7 @@ MOLTEST(project_rejects_invalid_manifests) {
     EXPECT_NOT_NULL(strstr(err, "Project.toml:1"));
 }
 
-MOLTEST(project_reads_the_publishing_metadata) {
+DESCRIBE(project_reads_the_publishing_metadata) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\n"
@@ -134,7 +134,7 @@ MOLTEST(project_reads_the_publishing_metadata) {
     EXPECT_EQ(0, ctx.about.author_count);
 }
 
-MOLTEST(project_refuses_an_unknown_package_key) {
+DESCRIBE(project_refuses_an_unknown_package_key) {
     /* [package] fails closed, unlike [target] and [profile.*]. The reason is
        who reads it: these keys leave the machine, and a `licence` dropped in
        silence publishes a package that claims no licence at all. */
@@ -165,7 +165,7 @@ MOLTEST(project_refuses_an_unknown_package_key) {
                               &ctx, err, sizeof err));
 }
 
-MOLTEST(project_reads_target_table) {
+DESCRIBE(project_reads_target_table) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(
@@ -185,7 +185,7 @@ MOLTEST(project_reads_target_table) {
     EXPECT_STREQ("pthread", ctx.target.link[1]);
 }
 
-MOLTEST(project_reads_options_base_and_per_profile) {
+DESCRIBE(project_reads_options_base_and_per_profile) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(
@@ -218,7 +218,7 @@ static void manifest_with_defines(char *out, size_t out_size, size_t count) {
     snprintf(out + pos, out_size - (size_t)pos, "]\n");
 }
 
-MOLTEST(project_rejects_more_options_than_it_can_hold) {
+DESCRIBE(project_rejects_more_options_than_it_can_hold) {
     char err[256] = "";
     char manifest[2048];
     project_ctx ctx;
@@ -237,7 +237,7 @@ MOLTEST(project_rejects_more_options_than_it_can_hold) {
     EXPECT_NOT_NULL(strstr(err, "[target].defines"));
 }
 
-MOLTEST(project_rejects_an_overlong_option) {
+DESCRIBE(project_rejects_an_overlong_option) {
     char err[256] = "";
     char manifest[512];
     char value[PROJECT_OPT_LEN + 8];
@@ -251,7 +251,7 @@ MOLTEST(project_rejects_an_overlong_option) {
     EXPECT_NOT_NULL(strstr(err, "[target].flags"));
 }
 
-MOLTEST(project_rejects_more_link_libraries_than_it_can_hold) {
+DESCRIBE(project_rejects_more_link_libraries_than_it_can_hold) {
     char err[256] = "";
     char manifest[2048];
     int pos = snprintf(manifest, sizeof manifest,
@@ -266,7 +266,7 @@ MOLTEST(project_rejects_more_link_libraries_than_it_can_hold) {
     EXPECT_NOT_NULL(strstr(err, "[target].link"));
 }
 
-MOLTEST(project_reads_the_env_table) {
+DESCRIBE(project_reads_the_env_table) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(
@@ -282,7 +282,7 @@ MOLTEST(project_reads_the_env_table) {
     EXPECT_STREQ("/opt/lib/pkgconfig", ctx.env.values[1]);
 }
 
-MOLTEST(project_rejects_a_non_string_env_value) {
+DESCRIBE(project_rejects_a_non_string_env_value) {
     char err[256] = "";
     project_ctx ctx;
     EXPECT_FALSE(project_parse("[package]\nname = \"app\"\n[env]\nLEVEL = 3\n",
@@ -290,14 +290,14 @@ MOLTEST(project_rejects_a_non_string_env_value) {
     EXPECT_NOT_NULL(strstr(err, "[env].LEVEL"));
 }
 
-MOLTEST(project_without_env_has_none) {
+DESCRIBE(project_without_env_has_none) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n", &ctx, err, sizeof err));
     EXPECT_EQ(0, ctx.env.count);
 }
 
-MOLTEST(project_sorts_the_env_table_by_name) {
+DESCRIBE(project_sorts_the_env_table_by_name) {
     /* Canonical here, once, so the order two lines were written in never
        reaches a build fingerprint or the key of the shared object cache. */
     char err[256] = "";
@@ -312,7 +312,7 @@ MOLTEST(project_sorts_the_env_table_by_name) {
     EXPECT_STREQ("ZED", ctx.env.names[1]);
 }
 
-MOLTEST(project_refuses_more_than_thirty_two_env_entries) {
+DESCRIBE(project_refuses_more_than_thirty_two_env_entries) {
     char manifest[4096];
     int pos = snprintf(manifest, sizeof manifest, "[package]\nname = \"app\"\n[env]\n");
     for(int i = 0; i < PROJECT_MAX_ENV + 1; i++)
@@ -329,7 +329,7 @@ MOLTEST(project_refuses_more_than_thirty_two_env_entries) {
    TOML_VALUE_MAX happen to be the same 64 and 256 as PROJECT_ENV_NAME_MAX and
    PROJECT_ENV_VALUE_MAX, so today the parser refuses these before read_env
    measures them. That coincidence is not the contract; the refusal is. */
-MOLTEST(project_refuses_an_env_name_that_does_not_fit) {
+DESCRIBE(project_refuses_an_env_name_that_does_not_fit) {
     char manifest[512];
     char name[PROJECT_ENV_NAME_MAX + 1];
     memset(name, 'N', sizeof name - 1);
@@ -341,7 +341,7 @@ MOLTEST(project_refuses_an_env_name_that_does_not_fit) {
     EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
 }
 
-MOLTEST(project_refuses_an_env_value_that_does_not_fit) {
+DESCRIBE(project_refuses_an_env_value_that_does_not_fit) {
     char manifest[1024];
     char value[PROJECT_ENV_VALUE_MAX + 1];
     memset(value, 'v', sizeof value - 1);
@@ -353,7 +353,7 @@ MOLTEST(project_refuses_an_env_value_that_does_not_fit) {
     EXPECT_FALSE(project_parse(manifest, &ctx, err, sizeof err));
 }
 
-MOLTEST(project_hands_the_package_identity_to_the_compiler) {
+DESCRIBE(project_hands_the_package_identity_to_the_compiler) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse(full_manifest(), &ctx, err, sizeof err));
@@ -372,7 +372,7 @@ MOLTEST(project_hands_the_package_identity_to_the_compiler) {
     EXPECT_STREQ("MOLTO_PKG_VERSION=\"1.2.3\"", options->defines[1]);
 }
 
-MOLTEST(project_reports_a_name_it_cannot_pass_on) {
+DESCRIBE(project_reports_a_name_it_cannot_pass_on) {
     char err[256] = "";
     char manifest[256];
     /* Valid as a package name -- snake_case has no length limit -- and too long
@@ -392,7 +392,7 @@ MOLTEST(project_reports_a_name_it_cannot_pass_on) {
 /* A host library is named by capability, never by path: `/usr/include/gtk-3.0`
    is one distribution, one architecture and one version, and a manifest that
    spells it has decided all three for whoever reads it next (RFC-0016). */
-MOLTEST(target_host_refuses_a_path_where_a_capability_belongs) {
+DESCRIBE(target_host_refuses_a_path_where_a_capability_belongs) {
     project_ctx ctx;
     char err[512] = "";
     EXPECT_FALSE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
@@ -401,7 +401,7 @@ MOLTEST(target_host_refuses_a_path_where_a_capability_belongs) {
     EXPECT_NOT_NULL(strstr(err, "looks like a path"));
 }
 
-MOLTEST(target_host_reads_the_capabilities_a_manifest_names) {
+DESCRIBE(target_host_reads_the_capabilities_a_manifest_names) {
     project_ctx ctx;
     char err[512] = "";
     ASSERT_TRUE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
@@ -414,7 +414,7 @@ MOLTEST(target_host_reads_the_capabilities_a_manifest_names) {
 
 /* Separate lists answered by separate resolvers: `requires` is a question for
    pickup about a compiler, `host` one for pkg-config about a library. */
-MOLTEST(target_host_and_requires_are_different_lists) {
+DESCRIBE(target_host_and_requires_are_different_lists) {
     project_ctx ctx;
     char err[512] = "";
     ASSERT_TRUE(project_parse("[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
@@ -430,7 +430,7 @@ MOLTEST(target_host_and_requires_are_different_lists) {
    says nothing gets. The default is the one that matters: RFC-0003 originally
    documented `static`, written before anything built one, and honouring that
    would turn every project already written into a library it never asked for. */
-MOLTEST(project_reads_the_artifact_kind_it_is_built_as) {
+DESCRIBE(project_reads_the_artifact_kind_it_is_built_as) {
     project_ctx ctx;
     char err[256] = "";
 

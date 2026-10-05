@@ -92,7 +92,7 @@ static void assert_recipe(doc_view doc) {
     EXPECT_FALSE(doc_has_table(doc, "toolchain"));
 }
 
-MOLTEST(doc_reads_the_same_recipe_from_toml_and_json) {
+DESCRIBE(doc_reads_the_same_recipe_from_toml_and_json) {
     char err[256] = "";
     toml_document *as_toml = toml_parse(RECIPE_TOML, err, sizeof err);
     ASSERT_NOT_NULL(as_toml);
@@ -106,7 +106,7 @@ MOLTEST(doc_reads_the_same_recipe_from_toml_and_json) {
     json_free(as_json);
 }
 
-MOLTEST(doc_lists_a_table_s_members_the_same_way_on_both_sides) {
+DESCRIBE(doc_lists_a_table_s_members_the_same_way_on_both_sides) {
     char err[256] = "";
     toml_document *as_toml = toml_parse(RECIPE_TOML, err, sizeof err);
     ASSERT_NOT_NULL(as_toml);
@@ -131,7 +131,7 @@ MOLTEST(doc_lists_a_table_s_members_the_same_way_on_both_sides) {
     json_free(as_json);
 }
 
-MOLTEST(doc_reads_a_nested_table) {
+DESCRIBE(doc_reads_a_nested_table) {
     char err[256] = "";
     toml_document *as_toml =
         toml_parse("[toolchain.c]\nstd = [\"c17\"]\n", err, sizeof err);
@@ -155,7 +155,7 @@ MOLTEST(doc_reads_a_nested_table) {
     json_free(as_json);
 }
 
-MOLTEST(doc_leaves_the_output_untouched_when_a_key_is_absent) {
+DESCRIBE(doc_leaves_the_output_untouched_when_a_key_is_absent) {
     /* So a caller can seed a default and read over it. */
     json_document *as_json = json_parse("{\"source\":{}}");
     ASSERT_NOT_NULL(as_json);
@@ -168,7 +168,7 @@ MOLTEST(doc_leaves_the_output_untouched_when_a_key_is_absent) {
     json_free(as_json);
 }
 
-MOLTEST(doc_refuses_a_value_of_the_wrong_type) {
+DESCRIBE(doc_refuses_a_value_of_the_wrong_type) {
     json_document *as_json = json_parse("{\"schema\":\"one\",\"name\":42}");
     ASSERT_NOT_NULL(as_json);
     const doc_view doc = doc_from_json(json_root(as_json));
@@ -185,7 +185,7 @@ MOLTEST(doc_refuses_a_value_of_the_wrong_type) {
     json_free(as_json);
 }
 
-MOLTEST(doc_refuses_a_number_that_does_not_fit) {
+DESCRIBE(doc_refuses_a_number_that_does_not_fit) {
     json_document *as_json = json_parse("{\"schema\":99999999999999999999}");
     ASSERT_NOT_NULL(as_json);
 
@@ -195,7 +195,7 @@ MOLTEST(doc_refuses_a_number_that_does_not_fit) {
     json_free(as_json);
 }
 
-MOLTEST(doc_refuses_an_array_holding_something_that_is_not_a_string) {
+DESCRIBE(doc_refuses_an_array_holding_something_that_is_not_a_string) {
     /* Half a list is worse than none, because half a list compiles. */
     json_document *as_json = json_parse("{\"artifacts\":{\"link\":[\"m\",7]}}");
     ASSERT_NOT_NULL(as_json);
@@ -208,7 +208,7 @@ MOLTEST(doc_refuses_an_array_holding_something_that_is_not_a_string) {
     json_free(as_json);
 }
 
-MOLTEST(doc_has_table_is_false_for_a_scalar_of_the_same_name) {
+DESCRIBE(doc_has_table_is_false_for_a_scalar_of_the_same_name) {
     json_document *as_json = json_parse("{\"source\":\"not a table\"}");
     ASSERT_NOT_NULL(as_json);
 
@@ -217,7 +217,7 @@ MOLTEST(doc_has_table_is_false_for_a_scalar_of_the_same_name) {
     json_free(as_json);
 }
 
-MOLTEST(doc_read_strings_fills_a_fixed_destination) {
+DESCRIBE(doc_read_strings_fills_a_fixed_destination) {
     char err[256] = "";
     toml_document *as_toml = toml_parse(RECIPE_TOML, err, sizeof err);
     ASSERT_NOT_NULL(as_toml);
@@ -234,7 +234,7 @@ MOLTEST(doc_read_strings_fills_a_fixed_destination) {
     toml_free(as_toml);
 }
 
-MOLTEST(doc_read_strings_is_silent_about_a_key_that_is_not_there) {
+DESCRIBE(doc_read_strings_is_silent_about_a_key_that_is_not_there) {
     char err[256] = "";
     toml_document *as_toml = toml_parse("[artifacts]\ntype = \"source\"\n", err, sizeof err);
     ASSERT_NOT_NULL(as_toml);
@@ -248,7 +248,7 @@ MOLTEST(doc_read_strings_is_silent_about_a_key_that_is_not_there) {
     toml_free(as_toml);
 }
 
-MOLTEST(doc_read_strings_reports_a_key_that_is_there_but_is_not_a_list) {
+DESCRIBE(doc_read_strings_reports_a_key_that_is_there_but_is_not_a_list) {
     /* The case the probe exists for: without it this compiles nothing and says
        nothing. */
     char err[256] = "";
@@ -266,7 +266,7 @@ MOLTEST(doc_read_strings_reports_a_key_that_is_there_but_is_not_a_list) {
     toml_free(as_toml);
 }
 
-MOLTEST(doc_read_strings_refuses_more_entries_than_fit) {
+DESCRIBE(doc_read_strings_refuses_more_entries_than_fit) {
     char err[256] = "";
     toml_document *as_toml =
         toml_parse("[artifacts]\nlink = [\"a\", \"b\", \"c\"]\n", err, sizeof err);
@@ -282,7 +282,7 @@ MOLTEST(doc_read_strings_refuses_more_entries_than_fit) {
     toml_free(as_toml);
 }
 
-MOLTEST(doc_read_strings_refuses_an_entry_that_is_too_long) {
+DESCRIBE(doc_read_strings_refuses_an_entry_that_is_too_long) {
     char err[256] = "";
     toml_document *as_toml =
         toml_parse("[artifacts]\nlink = [\"pthread\"]\n", err, sizeof err);
@@ -386,7 +386,7 @@ static void assert_nested(doc_view doc) {
     EXPECT_FALSE(doc_array_at(doc, "absent", 0, &past));
 }
 
-MOLTEST(doc_walks_nested_tables_in_toml) {
+DESCRIBE(doc_walks_nested_tables_in_toml) {
     char err[256] = "";
     toml_document *doc = toml_parse(NESTED_TOML, err, sizeof err);
     ASSERT_NOT_NULL(doc);
@@ -394,14 +394,14 @@ MOLTEST(doc_walks_nested_tables_in_toml) {
     toml_free(doc);
 }
 
-MOLTEST(doc_walks_nested_tables_in_json) {
+DESCRIBE(doc_walks_nested_tables_in_json) {
     json_document *doc = json_parse(NESTED_JSON);
     ASSERT_NOT_NULL(doc);
     assert_nested(doc_from_json(json_root(doc)));
     json_free(doc);
 }
 
-MOLTEST(doc_refuses_an_array_element_that_is_not_a_table) {
+DESCRIBE(doc_refuses_an_array_element_that_is_not_a_table) {
     /* JSON can express `[1, 2]` where a list of nodes belongs. Reading it as an
        empty table would drop a node in silence; saying no is the whole point of
        the type check. */
@@ -416,7 +416,7 @@ MOLTEST(doc_refuses_an_array_element_that_is_not_a_table) {
     json_free(doc);
 }
 
-MOLTEST(doc_counts_nothing_for_a_key_that_is_not_an_array_of_tables) {
+DESCRIBE(doc_counts_nothing_for_a_key_that_is_not_an_array_of_tables) {
     /* A scalar under the name a caller expected an array at is not an array of
        one: it is a document that does not say what the reader was told it did. */
     json_document *doc = json_parse("{\"targets\":\"app\"}");

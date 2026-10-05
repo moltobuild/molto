@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-MOLTEST(scaffold) {
+DESCRIBE(scaffold) {
     char root[MOLTEST_PATH];
     EXPECT_TRUE(moltest_temp_dir("molto_scaffold", root, sizeof root));
 
@@ -49,7 +49,7 @@ MOLTEST(scaffold) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
+DESCRIBE(scaffold_creates_the_include_directory_the_manifest_declares) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_include", root, sizeof root));
 
@@ -68,7 +68,7 @@ MOLTEST(scaffold_creates_the_include_directory_the_manifest_declares) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(scaffold_ignores_the_directories_molto_owns) {
+DESCRIBE(scaffold_ignores_the_directories_molto_owns) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_ignore", root, sizeof root));
 
@@ -95,7 +95,7 @@ MOLTEST(scaffold_ignores_the_directories_molto_owns) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(scaffold_keeps_an_existing_gitignore) {
+DESCRIBE(scaffold_keeps_an_existing_gitignore) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_keepignore", root, sizeof root));
 
@@ -132,7 +132,7 @@ static bool holds(const char *project, const char *relative, const char *needle)
     return found;
 }
 
-MOLTEST(scaffold_library_writes_a_header_a_source_and_a_moltest_suite) {
+DESCRIBE(scaffold_library_writes_a_header_a_source_and_a_moltest_suite) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_lib", root, sizeof root));
     char project[600];
@@ -152,7 +152,7 @@ MOLTEST(scaffold_library_writes_a_header_a_source_and_a_moltest_suite) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(scaffold_library_keeps_existing_sources) {
+DESCRIBE(scaffold_library_keeps_existing_sources) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_libkeep", root, sizeof root));
     char project[600];
@@ -170,7 +170,7 @@ MOLTEST(scaffold_library_keeps_existing_sources) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(scaffold_binary_declares_an_executable) {
+DESCRIBE(scaffold_binary_declares_an_executable) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_bin", root, sizeof root));
     char project[600];
@@ -187,7 +187,7 @@ MOLTEST(scaffold_binary_declares_an_executable) {
 
 /* `molto new` with no flag is a library; `--bin` asks for a program, and both
    flags at once is a usage error that writes nothing. */
-MOLTEST(new_makes_a_library_unless_asked_for_a_binary) {
+DESCRIBE(new_makes_a_library_unless_asked_for_a_binary) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_newkind", root, sizeof root));
     char previous[1024];

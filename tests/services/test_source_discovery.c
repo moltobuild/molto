@@ -21,7 +21,7 @@ static bool contains_suffix(const str_list *list, const char *suffix) {
     return false;
 }
 
-MOLTEST(source_discovery) {
+DESCRIBE(source_discovery) {
     EXPECT_TRUE(source_is_cpp("x.cpp"));
     EXPECT_TRUE(source_is_cpp("x.cc"));
     EXPECT_TRUE(!source_is_cpp("x.c"));
@@ -56,7 +56,7 @@ MOLTEST(source_discovery) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
+DESCRIBE(source_discovery_does_not_follow_symlinked_directories) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_symlink", root, sizeof root));
 
@@ -90,7 +90,7 @@ MOLTEST(source_discovery_does_not_follow_symlinked_directories) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(source_discovery_returns_a_stable_order) {
+DESCRIBE(source_discovery_returns_a_stable_order) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_order", root, sizeof root));
 
@@ -146,7 +146,7 @@ static void wipe(const char *root) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(source_discovery_collects_the_tests_directory_and_the_extra_entries) {
+DESCRIBE(source_discovery_collects_the_tests_directory_and_the_extra_entries) {
     /* A listed directory is walked and a listed file is taken as it is: that is
        how a framework living outside tests/ — with the main() the tests do not
        have — gets compiled in. */
@@ -181,7 +181,7 @@ MOLTEST(source_discovery_collects_the_tests_directory_and_the_extra_entries) {
     wipe(root);
 }
 
-MOLTEST(source_discovery_treats_a_missing_tests_directory_as_nothing) {
+DESCRIBE(source_discovery_treats_a_missing_tests_directory_as_nothing) {
     /* Not an error: a project without tests is a project, and `molto new`
        leaves an empty tests/ behind. */
     char root[MOLTEST_PATH];
@@ -198,7 +198,7 @@ MOLTEST(source_discovery_treats_a_missing_tests_directory_as_nothing) {
     wipe(root);
 }
 
-MOLTEST(source_discovery_refuses_an_extra_entry_that_is_not_there) {
+DESCRIBE(source_discovery_refuses_an_extra_entry_that_is_not_there) {
     /* A `[test].sources` entry naming nothing is a manifest describing a build
        that cannot happen, and the message has to name the entry — the point of
        reporting it is that the author can find it. */
@@ -220,7 +220,7 @@ MOLTEST(source_discovery_refuses_an_extra_entry_that_is_not_there) {
     wipe(root);
 }
 
-MOLTEST(source_discovery_anchors_a_relative_entry_at_the_project_root) {
+DESCRIBE(source_discovery_anchors_a_relative_entry_at_the_project_root) {
     /* And uses an absolute one as written — the rule every relative path in a
        manifest obeys, which is why a build works the same from a subdirectory. */
     char root[MOLTEST_PATH];

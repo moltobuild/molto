@@ -25,7 +25,7 @@ static bool read_deps(const char *text, project_deps *out, char *err, size_t err
 /* The one dependency this whole chain exists for. The amalgamation lives on
    sqlite.org, not on git — so the manifest names a coordinate, and the URL and
    digest live in the recipe the registry serves. */
-MOLTEST(deps_read_the_registry_shorthand) {
+DESCRIBE(deps_read_the_registry_shorthand) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\nsqlite = \"3.53.4\"\n", &deps, err, sizeof err));
@@ -38,7 +38,7 @@ MOLTEST(deps_read_the_registry_shorthand) {
     EXPECT_STREQ("", deps.items[0].registry);
 }
 
-MOLTEST(deps_read_an_inline_table_with_git_and_tag) {
+DESCRIBE(deps_read_an_inline_table_with_git_and_tag) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\n"
@@ -57,7 +57,7 @@ MOLTEST(deps_read_an_inline_table_with_git_and_tag) {
     EXPECT_EQ(dep_git_ref_tag, dep->git_ref);
 }
 
-MOLTEST(deps_convert_a_carried_source_for_the_fetcher) {
+DESCRIBE(deps_convert_a_carried_source_for_the_fetcher) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\nyyjson = { git = \"https://x/y.git\", rev = \"abc123\" }\n",
@@ -70,7 +70,7 @@ MOLTEST(deps_convert_a_carried_source_for_the_fetcher) {
     EXPECT_STREQ("abc123", spec.reference);
 }
 
-MOLTEST(deps_refuse_to_hand_a_coordinate_to_the_fetcher) {
+DESCRIBE(deps_refuse_to_hand_a_coordinate_to_the_fetcher) {
     /* A version dependency has no source until a registry answers, and saying
        so beats fetching an empty URL. */
     project_deps deps;
@@ -82,7 +82,7 @@ MOLTEST(deps_refuse_to_hand_a_coordinate_to_the_fetcher) {
     EXPECT_NOT_NULL(strstr(err, "registry"));
 }
 
-MOLTEST(deps_treat_the_shorthand_and_the_table_form_as_equal) {
+DESCRIBE(deps_treat_the_shorthand_and_the_table_form_as_equal) {
     /* RFC-0003: `dep = "1.2.3"` is exactly `dep = { version = "1.2.3" }`. */
     project_deps shorthand;
     project_deps table;
@@ -97,7 +97,7 @@ MOLTEST(deps_treat_the_shorthand_and_the_table_form_as_equal) {
     EXPECT_STREQ(shorthand.items[0].version, table.items[0].version);
 }
 
-MOLTEST(deps_read_a_header_exactly_as_an_inline_table) {
+DESCRIBE(deps_read_a_header_exactly_as_an_inline_table) {
     project_deps inline_form;
     project_deps header_form;
     char err[512] = "";
@@ -111,7 +111,7 @@ MOLTEST(deps_read_a_header_exactly_as_an_inline_table) {
     EXPECT_EQ(0, memcmp(&inline_form.items[0], &header_form.items[0], sizeof(project_dep)));
 }
 
-MOLTEST(deps_keep_declaration_order_across_both_forms) {
+DESCRIBE(deps_keep_declaration_order_across_both_forms) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\n"
@@ -126,7 +126,7 @@ MOLTEST(deps_keep_declaration_order_across_both_forms) {
     EXPECT_STREQ("http", deps.items[2].name);
 }
 
-MOLTEST(deps_read_every_source_a_manifest_may_name) {
+DESCRIBE(deps_read_every_source_a_manifest_may_name) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\n"
@@ -146,7 +146,7 @@ MOLTEST(deps_read_every_source_a_manifest_may_name) {
     EXPECT_STREQ("y-1.0", deps.items[1].strip_prefix);
 }
 
-MOLTEST(deps_reject_a_version_range) {
+DESCRIBE(deps_reject_a_version_range) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nsqlite = \"^3.53.0\"\n", &deps, err, sizeof err));
@@ -157,21 +157,21 @@ MOLTEST(deps_reject_a_version_range) {
     EXPECT_NOT_NULL(strstr(err, "RFC-0008"));
 }
 
-MOLTEST(deps_reject_a_range_in_the_table_form_too) {
+DESCRIBE(deps_reject_a_range_in_the_table_form_too) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nsqlite = { version = \">=3.0.0\" }\n", &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "'>='"));
 }
 
-MOLTEST(deps_reject_a_dependency_with_no_source) {
+DESCRIBE(deps_reject_a_dependency_with_no_source) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nsqlite = { registry = \"myorg\" }\n", &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "no source"));
 }
 
-MOLTEST(deps_reject_two_sources) {
+DESCRIBE(deps_reject_two_sources) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nx = { git = \"https://x/y.git\", path = \"vendor/x\" }\n",
@@ -179,7 +179,7 @@ MOLTEST(deps_reject_two_sources) {
     EXPECT_NOT_NULL(strstr(err, "more than one source"));
 }
 
-MOLTEST(deps_reject_two_git_references) {
+DESCRIBE(deps_reject_two_git_references) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nx = { git = \"https://x/y.git\", tag = \"v1\", rev = \"a\" }\n",
@@ -187,7 +187,7 @@ MOLTEST(deps_reject_two_git_references) {
     EXPECT_NOT_NULL(strstr(err, "branch, tag and rev"));
 }
 
-MOLTEST(deps_reject_a_git_reference_without_a_repository) {
+DESCRIBE(deps_reject_a_git_reference_without_a_repository) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nx = { path = \"vendor/x\", tag = \"v1\" }\n", &deps, err,
@@ -195,7 +195,7 @@ MOLTEST(deps_reject_a_git_reference_without_a_repository) {
     EXPECT_NOT_NULL(strstr(err, "no git repository"));
 }
 
-MOLTEST(deps_reject_an_archive_without_a_digest) {
+DESCRIBE(deps_reject_an_archive_without_a_digest) {
     /* A URL promises a location, not content (RFC-0008). */
     project_deps deps;
     char err[512] = "";
@@ -204,7 +204,7 @@ MOLTEST(deps_reject_an_archive_without_a_digest) {
     EXPECT_NOT_NULL(strstr(err, "sha256"));
 }
 
-MOLTEST(deps_reject_an_unknown_key) {
+DESCRIBE(deps_reject_an_unknown_key) {
     /* The typo case: without this, `tags` is dropped and the dependency
        silently resolves to the repository's default branch. */
     project_deps deps;
@@ -219,14 +219,14 @@ MOLTEST(deps_reject_an_unknown_key) {
    second spelling of `version` whose lock form carried no version at all. Gone
    from the format, so it lands here rather than among the pending keys — the
    error a reader gets should say the key does not exist, not that it is coming. */
-MOLTEST(deps_reject_the_recipe_source_the_format_withdrew) {
+DESCRIBE(deps_reject_the_recipe_source_the_format_withdrew) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nx = { recipe = \"png\" }\n", &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "unknown key 'recipe'"));
 }
 
-MOLTEST(deps_reject_a_key_that_is_not_supported_yet) {
+DESCRIBE(deps_reject_a_key_that_is_not_supported_yet) {
     /* Following [package].artifact: accepting a key and doing nothing with it
        tells the user their manifest said something it did not. */
     static const char *const pending[] = { "artifact = \"static\"", "optional = true",
@@ -243,21 +243,21 @@ MOLTEST(deps_reject_a_key_that_is_not_supported_yet) {
     }
 }
 
-MOLTEST(deps_reject_a_name_that_is_not_a_package_name) {
+DESCRIBE(deps_reject_a_name_that_is_not_a_package_name) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps("[deps]\nSQLite = \"3.53.4\"\n", &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "not a package name"));
 }
 
-MOLTEST(deps_absent_table_is_not_an_error) {
+DESCRIBE(deps_absent_table_is_not_an_error) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[package]\nname = \"x\"\n", &deps, err, sizeof err));
     EXPECT_EQ(0u, deps.count);
 }
 
-MOLTEST(deps_find_answers_by_name) {
+DESCRIBE(deps_find_answers_by_name) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps("[deps]\nsqlite = \"3.53.4\"\nyyjson = \"1.0.0\"\n", &deps, err,
@@ -271,7 +271,7 @@ MOLTEST(deps_find_answers_by_name) {
 
 /* --- [registries] --- */
 
-MOLTEST(registries_are_read_and_selectable_by_a_dependency) {
+DESCRIBE(registries_are_read_and_selectable_by_a_dependency) {
     char err[512] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
@@ -285,7 +285,7 @@ MOLTEST(registries_are_read_and_selectable_by_a_dependency) {
     EXPECT_STREQ("myorg", ctx.deps.items[0].registry);
 }
 
-MOLTEST(a_registry_nobody_declared_is_an_error_and_not_a_fallback) {
+DESCRIBE(a_registry_nobody_declared_is_an_error_and_not_a_fallback) {
     /* Falling back to the official registry would resolve the dependency
        against somewhere the manifest never named. */
     char err[512] = "";
@@ -298,7 +298,7 @@ MOLTEST(a_registry_nobody_declared_is_an_error_and_not_a_fallback) {
 
 /* --- through the manifest --- */
 
-MOLTEST(project_ctx_carries_the_deps) {
+DESCRIBE(project_ctx_carries_the_deps) {
     char err[512] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
@@ -311,7 +311,7 @@ MOLTEST(project_ctx_carries_the_deps) {
     EXPECT_STREQ("c17", ctx.target.std);
 }
 
-MOLTEST(a_manifest_whose_deps_are_all_tables_is_read_whole) {
+DESCRIBE(a_manifest_whose_deps_are_all_tables_is_read_whole) {
     /* The regression that mattered: an inline table stores its members under
        "deps.<name>" and nothing under "deps", so a reader built on
        toml_section_keys saw none of these and reported no error. */
@@ -328,7 +328,7 @@ MOLTEST(a_manifest_whose_deps_are_all_tables_is_read_whole) {
     EXPECT_STREQ("b", ctx.deps.items[1].name);
 }
 
-MOLTEST(a_bad_dependency_fails_the_whole_manifest) {
+DESCRIBE(a_bad_dependency_fails_the_whole_manifest) {
     char err[512] = "";
     project_ctx ctx;
     EXPECT_FALSE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
@@ -355,7 +355,7 @@ static bool read_deps_json(const char *text, project_deps *out, char *err, size_
 /* Discovering a transitive dependency means reading the [deps] of a recipe that
    never was a file. Both spellings have to survive the crossing, or the graph
    depends on which encoding a dependency happened to arrive in. */
-MOLTEST(deps_read_the_same_from_a_recipe_served_as_json) {
+DESCRIBE(deps_read_the_same_from_a_recipe_served_as_json) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps_json("{\"kind\":\"package\",\"deps\":{"
@@ -378,7 +378,7 @@ MOLTEST(deps_read_the_same_from_a_recipe_served_as_json) {
 }
 
 /* A recipe with no [deps] is a leaf, not a failure: most of them are. */
-MOLTEST(a_recipe_without_deps_is_a_leaf) {
+DESCRIBE(a_recipe_without_deps_is_a_leaf) {
     project_deps deps;
     char err[512] = "";
     ASSERT_TRUE(read_deps_json("{\"kind\":\"package\",\"name\":\"sqlite\"}", &deps, err, sizeof err));
@@ -387,7 +387,7 @@ MOLTEST(a_recipe_without_deps_is_a_leaf) {
 
 /* The rules are the reader's, not the manifest's: a range published in a recipe
    is refused exactly as one written by hand. */
-MOLTEST(a_range_in_a_recipe_is_refused_too) {
+DESCRIBE(a_range_in_a_recipe_is_refused_too) {
     project_deps deps;
     char err[512] = "";
     EXPECT_FALSE(read_deps_json("{\"deps\":{\"png\":\">=1.6.0\"}}", &deps, err, sizeof err));
