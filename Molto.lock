@@ -13,6 +13,6 @@ dependencies = []
 
 [[package]]
 name = "moltest_coverage"
-source = "git+https://github.com/moltobuild/moltest-coverage#v0.1.1"
+source = "git+https://github.com/moltobuild/moltest-coverage#v0.2.0"
 scopes = ["dev"]
 dependencies = []

@@ -39,7 +39,7 @@ mode = "single"
 moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
 # The coverage report and its floor (moltest-coverage.toml), at the end of
 # `molto test --profile coverage` (RFC-0019).
-moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.1.1" }
+moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.2.0" }
 
 [profile.debug]
 opt_level = 0
