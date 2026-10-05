@@ -1,6 +1,6 @@
 #include <moltest.h>
 
-#include "private_home.h"
+#include "../private_home.h"
 
 #include <molto/cli.h>
 #include <molto/commands/plugin_command.h>
