@@ -65,7 +65,7 @@ moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
 # `molto test --profile coverage` (RFC-0019).
 moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.2.1" }
 # Fakes for the isolated tests below, the ones that replace a source (RFC-0021).
-moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.2.0" }
+moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.4.0" }
 
 [profile.debug]
 opt_level = 0

@@ -29,6 +29,8 @@ MOCK_VALUE_FUNC(bool, resolve_version, const char *, const char *, const char *,
 MOCK_VALUE_FUNC(bool, resolve_versions, const char *, const char *, str_list *, char *, size_t);
 MOCK_VALUE_FUNC(bool, resolve_remembered, const char *, const char *, resolved_dep *);
 MOCK_VOID_FUNC(resolve_remember, const char *, const char *, const char *);
+MOCK_VALUE_FUNC(bool, source_fetch, const source_spec *, const char *, const char *, const char *,
+                char *, size_t, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_provide, const char *, const struct recipe_provide *, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_cache_key, const source_spec *, char *, size_t, char *, size_t);
 /* Never about a registry dependency, but src/project/project_deps.c checks a
@@ -108,19 +110,11 @@ static bool registry_lists(const char *base_url, const char *name, str_list *out
     return str_list_count(out) > 0;
 }
 
-/* Written by hand: it takes eight arguments, and moltest-mock's macros take
-   six. It fetches nothing, counts every call, and fails when told to. */
-static size_t fetches;
-static bool fetch_fails;
-
-bool source_fetch(const source_spec *spec, const char *name, const char *version,
-                  const char *target, char *out, size_t out_size, char *err, size_t err_size) {
-    (void)spec, (void)target;
-    fetches++;
-    if(fetch_fails) {
-        snprintf(err, err_size, "the archive's sha256 did not match");
-        return false;
-    }
+/* Fetches nothing: says where the sources would be. */
+static bool fetched_into(const source_spec *spec, const char *name, const char *version,
+                         const char *target, char *out, size_t out_size, char *err,
+                         size_t err_size) {
+    (void)spec, (void)target, (void)err, (void)err_size;
     snprintf(out, out_size, "/fetched/%s-%s", name, version);
     return true;
 }
@@ -131,8 +125,7 @@ BEFORE_EACH() {
     png_2_asked = 0;
     resolve_version_mock.custom_fake = registry_has;
     resolve_versions_mock.custom_fake = registry_lists;
-    fetches = 0;
-    fetch_fails = false;
+    source_fetch_mock.custom_fake = fetched_into;
     source_provide_mock.return_val = true;
     source_spec_validate_mock.return_val = true;
 }
@@ -176,7 +169,7 @@ DESCRIBE(a_registry_dependency_brings_what_its_release_depends_on) {
     EXPECT_STREQ("1.3.1", zlib->version);
     EXPECT_STREQ("png", zlib->required_by);
     /* Fetched once the graph was known, each into its own root. */
-    EXPECT_EQ(2, (int)fetches);
+    EXPECT_EQ(2, (int)source_fetch_mock.call_count);
     EXPECT_STREQ("/fetched/zlib-1.3.1", zlib->root);
     /* And every answer kept, so the next build asks nobody. */
     EXPECT_EQ(2, (int)resolve_remember_mock.call_count);
@@ -197,13 +190,13 @@ DESCRIBE(a_prebuilt_release_is_refused_by_name) {
     PUBLISH(table);
     EXPECT_FALSE(resolve("zlib = \"1.3.1\"\n", false));
     EXPECT_NOT_NULL(strstr(err, "zlib 1.3.1 is published as a prebuilt artifact"));
-    EXPECT_EQ(0, (int)fetches);
+    EXPECT_EQ(0, (int)source_fetch_mock.call_count);
 }
 
 DESCRIBE(a_failed_download_names_the_dependency) {
     static const release table[] = {{"zlib", "1.3.1", NULL, false}};
     PUBLISH(table);
-    fetch_fails = true;
+    source_fetch_mock.custom_fake = NULL; /* returns false */
     EXPECT_FALSE(resolve("zlib = \"1.3.1\"\n", false));
     EXPECT_NOT_NULL(strstr(err, "dependency 'zlib'"));
 }
@@ -227,7 +220,7 @@ DESCRIBE(a_conflict_names_both_claims_and_downloads_nothing) {
     EXPECT_STREQ("zlib", conflict.name);
     EXPECT_FALSE(conflict.has_proposal);
     /* Nothing is on disk for a version the user is about to be asked to change. */
-    EXPECT_EQ(0, (int)fetches);
+    EXPECT_EQ(0, (int)source_fetch_mock.call_count);
 }
 
 DESCRIBE(the_search_proposes_the_newer_release_that_settles_it) {
@@ -239,7 +232,7 @@ DESCRIBE(the_search_proposes_the_newer_release_that_settles_it) {
     EXPECT_STREQ("1.7.0", conflict.change_to);
     EXPECT_STREQ("deps", conflict.change_table);
     EXPECT_STREQ("1.3.1", conflict.settles_on);
-    EXPECT_EQ(0, (int)fetches);
+    EXPECT_EQ(0, (int)source_fetch_mock.call_count);
 }
 
 DESCRIBE(the_search_never_proposes_a_downgrade) {
