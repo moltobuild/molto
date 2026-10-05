@@ -119,8 +119,22 @@ error: linking failed: tests/services/test_build_failures.c
 ### What it does not do
 
 - **Replace part of a source.** The unit is a file, as it is for the linker. A
-  call between two functions of one `.c` cannot be faked; splitting the file is
-  how a project makes that call cross a boundary.
+  call between two functions of one `.c` cannot be faked, here or with fff:
+  keeping the object keeps the real function, dropping it drops the caller too,
+  and the compiler may resolve or inline the call without the linker at all.
+
+  ```c
+  /* src/config.c: load_config's call to read_file cannot be faked */
+  int read_file(const char *path) { ... }
+  int load_config(const char *path) { return read_file(path) != 0 ? -1 : 0; }
+  ```
+
+  Moving `read_file` to `src/fs.c` makes the call cross a boundary, and an
+  entry with `replaces = ["src/fs.c"]` can then fake it while `load_config`,
+  still in `src/config.c`, is the code under test. The same holds for a
+  dependency: replacing one of its sources drops every function in it, so a
+  test that wants one of them real and another faked cannot have both; it
+  fakes every function of that source the code under test reaches.
 - **Replace a development dependency.** The test framework is not code under test.
 - **Find the replacements itself.** Molto could read the test object's symbols
   and leave out whatever collides. That needs a reader for ELF, Mach-O and COFF,
