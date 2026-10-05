@@ -198,3 +198,55 @@ MOLTEST(test_command_forwards_what_follows_the_double_dash) {
     EXPECT_TRUE(chdir(previous) == 0);
     (void)fs_remove_tree(root);
 }
+
+MOLTEST(test_command_tells_each_binary_its_place_in_the_run) {
+    /* RFC-0020: a plugin that measures the whole run (moltest-coverage) erases
+       in the first executable and reports in the last, and only Molto knows
+       which those are. Each binary appends what it was told to one file, so
+       the file is the run as the binaries saw it. [env] tries to set both
+       variables too, and loses: a position the manifest could fake would make
+       a plugin judge a partial run as whole. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_test_position", root, sizeof root));
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/tests", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "[package]\nname = \"position\"\n"
+                                    "[env]\nMOLTO_TEST_INDEX = \"99\"\n"
+                                    "MOLTO_TEST_COUNT = \"99\"\n"));
+    snprintf(path, sizeof path, "%s/src/lib.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int lib(void) { return 0; }\n"));
+
+    static const char *const recorder =
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "int main(void) {\n"
+        "    const char *index = getenv(\"MOLTO_TEST_INDEX\");\n"
+        "    const char *count = getenv(\"MOLTO_TEST_COUNT\");\n"
+        "    FILE *out = fopen(\"positions.txt\", \"a\");\n"
+        "    if(out == NULL) return 1;\n"
+        "    fprintf(out, \"%s/%s\\n\", index ? index : \"-\", count ? count : \"-\");\n"
+        "    return fclose(out) == 0 ? 0 : 1;\n"
+        "}\n";
+    snprintf(path, sizeof path, "%s/tests/test_a.c", root);
+    EXPECT_TRUE(fs_write_file(path, recorder));
+    snprintf(path, sizeof path, "%s/tests/test_b.c", root);
+    EXPECT_TRUE(fs_write_file(path, recorder));
+
+    char previous[4096];
+    EXPECT_TRUE(getcwd(previous, sizeof previous) != NULL);
+    EXPECT_TRUE(chdir(root) == 0);
+
+    EXPECT_EQ(exit_ok, test_command_run(NULL, false, 0, NULL, 0));
+    char *seen = fs_read_file("positions.txt");
+    ASSERT_NOT_NULL(seen);
+    EXPECT_STREQ("1/2\n2/2\n", seen);
+    free(seen);
+
+    EXPECT_TRUE(chdir(previous) == 0);
+    (void)fs_remove_tree(root);
+}

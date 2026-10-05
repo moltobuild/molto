@@ -149,3 +149,15 @@ before and after the suite, only to erase and to report. An executable that
 does not know the convention, such as a `per_file` test with its own `main()`,
 would run its tests again. The position is passive: an executable that ignores
 it loses nothing.
+
+## Implementation Status
+
+Implemented after molto 0.49.0: `molto test` sets both variables for each test
+executable it runs, in its environment only, after dropping any `[env]` entry
+of either name (`test_command`). Executables run one at a time in the order
+printed, which keeps the first and the last on their own.
+`test_command_tells_each_binary_its_place_in_the_run` runs two executables with
+`[env]` setting both to 99 and reads back `1/2` and `2/2`.
+
+moltest-coverage's side (erase in the first, report in the last) is its own
+change: its ADR 0004 and KI-3.
