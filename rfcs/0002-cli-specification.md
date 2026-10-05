@@ -125,6 +125,10 @@ By default each test file becomes its own executable and supplies its own
 executable instead. Either way `molto test` runs what was built and reports
 pass or fail per executable.
 
+Arguments after `--` are passed to every test executable, unchanged:
+`molto test -- -v -k json` asks a framework such as moltest for verbose output
+and a filter. Molto does not read them.
+
 ### `molto clean`
 
 ```

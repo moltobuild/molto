@@ -53,9 +53,22 @@ static bool sandbox_setup(sandbox *box) {
        the second one is not one on a machine that sets the first. */
     molto_home_override_clear(&box->old_override);
 
+    /* PATH is only the sandbox's directory, so plugin lookup sees nothing the
+       machine has installed. On Windows the old PATH follows it: there the
+       loader looks for a program's DLLs along PATH, and a planted plugin is a
+       copy of this suite, which needs libwinpthread from the toolchain's
+       directory (it is linked with the coverage runtime, which uses it). A
+       PATH of one directory would make every plugin fail to start, for a
+       reason that has nothing to do with plugins. */
+#ifdef _WIN32
+    char path[sizeof box->elsewhere + sizeof box->old_path + 2];
+    snprintf(path, sizeof path, "%s;%s", box->elsewhere, box->old_path);
+#else
+    const char *path = box->elsewhere;
+#endif
     return fs_make_dirs(box->installed) && fs_make_dirs(box->recipes)
         && fs_make_dirs(box->elsewhere) && private_home_point(box->home)
-        && setenv("PATH", box->elsewhere, 1) == 0;
+        && setenv("PATH", path, 1) == 0;
 }
 
 static void sandbox_teardown(sandbox *box) {

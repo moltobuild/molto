@@ -101,6 +101,16 @@ static bool in_directory(const char *dir, const char *program, char *out, size_t
     return is_executable(out);
 }
 
+/* What separates the entries of PATH. ';' on Windows, where ':' is part of
+   every entry (`C:\msys64\usr\bin`): split there, `C:/x` became `C` and
+   `/x`, and a PATH of one entry only worked because `/x` then resolved against
+   the current drive. */
+#ifdef _WIN32
+#define PATH_LIST_SEPARATOR ';'
+#else
+#define PATH_LIST_SEPARATOR ':'
+#endif
+
 /* Walk PATH looking for `program`.
 
    An empty entry is skipped rather than read as the current directory, which is
@@ -113,7 +123,7 @@ static bool on_path(const char *program, char *out, size_t size) {
         return false;
 
     for(const char *entry = path; entry != NULL;) {
-        const char *separator = strchr(entry, ':');
+        const char *separator = strchr(entry, PATH_LIST_SEPARATOR);
         size_t length = separator != NULL ? (size_t)(separator - entry) : strlen(entry);
 
         char dir[PLUGIN_PATH_MAX];
@@ -370,7 +380,7 @@ bool plugin_list(plugin_entry *out, size_t capacity, size_t *count) {
         return true;
 
     for(const char *entry = path; entry != NULL;) {
-        const char *separator = strchr(entry, ':');
+        const char *separator = strchr(entry, PATH_LIST_SEPARATOR);
         const size_t length = separator != NULL ? (size_t)(separator - entry) : strlen(entry);
 
         char dir[PLUGIN_PATH_MAX];

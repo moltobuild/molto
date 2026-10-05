@@ -307,7 +307,10 @@ static int handle_test(const cli_args *args) {
     size_t jobs = 0;
     if(!parse_jobs(args, &jobs))
         return report_bad_jobs(args);
-    return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs);
+    int forwarded_count = 0;
+    char *const *forwarded = cli_args_forwarded(args, &forwarded_count);
+    return test_command_run(cli_args_option(args, "--profile"), wants_refresh(args), jobs,
+                            forwarded, forwarded_count);
 }
 
 static int handle_lint(const cli_args *args) {
