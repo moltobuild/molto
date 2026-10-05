@@ -42,7 +42,7 @@ static const char *const COMMENTED = "# What this project is.\n"
                                      "yyjson = \"0.10.0\"   # the JSON reader\n";
 
 /* The whole point: a manifest is a file someone wrote. */
-MOLTEST(adding_a_dependency_keeps_every_comment_and_every_space) {
+DESCRIBE(adding_a_dependency_keeps_every_comment_and_every_space) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, COMMENTED));
 
@@ -62,7 +62,7 @@ MOLTEST(adding_a_dependency_keeps_every_comment_and_every_space) {
 }
 
 /* A new entry joins the table it belongs to, not the end of the file. */
-MOLTEST(a_new_entry_goes_inside_its_table) {
+DESCRIBE(a_new_entry_goes_inside_its_table) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n"
                                   "[deps]\na = \"1.0.0\"\n\n[target]\nstd = \"c17\"\n"));
@@ -81,7 +81,7 @@ MOLTEST(a_new_entry_goes_inside_its_table) {
 }
 
 /* Re-adding is a version bump, and it happens where the entry already is. */
-MOLTEST(re_adding_replaces_in_place_and_keeps_the_comment) {
+DESCRIBE(re_adding_replaces_in_place_and_keeps_the_comment) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, COMMENTED));
 
@@ -98,7 +98,7 @@ MOLTEST(re_adding_replaces_in_place_and_keeps_the_comment) {
 }
 
 /* A table that is not there yet is appended, and the file keeps parsing. */
-MOLTEST(a_missing_table_is_created) {
+DESCRIBE(a_missing_table_is_created) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"));
 
@@ -116,7 +116,7 @@ MOLTEST(a_missing_table_is_created) {
 /* One package is one version (RFC-0008), so a name cannot sit in both tables.
    Caught here, where the message can name the table, rather than later as a
    resolution conflict against yourself. */
-MOLTEST(a_name_cannot_be_in_both_tables) {
+DESCRIBE(a_name_cannot_be_in_both_tables) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
                                   "[deps]\npng = \"1.6.40\"\n"));
@@ -134,7 +134,7 @@ MOLTEST(a_name_cannot_be_in_both_tables) {
     sandbox_close(&at);
 }
 
-MOLTEST(removing_takes_out_one_line_and_nothing_else) {
+DESCRIBE(removing_takes_out_one_line_and_nothing_else) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, COMMENTED));
 
@@ -154,7 +154,7 @@ MOLTEST(removing_takes_out_one_line_and_nothing_else) {
 }
 
 /* The long form is a table, so removing it takes the header with it. */
-MOLTEST(removing_the_long_form_takes_the_whole_table) {
+DESCRIBE(removing_the_long_form_takes_the_whole_table) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n"
                                   "[deps.http]\npath = \"modules/http\"\n\n"
@@ -174,7 +174,7 @@ MOLTEST(removing_the_long_form_takes_the_whole_table) {
 
 /* Removing what is not there is an error. Silence would leave the user
    believing a dependency is gone when the next build will compile it. */
-MOLTEST(removing_what_is_not_there_says_so) {
+DESCRIBE(removing_what_is_not_there_says_so) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"));
 
@@ -187,7 +187,7 @@ MOLTEST(removing_what_is_not_there_says_so) {
 
 /* An edit that would produce a manifest Molto cannot read is refused, and the
    file on disk is left exactly as it was. */
-MOLTEST(an_edit_that_would_break_the_manifest_is_refused) {
+DESCRIBE(an_edit_that_would_break_the_manifest_is_refused) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at, "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"));
 
@@ -204,7 +204,7 @@ MOLTEST(an_edit_that_would_break_the_manifest_is_refused) {
     sandbox_close(&at);
 }
 
-MOLTEST(finding_which_table_holds_a_dependency) {
+DESCRIBE(finding_which_table_holds_a_dependency) {
     EXPECT_STREQ("deps", manifest_find_dep("[deps]\na = \"1.0.0\"\n", "a"));
     EXPECT_STREQ("dev-deps", manifest_find_dep("[dev-deps]\nb = \"1.0.0\"\n", "b"));
     EXPECT_STREQ("deps", manifest_find_dep("[deps.c]\npath = \"x\"\n", "c"));

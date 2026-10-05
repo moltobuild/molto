@@ -107,7 +107,7 @@ static json_value component_named(json_value components, const char *name) {
     return (json_value){0};
 }
 
-MOLTEST(the_bom_is_a_document_a_reader_will_take) {
+DESCRIBE(the_bom_is_a_document_a_reader_will_take) {
     sbom_document document;
     str_list png_edges, zlib_edges;
     manifest_about about;
@@ -134,7 +134,7 @@ MOLTEST(the_bom_is_a_document_a_reader_will_take) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(the_bom_describes_the_package_and_the_tool) {
+DESCRIBE(the_bom_describes_the_package_and_the_tool) {
     sbom_document document;
     str_list png_edges, zlib_edges;
     manifest_about about;
@@ -170,7 +170,7 @@ MOLTEST(the_bom_describes_the_package_and_the_tool) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(a_component_carries_its_licence_hash_and_origin) {
+DESCRIBE(a_component_carries_its_licence_hash_and_origin) {
     sbom_document document;
     str_list png_edges, zlib_edges;
     manifest_about about;
@@ -208,7 +208,7 @@ MOLTEST(a_component_carries_its_licence_hash_and_origin) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(what_was_not_stated_is_left_out_rather_than_written_empty) {
+DESCRIBE(what_was_not_stated_is_left_out_rather_than_written_empty) {
     /* A component whose recipe said nothing has no licence, no description and
        no hash — and an empty string in those fields would be a claim, not a
        silence. What it does carry is the property saying its bytes were never
@@ -244,7 +244,7 @@ MOLTEST(what_was_not_stated_is_left_out_rather_than_written_empty) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(the_bom_records_the_edges_including_the_roots) {
+DESCRIBE(the_bom_records_the_edges_including_the_roots) {
     sbom_document document;
     str_list png_edges, zlib_edges;
     manifest_about about;
@@ -279,7 +279,7 @@ MOLTEST(the_bom_records_the_edges_including_the_roots) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(the_bom_is_byte_for_byte_repeatable) {
+DESCRIBE(the_bom_is_byte_for_byte_repeatable) {
     /* The reason there is no timestamp and no serial number in it. A document
        that differs between two runs over one graph cannot be diffed, cannot be
        cached, and cannot be compared between two machines — which is most of
@@ -305,7 +305,7 @@ MOLTEST(the_bom_is_byte_for_byte_repeatable) {
     str_list_free(&zlib_edges);
 }
 
-MOLTEST(a_document_with_no_components_is_still_a_document) {
+DESCRIBE(a_document_with_no_components_is_still_a_document) {
     manifest_about about;
     memset(&about, 0, sizeof about);
 

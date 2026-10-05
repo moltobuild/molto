@@ -20,7 +20,7 @@ static int run_molto(const char *command) {
     return cli_run(2, argv);
 }
 
-MOLTEST(molto_reports_commands_that_are_not_implemented_yet) {
+DESCRIBE(molto_reports_commands_that_are_not_implemented_yet) {
     /* Declared in the CLI but with no implementation behind them. They used to
        return 1, the code for "the build failed", which no script could tell
        apart from a real compilation error. */
@@ -41,17 +41,17 @@ MOLTEST(molto_reports_commands_that_are_not_implemented_yet) {
         EXPECT_EQ(exit_not_implemented, run_molto(pending[i]));
 }
 
-MOLTEST(molto_rejects_an_unknown_command) {
+DESCRIBE(molto_rejects_an_unknown_command) {
     EXPECT_EQ(exit_usage_error, run_molto("frobnicate"));
 }
 
-MOLTEST(molto_answers_help_and_version) {
+DESCRIBE(molto_answers_help_and_version) {
     EXPECT_EQ(exit_ok, run_molto("--help"));
     EXPECT_EQ(exit_ok, run_molto("--version"));
     EXPECT_NOT_NULL(cli_version());
 }
 
-MOLTEST(molto_without_a_command_prints_help) {
+DESCRIBE(molto_without_a_command_prints_help) {
     /* Bare `molto` shows the command list and succeeds; only an unusable
        invocation (unknown command, bad option) is a usage error. */
     char program[] = "molto";
@@ -59,7 +59,7 @@ MOLTEST(molto_without_a_command_prints_help) {
     EXPECT_EQ(exit_ok, cli_run(1, argv));
 }
 
-MOLTEST(molto_metadata_writes_a_bill_of_materials) {
+DESCRIBE(molto_metadata_writes_a_bill_of_materials) {
     /* Driven through metadata_command_run rather than the argv table, for the
        reason `lint` and `fmt` are left out above: this runs in Molto's own
        workspace, and the document belongs in a temporary file rather than in
@@ -90,6 +90,6 @@ MOLTEST(molto_metadata_writes_a_bill_of_materials) {
     remove(path);
 }
 
-MOLTEST(molto_metadata_refuses_a_file_it_cannot_write) {
+DESCRIBE(molto_metadata_refuses_a_file_it_cannot_write) {
     EXPECT_EQ(exit_build_failure, metadata_command_run("/nonexistent_dir/sbom.json", false));
 }

@@ -80,7 +80,7 @@ static void cleanup(const char *root) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(tests_link_into_one_binary_in_single_mode) {
+DESCRIBE(tests_link_into_one_binary_in_single_mode) {
     char root[64];
     ASSERT_TRUE(framework_project(root, sizeof root,
         "[package]\nname = \"suite\"\n"
@@ -117,7 +117,7 @@ MOLTEST(tests_link_into_one_binary_in_single_mode) {
     cleanup(root);
 }
 
-MOLTEST(per_file_mode_is_still_the_default) {
+DESCRIBE(per_file_mode_is_still_the_default) {
     char root[64];
     /* Same project, no [test].mode: the contract RFC-0002 describes is
        unchanged, one executable per test file. These have no main(), so
@@ -138,7 +138,7 @@ MOLTEST(per_file_mode_is_still_the_default) {
     cleanup(root);
 }
 
-MOLTEST(extra_test_sources_must_exist) {
+DESCRIBE(extra_test_sources_must_exist) {
     char root[64];
     ASSERT_TRUE(framework_project(root, sizeof root,
         "[package]\nname = \"suite\"\n"
@@ -155,7 +155,7 @@ MOLTEST(extra_test_sources_must_exist) {
     cleanup(root);
 }
 
-MOLTEST(an_unknown_test_mode_is_a_manifest_error) {
+DESCRIBE(an_unknown_test_mode_is_a_manifest_error) {
     char root[64];
     ASSERT_TRUE(framework_project(root, sizeof root,
         "[package]\nname = \"suite\"\n"

@@ -23,7 +23,7 @@ static int64_t mtime_of(const char *path) {
     return when;
 }
 
-MOLTEST(build_service) {
+DESCRIBE(build_service) {
     char root[MOLTEST_PATH];
     EXPECT_TRUE(moltest_temp_dir("molto_build", root, sizeof root));
 
@@ -151,7 +151,7 @@ MOLTEST(build_service) {
     (void)fs_remove_tree(def_root);
 }
 
-MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
+DESCRIBE(build_keeps_the_units_that_compiled_when_another_fails) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_partial", root, sizeof root));
 
@@ -200,7 +200,7 @@ MOLTEST(build_keeps_the_units_that_compiled_when_another_fails) {
  * it be framed — and which means nothing reaches the terminal unless this code
  * puts it there. That makes the two cases below the whole contract: a unit that
  * failed says so, and a unit that merely warned says that instead. */
-MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
+DESCRIBE(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_framed", root, sizeof root));
 
@@ -243,7 +243,7 @@ MOLTEST(a_unit_that_fails_is_framed_with_the_line_it_failed_on) {
 /* A build that succeeds still has to hand over what the compiler said about
    it. Capturing the output and printing it only on failure would make every
    warning in every green build disappear. */
-MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
+DESCRIBE(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_warned", root, sizeof root));
 
@@ -282,7 +282,7 @@ MOLTEST(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
    than the coordinate on the line above, so the footer leaves it out. A path
    dependency inside the project is the opposite: it is somewhere the reader
    can go and look, and it is named the way they would type it. */
-MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
+DESCRIBE(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_depframe", root, sizeof root));
 
@@ -340,7 +340,7 @@ MOLTEST(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
+DESCRIBE(build_compiles_cpp_sources_with_the_cpp_driver) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_cpp", root, sizeof root));
 
@@ -388,7 +388,7 @@ MOLTEST(build_compiles_cpp_sources_with_the_cpp_driver) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(build_honours_the_release_profile) {
+DESCRIBE(build_honours_the_release_profile) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_release", root, sizeof root));
 
@@ -420,7 +420,7 @@ MOLTEST(build_honours_the_release_profile) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(build_anchors_relative_includes_at_the_project_root) {
+DESCRIBE(build_anchors_relative_includes_at_the_project_root) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_incl", root, sizeof root));
 
@@ -542,7 +542,7 @@ static const char *host_c_compiler(void) {
     return NULL;
 }
 
-MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
+DESCRIBE(build_does_not_record_an_object_for_a_source_that_changed_while_compiling) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_build_race", root, sizeof root));
     char tools[MOLTEST_PATH];
@@ -610,7 +610,7 @@ MOLTEST(build_does_not_record_an_object_for_a_source_that_changed_while_compilin
    reading a list: every claim below is a #error that fires if the flag reached
    a translation unit it had no business reaching. Before the scopes existed,
    this project failed to build on two of them. */
-MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
+DESCRIBE(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_scope", root, sizeof root));
 
@@ -673,7 +673,7 @@ MOLTEST(a_dependencys_private_flags_reach_its_own_sources_and_nothing_else) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
+DESCRIBE(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
     /* A recipe is something a remote party wrote, and its `include` list lands
        on the consumer's own compile line. Nothing checked where it pointed
        until the document was held to RFC-0013's path rule — so this is the
@@ -714,7 +714,7 @@ MOLTEST(a_recipe_may_not_put_a_directory_outside_the_build_on_the_line) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read) {
+DESCRIBE(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read) {
     /* The other half of the same rule, and the reason the bound is a fourth one
        rather than a stricter three: a sibling checkout is outside the
        workspace, outside the build directory and outside the cache, and the
@@ -759,7 +759,7 @@ MOLTEST(a_dependency_outside_the_project_is_still_a_directory_the_build_may_read
 /* A library written against an older standard is compiled against it, in a
    project that asked for a newer one. Both halves are checked by the
    preprocessor, so the test fails whichever way the standard leaks. */
-MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
+DESCRIBE(a_dependency_compiles_against_the_standard_its_recipe_named) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_std", root, sizeof root));
 
@@ -806,7 +806,7 @@ MOLTEST(a_dependency_compiles_against_the_standard_its_recipe_named) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(build_recompiles_when_the_env_changes) {
+DESCRIBE(build_recompiles_when_the_env_changes) {
     /* [env] reaches the compiler and the linker, so it is part of what an
        object and a binary were built from. It used to reach neither
        fingerprint, which left the build mixing objects from two environments
@@ -855,7 +855,7 @@ MOLTEST(build_recompiles_when_the_env_changes) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
+DESCRIBE(build_does_not_recompile_when_the_env_only_moves) {
     /* The order two variables were written in is not something the build ran
        differently, and a rebuild over it would also split the shared object
        cache between two projects declaring the same thing. */
@@ -889,7 +889,7 @@ MOLTEST(build_does_not_recompile_when_the_env_only_moves) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(project_env_to_vars_maps_the_table_it_is_given) {
+DESCRIBE(project_env_to_vars_maps_the_table_it_is_given) {
     char err[256] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\n"
@@ -908,7 +908,7 @@ MOLTEST(project_env_to_vars_maps_the_table_it_is_given) {
     EXPECT_EQ(1, project_env_to_vars(&ctx.env, vars, 1));
 }
 
-MOLTEST(env_fingerprint_says_nothing_when_there_is_no_env) {
+DESCRIBE(env_fingerprint_says_nothing_when_there_is_no_env) {
     /* The whole compatibility story rests on this: no [env], nothing appended,
        so every workspace database and cached object already on disk still
        matches the command that made it. */
@@ -924,7 +924,7 @@ MOLTEST(env_fingerprint_says_nothing_when_there_is_no_env) {
     EXPECT_STREQ("", out);
 }
 
-MOLTEST(env_fingerprint_separates_two_environments) {
+DESCRIBE(env_fingerprint_separates_two_environments) {
     char err[256] = "";
     project_ctx one;
     project_ctx two;
@@ -951,7 +951,7 @@ MOLTEST(env_fingerprint_separates_two_environments) {
 
 /* A build describes what it compiled, for the tools that parse this code
    without being the build (RFC-0007). */
-MOLTEST(build_writes_the_compilation_database) {
+DESCRIBE(build_writes_the_compilation_database) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_cdb_build", root, sizeof root));
 
@@ -1121,7 +1121,7 @@ static bool archive_has_member(const char *path, const char *member) {
     return false;
 }
 
-MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
+DESCRIBE(build_makes_a_static_library_when_the_manifest_asks_for_one) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_static", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
@@ -1146,7 +1146,7 @@ MOLTEST(build_makes_a_static_library_when_the_manifest_asks_for_one) {
  * present at link time, absent from the sources, and impossible to account for.
  * The archive is removed before it is written for exactly this.
  */
-MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
+DESCRIBE(a_static_library_forgets_an_object_whose_source_is_gone) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_stale", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
@@ -1175,7 +1175,7 @@ MOLTEST(a_static_library_forgets_an_object_whose_source_is_gone) {
  * `libgreet.so` and records the soname, which is what lets 1.2.3 be replaced by
  * 1.9.0 under a program that never relinks.
  */
-MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
+DESCRIBE(build_makes_a_shared_library_with_the_two_links_beside_it) {
 #ifdef _WIN32
     /* Skipped by decision, not by accident, and not because the system will
        not cooperate -- the arrangement below would run here. What does not
@@ -1245,7 +1245,7 @@ MOLTEST(build_makes_a_shared_library_with_the_two_links_beside_it) {
 
 /* A guess would put the wrong number in a soname, which is the one place a
    wrong number is a promise about ABI — so the build stops instead. */
-MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
+DESCRIBE(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_noversion", root, sizeof root));
     ASSERT_TRUE(library_project(root, "shared", "nightly"));
@@ -1257,7 +1257,7 @@ MOLTEST(a_shared_library_refuses_a_version_it_cannot_take_a_major_from) {
 
 /* Nothing changed, so nothing is archived again: remaking it would hand every
    consumer a new mtime to react to. */
-MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
+DESCRIBE(a_static_library_is_not_archived_again_for_nothing) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_fresh", root, sizeof root));
     ASSERT_TRUE(library_project(root, "static", "0.1.0"));
@@ -1283,7 +1283,7 @@ MOLTEST(a_static_library_is_not_archived_again_for_nothing) {
  * is asked for here is this machine's own, because what is under test is where
  * the output lands rather than whether a cross toolchain exists.
  */
-MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
+DESCRIBE(build_for_a_target_puts_its_output_under_that_target) {
     const char *const compiler = host_c_compiler();
     if (compiler == NULL)
         SKIP("this machine has no C compiler to point C_COMPILER at");
@@ -1331,7 +1331,7 @@ MOLTEST(build_for_a_target_puts_its_output_under_that_target) {
 
 /* And a build that asks for nothing keeps the path it always had: no project
    that never wanted a target sees one appear. */
-MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
+DESCRIBE(build_without_a_target_keeps_the_directory_it_always_had) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_notarget", root, sizeof root));
 
@@ -1360,7 +1360,7 @@ MOLTEST(build_without_a_target_keeps_the_directory_it_always_had) {
  * and produces something that cannot link there. Refused, and the message says
  * which of the two is the problem.
  */
-MOLTEST(a_host_library_cannot_be_resolved_for_another_platform) {
+DESCRIBE(a_host_library_cannot_be_resolved_for_another_platform) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_hostcross", root, sizeof root));
 

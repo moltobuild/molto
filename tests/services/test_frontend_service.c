@@ -234,7 +234,7 @@ static bool touch_entry(const sandbox *box, const char *filename) {
 
 /* --- capabilities and selection --- */
 
-MOLTEST(frontend_declares_answers_from_the_recipe) {
+DESCRIBE(frontend_declares_answers_from_the_recipe) {
     recipe_plugin plugin;
     memset(&plugin, 0, sizeof plugin);
     snprintf(plugin.capabilities[0], RECIPE_PLUGIN_ENTRY_MAX, "frontend");
@@ -248,7 +248,7 @@ MOLTEST(frontend_declares_answers_from_the_recipe) {
     EXPECT_FALSE(frontend_declares(NULL, "frontend"));
 }
 
-MOLTEST(frontend_candidates_needs_the_file_to_be_there) {
+DESCRIBE(frontend_candidates_needs_the_file_to_be_there) {
     /* An extension is a filename, and a plugin whose filename is not in the
        directory is not a candidate for it. */
     sandbox box;
@@ -270,7 +270,7 @@ MOLTEST(frontend_candidates_needs_the_file_to_be_there) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_candidates_skips_a_plugin_that_is_not_a_frontend) {
+DESCRIBE(frontend_candidates_skips_a_plugin_that_is_not_a_frontend) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -291,7 +291,7 @@ MOLTEST(frontend_candidates_skips_a_plugin_that_is_not_a_frontend) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_schema_it_cannot_exchange_with) {
+DESCRIBE(frontend_refuses_a_schema_it_cannot_exchange_with) {
     /* Refused before the process starts. A mismatch found here is a refusal;
        found halfway through a document it is a half-read document. */
     frontend_choice choice;
@@ -307,7 +307,7 @@ MOLTEST(frontend_refuses_a_schema_it_cannot_exchange_with) {
     EXPECT_TRUE(frontend_compatible(&choice, err, sizeof err));
 }
 
-MOLTEST(frontend_refuses_a_plugin_that_needs_a_newer_molto) {
+DESCRIBE(frontend_refuses_a_plugin_that_needs_a_newer_molto) {
     frontend_choice choice;
     memset(&choice, 0, sizeof choice);
     snprintf(choice.name, sizeof choice.name, "meson");
@@ -330,7 +330,7 @@ static void bounds_for(const sandbox *box, char *build_dir, size_t size, ir_boun
     *out = (ir_bounds){.workspace = box->project, .build_dir = build_dir};
 }
 
-MOLTEST(frontend_reads_the_document_a_plugin_returns) {
+DESCRIBE(frontend_reads_the_document_a_plugin_returns) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(install_answering(&box, "meson", "meson.build", "meson"));
@@ -412,7 +412,7 @@ static frontend_result ask_script(sandbox *box, const char *script, ir_document 
     return frontend_ask_with(&found[0], box->project, &bounds, 1000u, out, err, err_size);
 }
 
-MOLTEST(frontend_treats_exit_three_as_declining) {
+DESCRIBE(frontend_treats_exit_three_as_declining) {
     /* Not an error: the file is not one it understands, and Molto is free to
        try another candidate. */
     sandbox box;
@@ -427,7 +427,7 @@ MOLTEST(frontend_treats_exit_three_as_declining) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_fails_on_any_other_exit) {
+DESCRIBE(frontend_fails_on_any_other_exit) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -441,7 +441,7 @@ MOLTEST(frontend_fails_on_any_other_exit) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_banner_on_standard_output) {
+DESCRIBE(frontend_refuses_a_banner_on_standard_output) {
     /* Standard output MUST be a document and nothing else. A plugin that greets
        there has produced an unparseable document, and anything it wants to say
        goes to standard error. */
@@ -460,7 +460,7 @@ MOLTEST(frontend_refuses_a_banner_on_standard_output) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_plugin_that_claims_to_be_native) {
+DESCRIBE(frontend_refuses_a_plugin_that_claims_to_be_native) {
     /* The load-bearing check. Every stricter lowering rule keys on the origin
        not being "native", so a plugin naming itself native would be handed the
        rules written for a file in the user's own repository. */
@@ -488,7 +488,7 @@ MOLTEST(frontend_refuses_a_plugin_that_claims_to_be_native) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_document_reporting_no_files_read) {
+DESCRIBE(frontend_refuses_a_document_reporting_no_files_read) {
     /* RFC-0013 makes it the invalidation key of a cached document, and a
        frontend written against a molto that did not ask would be one that never
        learned to answer. */
@@ -513,7 +513,7 @@ MOLTEST(frontend_refuses_a_document_reporting_no_files_read) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_validates_before_it_hands_a_document_back) {
+DESCRIBE(frontend_validates_before_it_hands_a_document_back) {
     /* The check is not the caller's to remember. A frontend that returns a
        source outside the workspace has its document refused here, not later. */
     sandbox box;
@@ -539,7 +539,7 @@ MOLTEST(frontend_validates_before_it_hands_a_document_back) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_plugin_that_names_a_dependency) {
+DESCRIBE(frontend_refuses_a_plugin_that_names_a_dependency) {
     /* A frontend describes a project and not its graph. `Dependency` carries
        the version that was resolved, the origin it came from and where the
        bytes landed on this machine — all three are answers `resolve` gives, and
@@ -569,7 +569,7 @@ MOLTEST(frontend_refuses_a_plugin_that_names_a_dependency) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
+DESCRIBE(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     /* The sandbox that would stop this does not exist yet, and it would not
        stop this anyway: the option is in a document, not in a syscall. */
     sandbox box;
@@ -595,7 +595,7 @@ MOLTEST(frontend_refuses_a_plugin_option_that_loads_code_into_the_compiler) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
+DESCRIBE(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
     /* A `custom_target` becomes a BuildStep, and a BuildStep needs `generator`.
        This revision carries no BuildStep at all, so it is refused at the node
        — never by falling back to the real tool. */
@@ -621,7 +621,7 @@ MOLTEST(frontend_refuses_a_build_step_from_a_plugin_that_only_reads) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_stops_a_plugin_that_never_answers) {
+DESCRIBE(frontend_stops_a_plugin_that_never_answers) {
     /* A plugin that hangs must not hang a build. The wait here is the real
        timeout, so this test costs what the timeout costs and no more. */
     sandbox box;
@@ -639,7 +639,7 @@ MOLTEST(frontend_stops_a_plugin_that_never_answers) {
 
 /* --- the request a frontend receives --- */
 
-MOLTEST(frontend_tells_the_plugin_which_directory_and_which_file) {
+DESCRIBE(frontend_tells_the_plugin_which_directory_and_which_file) {
     /* The request is the first thing any plugin author meets, so its shape is
        pinned here rather than left to whatever the writer happened to emit. */
     sandbox box;
@@ -671,7 +671,7 @@ MOLTEST(frontend_tells_the_plugin_which_directory_and_which_file) {
 
 /* --- the native frontend --- */
 
-MOLTEST(frontend_native_describes_a_manifest_and_its_sources) {
+DESCRIBE(frontend_native_describes_a_manifest_and_its_sources) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -756,7 +756,7 @@ MOLTEST(frontend_native_describes_a_manifest_and_its_sources) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_leaves_out_what_the_profile_decides) {
+DESCRIBE(frontend_native_leaves_out_what_the_profile_decides) {
     /* -O and -g come from a profile's opt_level and debug_info, which are the
        build's mechanics rather than anything the project said. Stating them
        here would state one thing in two places, and eventually in two ways. */
@@ -783,7 +783,7 @@ MOLTEST(frontend_native_leaves_out_what_the_profile_decides) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_states_each_language_its_own_standard) {
+DESCRIBE(frontend_native_states_each_language_its_own_standard) {
     /* `[target]` declares two standards and a target holds units of both
        languages, which is why the standard is a unit-scope option: one at
        target scope would state one of them for all of them. */
@@ -887,7 +887,7 @@ static long option_index(const ir_option *options, size_t count, const char *val
 /* RFC-0019: the coverage profile instruments every target the project builds,
    on the compile line and the link line, in the profile scope and after what
    [profile.coverage] itself says; no other profile does. */
-MOLTEST(frontend_native_instruments_the_coverage_profile) {
+DESCRIBE(frontend_native_instruments_the_coverage_profile) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
 
@@ -924,7 +924,7 @@ MOLTEST(frontend_native_instruments_the_coverage_profile) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_describes_one_target_per_test_file) {
+DESCRIBE(frontend_native_describes_one_target_per_test_file) {
     /* The default mode: each file brings its own main(), so each is a binary,
        so each is a target. */
     sandbox box;
@@ -978,7 +978,7 @@ MOLTEST(frontend_native_describes_one_target_per_test_file) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_describes_a_single_suite_when_asked_to) {
+DESCRIBE(frontend_native_describes_a_single_suite_when_asked_to) {
     /* mode = "single" is one binary for every test file, which is what a
        framework owning main() needs — so it is one target. */
     sandbox box;
@@ -1008,7 +1008,7 @@ MOLTEST(frontend_native_describes_a_single_suite_when_asked_to) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_describes_a_framework_outside_the_tests_directory) {
+DESCRIBE(frontend_native_describes_a_framework_outside_the_tests_directory) {
     /* `[test].sources` is how a framework living outside tests/ gets compiled
        in, and a document that left it out would describe a suite that does not
        link. */
@@ -1036,7 +1036,7 @@ MOLTEST(frontend_native_describes_a_framework_outside_the_tests_directory) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_keeps_test_options_out_of_the_executable) {
+DESCRIBE(frontend_native_keeps_test_options_out_of_the_executable) {
     /* `[test]`'s own defines, includes and flags reach the tests and nothing
        else. That separation is the whole point of the table, and a document
        that folded them into the executable would describe a binary shipping
@@ -1078,7 +1078,7 @@ MOLTEST(frontend_native_keeps_test_options_out_of_the_executable) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_describes_no_test_target_when_there_are_no_tests) {
+DESCRIBE(frontend_native_describes_no_test_target_when_there_are_no_tests) {
     /* Not an empty one: a target that builds nothing is a target every consumer
        has to special-case, and "there are no tests" is said by there being
        none. */
@@ -1099,7 +1099,7 @@ MOLTEST(frontend_native_describes_no_test_target_when_there_are_no_tests) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_refuses_a_test_source_that_is_not_there) {
+DESCRIBE(frontend_native_refuses_a_test_source_that_is_not_there) {
     /* A missing tests/ is nothing; a `[test].sources` entry naming a file that
        does not exist is a manifest describing a build that cannot happen. */
     sandbox box;
@@ -1119,7 +1119,7 @@ MOLTEST(frontend_native_refuses_a_test_source_that_is_not_there) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_produces_a_document_that_validates) {
+DESCRIBE(frontend_native_produces_a_document_that_validates) {
     /* Every rule ir_validate applies to a document applies to this one: unique
        names, an edge that resolves, no cycle, every path inside the bounds. A
        frontend whose own answer would be refused from a plugin is a frontend
@@ -1145,7 +1145,7 @@ MOLTEST(frontend_native_produces_a_document_that_validates) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(a_shared_library_is_named_by_its_kind_and_not_by_a_filename) {
+DESCRIBE(a_shared_library_is_named_by_its_kind_and_not_by_a_filename) {
     /*
      * What the document says a shared library is, which is deliberately not
      * what it will be called.
@@ -1211,7 +1211,7 @@ MOLTEST(a_shared_library_is_named_by_its_kind_and_not_by_a_filename) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_native_puts_src_on_the_include_path_last) {
+DESCRIBE(frontend_native_puts_src_on_the_include_path_last) {
     /* Every Molto build has `src/` on the include path and no manifest says
        so, which is what lets a source include a sibling by name. It is stated
        last because that is where the build puts it, and include order decides
@@ -1251,7 +1251,7 @@ MOLTEST(frontend_native_puts_src_on_the_include_path_last) {
 
 /* --- precedence --- */
 
-MOLTEST(frontend_run_prefers_the_native_manifest) {
+DESCRIBE(frontend_run_prefers_the_native_manifest) {
     /* A plugin cannot take over a directory molto already understands, the same
        rule the CLI applies to a command name and for the same reason. */
     sandbox box;
@@ -1273,7 +1273,7 @@ MOLTEST(frontend_run_prefers_the_native_manifest) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_run_asks_a_plugin_when_there_is_no_manifest) {
+DESCRIBE(frontend_run_asks_a_plugin_when_there_is_no_manifest) {
     sandbox box;
     ASSERT_TRUE(sandbox_setup(&box));
     ASSERT_TRUE(install_answering(&box, "meson", "meson.build", "meson"));
@@ -1289,7 +1289,7 @@ MOLTEST(frontend_run_asks_a_plugin_when_there_is_no_manifest) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_run_says_so_when_nothing_understands_the_directory) {
+DESCRIBE(frontend_run_says_so_when_nothing_understands_the_directory) {
     /* Not an error: a directory no frontend understands is one molto has
        nothing to say about. */
     sandbox box;
@@ -1304,7 +1304,7 @@ MOLTEST(frontend_run_says_so_when_nothing_understands_the_directory) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_run_reports_a_bad_manifest_as_a_manifest_problem) {
+DESCRIBE(frontend_run_reports_a_bad_manifest_as_a_manifest_problem) {
     /* Nothing third-party ran, so this is not a plugin failure. Telling the two
        apart is what the enumerated exit codes exist for. */
     sandbox box;
@@ -1326,7 +1326,7 @@ MOLTEST(frontend_run_reports_a_bad_manifest_as_a_manifest_problem) {
     sandbox_teardown(&box);
 }
 
-MOLTEST(frontend_run_accepts_a_relative_directory) {
+DESCRIBE(frontend_run_accepts_a_relative_directory) {
     /* A regression, and one no test with an absolute sandbox path could have
        caught: `molto ir` in a directory with no manifest had nothing to walk up
        to and passed the working directory through relative. The bounds a

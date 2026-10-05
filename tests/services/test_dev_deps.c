@@ -101,7 +101,7 @@ static void dev_manifest(const sandbox *at, char *out, size_t size) {
 /* --- the separation --- */
 
 /* A test may include it, and the test binary links it. */
-MOLTEST(a_test_may_include_a_development_dependency) {
+DESCRIBE(a_test_may_include_a_development_dependency) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "helper", NULL));
@@ -129,7 +129,7 @@ MOLTEST(a_test_may_include_a_development_dependency) {
    Its includes and defines are checked above by a compile that fails without
    them; a library is checked by a link that fails without it, which is what
    calling `sqrt` here is for. */
-MOLTEST(a_development_dependencys_library_reaches_only_the_test_link) {
+DESCRIBE(a_development_dependencys_library_reaches_only_the_test_link) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -173,7 +173,7 @@ MOLTEST(a_development_dependencys_library_reaches_only_the_test_link) {
     sandbox_close(&at);
 }
 
-MOLTEST(src_may_not_include_a_development_dependency) {
+DESCRIBE(src_may_not_include_a_development_dependency) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "helper", NULL));
@@ -196,7 +196,7 @@ MOLTEST(src_may_not_include_a_development_dependency) {
    build is the one that has those include directories in hand. They belong to
    the command line that compiles tests/ and to no other, so a src/ file that
    reaches for one fails here exactly as it does under `molto build`. */
-MOLTEST(src_may_not_include_a_development_dependency_under_test_either) {
+DESCRIBE(src_may_not_include_a_development_dependency_under_test_either) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "helper", NULL));
@@ -221,7 +221,7 @@ MOLTEST(src_may_not_include_a_development_dependency_under_test_either) {
 
 /* A runtime dependency reaches both, which is the other half of the same
    claim: the failure above is about the scope, not about the mechanism. */
-MOLTEST(src_may_include_a_runtime_dependency) {
+DESCRIBE(src_may_include_a_runtime_dependency) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "helper", NULL));
@@ -249,7 +249,7 @@ MOLTEST(src_may_include_a_runtime_dependency) {
 /* Development dependencies stop at the root package. A library's own test
    framework is not the consumer's problem, and resolving it would download and
    version-check something nothing will ever compile. */
-MOLTEST(a_dependencys_own_dev_deps_are_not_followed) {
+DESCRIBE(a_dependencys_own_dev_deps_are_not_followed) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -279,7 +279,7 @@ MOLTEST(a_dependencys_own_dev_deps_are_not_followed) {
 
 /* One package in both tables is one node carrying both scopes — not two nodes,
    which in a test link would be duplicate symbols. */
-MOLTEST(a_package_in_both_tables_is_one_node_with_both_scopes) {
+DESCRIBE(a_package_in_both_tables_is_one_node_with_both_scopes) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "shared", NULL));
@@ -310,7 +310,7 @@ MOLTEST(a_package_in_both_tables_is_one_node_with_both_scopes) {
 /* And when the two tables disagree about which package that is, it is a
    conflict like any other: the test binary links src/ against one of them and
    tests/ against the other. */
-MOLTEST(the_two_tables_share_one_version) {
+DESCRIBE(the_two_tables_share_one_version) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "png_old", NULL));
@@ -338,7 +338,7 @@ MOLTEST(the_two_tables_share_one_version) {
 
 /* The lock says which builds reach a package, so a production install can
    fetch only what it links. */
-MOLTEST(the_lock_records_each_scope) {
+DESCRIBE(the_lock_records_each_scope) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     ASSERT_TRUE(make_package(&at, "ships", NULL));
@@ -374,7 +374,7 @@ MOLTEST(the_lock_records_each_scope) {
 
 /* --- the manifest --- */
 
-MOLTEST(the_two_tables_are_read_apart) {
+DESCRIBE(the_two_tables_are_read_apart) {
     char err[512] = "";
     project_ctx ctx;
     ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
@@ -391,7 +391,7 @@ MOLTEST(the_two_tables_are_read_apart) {
 
 /* The rules are the reader's, not the table's: a range is refused in either,
    and the message names the table the user has to go and edit. */
-MOLTEST(a_range_in_dev_deps_names_that_table) {
+DESCRIBE(a_range_in_dev_deps_names_that_table) {
     char err[512] = "";
     project_ctx ctx;
     EXPECT_FALSE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"

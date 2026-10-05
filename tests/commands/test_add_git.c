@@ -26,7 +26,7 @@ static bool parse(const char *spec, parsed *out) {
                               out->ref, sizeof out->ref, out->err, sizeof out->err);
 }
 
-MOLTEST(git_spec_names_the_package_after_the_repository) {
+DESCRIBE(git_spec_names_the_package_after_the_repository) {
     parsed at;
     ASSERT_TRUE(parse("git+https://github.com/moltobuild/moltest", &at));
     EXPECT_STREQ("moltest", at.name);
@@ -34,14 +34,14 @@ MOLTEST(git_spec_names_the_package_after_the_repository) {
     EXPECT_STREQ("", at.ref);
 }
 
-MOLTEST(git_spec_drops_a_trailing_slash_and_dot_git) {
+DESCRIBE(git_spec_drops_a_trailing_slash_and_dot_git) {
     parsed at;
     ASSERT_TRUE(parse("git+https://example.com/org/zlib.git/", &at));
     EXPECT_STREQ("zlib", at.name);
     EXPECT_STREQ("https://example.com/org/zlib.git/", at.url);
 }
 
-MOLTEST(git_spec_takes_a_reference_after_the_hash) {
+DESCRIBE(git_spec_takes_a_reference_after_the_hash) {
     parsed at;
     ASSERT_TRUE(parse("git+https://github.com/moltobuild/moltest#v0.1.0", &at));
     EXPECT_STREQ("https://github.com/moltobuild/moltest", at.url);
@@ -49,7 +49,7 @@ MOLTEST(git_spec_takes_a_reference_after_the_hash) {
 }
 
 /* The `@` belongs to the URL: it is the user of an ssh remote, not a version. */
-MOLTEST(git_spec_keeps_an_at_sign_in_the_url) {
+DESCRIBE(git_spec_keeps_an_at_sign_in_the_url) {
     parsed at;
     ASSERT_TRUE(parse("git+ssh://git@github.com/moltobuild/moltest.git#master", &at));
     EXPECT_STREQ("moltest", at.name);
@@ -60,7 +60,7 @@ MOLTEST(git_spec_keeps_an_at_sign_in_the_url) {
     EXPECT_STREQ("moltest", at.name);
 }
 
-MOLTEST(git_spec_refuses_what_a_manifest_cannot_hold) {
+DESCRIBE(git_spec_refuses_what_a_manifest_cannot_hold) {
     parsed at;
     EXPECT_FALSE(parse("https://github.com/moltobuild/moltest", &at)); /* no prefix */
     EXPECT_FALSE(parse("git+", &at));
@@ -71,7 +71,7 @@ MOLTEST(git_spec_refuses_what_a_manifest_cannot_hold) {
     EXPECT_FALSE(parse("git+https://example.com/repo#--force", &at));
 }
 
-MOLTEST(git_spec_refuses_a_repository_that_is_not_a_package_name) {
+DESCRIBE(git_spec_refuses_a_repository_that_is_not_a_package_name) {
     parsed at;
     EXPECT_FALSE(parse("git+https://github.com/moltobuild/moltest-coverage", &at));
     /* And says how to name it instead. */
@@ -98,7 +98,7 @@ static bool make_repo(const char *root, char *repo, size_t size, char *head, siz
     return true;
 }
 
-MOLTEST(git_reference_key_tells_branch_tag_and_commit_apart) {
+DESCRIBE(git_reference_key_tells_branch_tag_and_commit_apart) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_addgit", root, sizeof root));
     char repo[MOLTEST_PATH + 16];

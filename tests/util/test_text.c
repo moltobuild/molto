@@ -12,7 +12,7 @@
  * a terminal understands columns.
  */
 
-MOLTEST(ascii_costs_one_column_a_byte) {
+DESCRIBE(ascii_costs_one_column_a_byte) {
     const char *line = "    return user.name;";
     EXPECT_EQ(0u, text_columns(line, 0));
     EXPECT_EQ(4u, text_columns(line, 4));
@@ -22,27 +22,27 @@ MOLTEST(ascii_costs_one_column_a_byte) {
 /* On a line that opens with a comment holding "αβγ", gcc reports the `x` of a
    following `int x;` at column 28, which is its byte offset; the caret belongs
    at column 25. Three two-byte Greek letters are the whole of the difference. */
-MOLTEST(a_multibyte_character_costs_one_column_and_several_bytes) {
+DESCRIBE(a_multibyte_character_costs_one_column_and_several_bytes) {
     const char *line = "/*αβγ*/int x;";
     EXPECT_EQ(3u, text_columns(line, 3));  /* three bytes in, three of them counted */
     EXPECT_EQ(8u, text_columns(line, 11)); /* eleven bytes in, up to the "i" of int */
 }
 
 /* A byte count past the end is the whole string, not a walk off it. */
-MOLTEST(a_count_past_the_end_stops_at_the_end) {
+DESCRIBE(a_count_past_the_end_stops_at_the_end) {
     EXPECT_EQ(5u, text_columns("hello", 500));
     EXPECT_EQ(0u, text_columns("", 500));
 }
 
 /* To a string a tab is one character. To a terminal it is a jump to the next
    stop, which is what the two functions below are for. */
-MOLTEST(a_tab_is_one_character_to_a_string) { EXPECT_EQ(2u, text_columns("\t\tint x;", 2)); }
+DESCRIBE(a_tab_is_one_character_to_a_string) { EXPECT_EQ(2u, text_columns("\t\tint x;", 2)); }
 
 /* clang reports the `nope` of "\t\treturn nope;" at byte 10; gcc reports the
    same character at column 24, because two tabs are sixteen columns and
    "return " is seven more. Converting the first into the second is the whole
    job. */
-MOLTEST(a_byte_offset_becomes_the_column_a_terminal_would_be_at) {
+DESCRIBE(a_byte_offset_becomes_the_column_a_terminal_would_be_at) {
     const char *line = "\t\treturn nope;";
     EXPECT_EQ(23u, text_column_of_byte(line, 9, 8));
     EXPECT_EQ(16u, text_column_of_byte(line, 2, 8)); /* both tabs, no more */
@@ -52,18 +52,18 @@ MOLTEST(a_byte_offset_becomes_the_column_a_terminal_would_be_at) {
 
 /* A tab already sitting on a stop moves to the next one rather than staying
    where it is. */
-MOLTEST(a_tab_on_a_stop_still_advances) {
+DESCRIBE(a_tab_on_a_stop_still_advances) {
     EXPECT_EQ(16u, text_column_of_byte("12345678\tx", 9, 8));
 }
 
 /* A multibyte character is one column and several bytes, so the two counts
    drift apart by exactly the extra bytes. */
-MOLTEST(a_byte_offset_past_multibyte_text_comes_back_shorter) {
+DESCRIBE(a_byte_offset_past_multibyte_text_comes_back_shorter) {
     const char *line = "    /* αβγ */ return nope;";
     EXPECT_EQ(21u, text_column_of_byte(line, 24, 8));
 }
 
-MOLTEST(tabs_are_expanded_to_the_stops_a_terminal_uses) {
+DESCRIBE(tabs_are_expanded_to_the_stops_a_terminal_uses) {
     char out[64] = "";
     text_expand_tabs("\tx", 8, out, sizeof out);
     EXPECT_STREQ("        x", out);
@@ -76,7 +76,7 @@ MOLTEST(tabs_are_expanded_to_the_stops_a_terminal_uses) {
 }
 
 /* Shortened rather than refused, and never left holding whatever was there. */
-MOLTEST(expanding_into_too_small_a_buffer_shortens_the_line) {
+DESCRIBE(expanding_into_too_small_a_buffer_shortens_the_line) {
     char out[5] = "";
     text_expand_tabs("\tx", 8, out, sizeof out);
     EXPECT_STREQ("    ", out);
@@ -88,12 +88,12 @@ MOLTEST(expanding_into_too_small_a_buffer_shortens_the_line) {
 /* Text that is not valid UTF-8 still has to produce a number: a lone
    continuation byte is counted as nothing, and a terminal will make no more of
    it than that. */
-MOLTEST(a_stray_byte_is_not_a_reason_to_refuse_an_answer) {
+DESCRIBE(a_stray_byte_is_not_a_reason_to_refuse_an_answer) {
     EXPECT_EQ(1u, text_columns("a\x80\x80z", 3));
     EXPECT_EQ(2u, text_columns("a\x80\x80z", 4));
 }
 
-MOLTEST(no_text_is_no_columns) { EXPECT_EQ(0u, text_columns(NULL, 8)); }
+DESCRIBE(no_text_is_no_columns) { EXPECT_EQ(0u, text_columns(NULL, 8)); }
 
 /*
  * Eliding the middle.
@@ -104,21 +104,21 @@ MOLTEST(no_text_is_no_columns) { EXPECT_EQ(0u, text_columns(NULL, 8)); }
  * between two git dependencies came to name neither of them.
  */
 
-MOLTEST(what_fits_is_copied_whole) {
+DESCRIBE(what_fits_is_copied_whole) {
     char out[16] = "";
     text_elide_middle("abc", out, sizeof out);
     EXPECT_STREQ("abc", out);
 }
 
 /* Exactly the room there is, terminator included, is still not eliding. */
-MOLTEST(a_string_that_exactly_fits_is_not_shortened) {
+DESCRIBE(a_string_that_exactly_fits_is_not_shortened) {
     char out[4] = "";
     text_elide_middle("abc", out, sizeof out);
     EXPECT_STREQ("abc", out);
 }
 
 /* Both ends survive, and the ellipsis says the middle did not. */
-MOLTEST(a_long_url_keeps_its_host_and_its_repository) {
+DESCRIBE(a_long_url_keeps_its_host_and_its_repository) {
     char out[32] = "";
     text_elide_middle("https://github.com/an-organisation-with-a-long-name/molto", out,
                       sizeof out);
@@ -129,7 +129,7 @@ MOLTEST(a_long_url_keeps_its_host_and_its_repository) {
 }
 
 /* The result never outgrows the buffer it was given, whatever the input. */
-MOLTEST(an_elision_never_overruns_its_buffer) {
+DESCRIBE(an_elision_never_overruns_its_buffer) {
     for(size_t size = 1; size <= 24; size++) {
         char out[32];
         memset(out, '#', sizeof out);
@@ -141,7 +141,7 @@ MOLTEST(an_elision_never_overruns_its_buffer) {
 
 /* Too little room for an ellipsis is not a reason to write a broken one: what
    comes back is a plain prefix, still terminated. */
-MOLTEST(too_small_for_an_ellipsis_falls_back_to_a_prefix) {
+DESCRIBE(too_small_for_an_ellipsis_falls_back_to_a_prefix) {
     char out[4] = "";
     text_elide_middle("abcdefgh", out, sizeof out);
     EXPECT_STREQ("abc", out);
@@ -149,7 +149,7 @@ MOLTEST(too_small_for_an_ellipsis_falls_back_to_a_prefix) {
 
 /* A cut lands between characters, never inside one: a torn UTF-8 sequence is
    mojibake in the very message that is trying to identify something. */
-MOLTEST(an_elision_cuts_between_characters_and_not_inside_one) {
+DESCRIBE(an_elision_cuts_between_characters_and_not_inside_one) {
     char out[16] = "";
     text_elide_middle("áéíóúáéíóú", out,
                       sizeof out);
@@ -160,7 +160,7 @@ MOLTEST(an_elision_cuts_between_characters_and_not_inside_one) {
     EXPECT_EQ(0u, (strlen(out) - strlen("\xe2\x80\xa6")) % 2);
 }
 
-MOLTEST(no_text_elides_to_nothing) {
+DESCRIBE(no_text_elides_to_nothing) {
     char out[8] = "x";
     text_elide_middle(NULL, out, sizeof out);
     EXPECT_STREQ("", out);

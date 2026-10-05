@@ -22,7 +22,7 @@ static bool write_temp(char *path, size_t path_size, const char *content) {
     return fs_write_file(path, content);
 }
 
-MOLTEST(a_line_is_read_without_its_ending) {
+DESCRIBE(a_line_is_read_without_its_ending) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "first\nsecond\nthird\n"));
 
@@ -38,7 +38,7 @@ MOLTEST(a_line_is_read_without_its_ending) {
 }
 
 /* The last line of a file that does not end in a newline is still a line. */
-MOLTEST(a_file_that_does_not_end_in_a_newline_still_has_a_last_line) {
+DESCRIBE(a_file_that_does_not_end_in_a_newline_still_has_a_last_line) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "alpha\nomega"));
 
@@ -51,7 +51,7 @@ MOLTEST(a_file_that_does_not_end_in_a_newline_still_has_a_last_line) {
 
 /* Two characters end a line on another platform, and showing the first of them
    would put a stray glyph at the end of every excerpt taken from that file. */
-MOLTEST(a_carriage_return_is_part_of_the_ending_and_not_of_the_line) {
+DESCRIBE(a_carriage_return_is_part_of_the_ending_and_not_of_the_line) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "one\r\ntwo\r\n"));
 
@@ -62,7 +62,7 @@ MOLTEST(a_carriage_return_is_part_of_the_ending_and_not_of_the_line) {
     (void)remove(path);
 }
 
-MOLTEST(an_empty_line_is_a_line) {
+DESCRIBE(an_empty_line_is_a_line) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "top\n\nbottom\n"));
 
@@ -75,7 +75,7 @@ MOLTEST(an_empty_line_is_a_line) {
 
 /* Past the end, at zero, and negative: none of these is a line, and none of
    them is a reason to leave the caller's buffer holding whatever it held. */
-MOLTEST(a_line_that_does_not_exist_is_reported_rather_than_invented) {
+DESCRIBE(a_line_that_does_not_exist_is_reported_rather_than_invented) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "only\n"));
 
@@ -90,7 +90,7 @@ MOLTEST(a_line_that_does_not_exist_is_reported_rather_than_invented) {
 
 /* The ordinary answer for `<command line>`, `<built-in>`, and any source that
    was generated and then removed. */
-MOLTEST(a_file_that_cannot_be_opened_is_not_an_excerpt) {
+DESCRIBE(a_file_that_cannot_be_opened_is_not_an_excerpt) {
     char line[128] = "sentinel";
     EXPECT_FALSE(fs_read_line("/tmp/molto_no_such_file_zzz", 1, line, sizeof line));
     EXPECT_STREQ("", line);
@@ -99,7 +99,7 @@ MOLTEST(a_file_that_cannot_be_opened_is_not_an_excerpt) {
 
 /* An excerpt is for reading, and part of one still reads. What must not happen
    is running on into the line after it. */
-MOLTEST(a_line_longer_than_the_buffer_is_shortened_not_refused) {
+DESCRIBE(a_line_longer_than_the_buffer_is_shortened_not_refused) {
     char path[64];
     ASSERT_TRUE(write_temp(path, sizeof path, "aaaaaaaaaaaaaaaaaaaa\nnext\n"));
 
@@ -116,13 +116,13 @@ MOLTEST(a_line_longer_than_the_buffer_is_shortened_not_refused) {
     (void)remove(path);
 }
 
-MOLTEST(no_buffer_is_not_a_place_to_put_a_line) {
+DESCRIBE(no_buffer_is_not_a_place_to_put_a_line) {
     char line[4] = "";
     EXPECT_FALSE(fs_read_line("/etc/hostname", 1, NULL, 8));
     EXPECT_FALSE(fs_read_line("/etc/hostname", 1, line, 0));
 }
 
-MOLTEST(fs_reports_the_directory_it_is_in) {
+DESCRIBE(fs_reports_the_directory_it_is_in) {
     char here[4096] = "";
     ASSERT_TRUE(fs_current_dir(here, sizeof here));
     EXPECT_TRUE(here[0] != '\0');
@@ -137,12 +137,12 @@ MOLTEST(fs_reports_the_directory_it_is_in) {
     EXPECT_STREQ(here, resolved);
 }
 
-MOLTEST(a_buffer_too_small_for_the_directory_is_refused) {
+DESCRIBE(a_buffer_too_small_for_the_directory_is_refused) {
     char cramped[2] = "";
     EXPECT_FALSE(fs_current_dir(cramped, sizeof cramped));
 }
 
-MOLTEST(an_absolute_path_is_recognised_as_one) {
+DESCRIBE(an_absolute_path_is_recognised_as_one) {
     EXPECT_TRUE(fs_path_is_absolute("/usr/include"));
     EXPECT_TRUE(fs_path_is_absolute("/"));
 
@@ -182,7 +182,7 @@ MOLTEST(an_absolute_path_is_recognised_as_one) {
  * the file needs `fs_executable_file`; everything that reads a filename and
  * wants the name a person types needs `fs_executable_name`.
  */
-MOLTEST(a_name_becomes_the_filename_the_platform_stores_it_in) {
+DESCRIBE(a_name_becomes_the_filename_the_platform_stores_it_in) {
     char file[64] = "";
     EXPECT_TRUE(fs_executable_file("molto-meson", file, sizeof file));
 #ifdef _WIN32
@@ -192,12 +192,12 @@ MOLTEST(a_name_becomes_the_filename_the_platform_stores_it_in) {
 #endif
 }
 
-MOLTEST(a_filename_that_does_not_fit_is_refused_rather_than_cut) {
+DESCRIBE(a_filename_that_does_not_fit_is_refused_rather_than_cut) {
     char file[4] = "";
     EXPECT_FALSE(fs_executable_file("molto-meson", file, sizeof file));
 }
 
-MOLTEST(a_filename_gives_back_the_name_it_is_run_by) {
+DESCRIBE(a_filename_gives_back_the_name_it_is_run_by) {
     char name[64] = "";
 #ifdef _WIN32
     EXPECT_TRUE(fs_executable_name("molto-meson.exe", name, sizeof name));
@@ -220,7 +220,7 @@ MOLTEST(a_filename_gives_back_the_name_it_is_run_by) {
 
 /* The round trip, which is the property the two are used for: a plugin is
    found by scanning filenames and started by composing one. */
-MOLTEST(a_name_survives_the_trip_through_its_filename) {
+DESCRIBE(a_name_survives_the_trip_through_its_filename) {
     char file[64] = "";
     char back[64] = "";
     EXPECT_TRUE(fs_executable_file("molto-meson", file, sizeof file));
@@ -236,7 +236,7 @@ MOLTEST(a_name_survives_the_trip_through_its_filename) {
  * sides, like `fs_path_is_absolute` above, because the interesting half is the
  * drive letter and it only exists on one platform.
  */
-MOLTEST(an_absolute_path_becomes_a_name_that_fits_inside_a_directory) {
+DESCRIBE(an_absolute_path_becomes_a_name_that_fits_inside_a_directory) {
     char out[64] = "";
     EXPECT_TRUE(fs_path_without_root("/tmp/greet/greet.c", out, sizeof out));
     EXPECT_STREQ("tmp/greet/greet.c", out);
@@ -257,7 +257,7 @@ MOLTEST(an_absolute_path_becomes_a_name_that_fits_inside_a_directory) {
 #endif
 }
 
-MOLTEST(a_relative_path_is_already_a_name_and_is_left_alone) {
+DESCRIBE(a_relative_path_is_already_a_name_and_is_left_alone) {
     char out[64] = "";
     EXPECT_TRUE(fs_path_without_root("src/main.c", out, sizeof out));
     EXPECT_STREQ("src/main.c", out);
@@ -268,7 +268,7 @@ MOLTEST(a_relative_path_is_already_a_name_and_is_left_alone) {
 
 /* A machine really does hand out `//server/share`, and two empty components at
    the front of the answer would be a directory called nothing, twice. */
-MOLTEST(every_leading_slash_comes_off_and_not_just_the_first) {
+DESCRIBE(every_leading_slash_comes_off_and_not_just_the_first) {
     char out[64] = "";
     EXPECT_TRUE(fs_path_without_root("//server/share/x.c", out, sizeof out));
     EXPECT_STREQ("server/share/x.c", out);
@@ -278,7 +278,7 @@ MOLTEST(every_leading_slash_comes_off_and_not_just_the_first) {
     EXPECT_STREQ("", out);
 }
 
-MOLTEST(a_name_that_does_not_fit_is_refused_rather_than_cut) {
+DESCRIBE(a_name_that_does_not_fit_is_refused_rather_than_cut) {
     char out[8] = "";
     EXPECT_FALSE(fs_path_without_root("/tmp/a/rather/long/one.c", out, sizeof out));
     EXPECT_FALSE(fs_path_without_root("/tmp/x", NULL, sizeof out));
@@ -297,7 +297,7 @@ MOLTEST(a_name_that_does_not_fit_is_refused_rather_than_cut) {
  * Written without a sleep on purpose. A test that waits a second to prove a
  * second-resolution bug is a test that passes either way.
  */
-MOLTEST(two_writes_in_the_same_second_are_told_apart) {
+DESCRIBE(two_writes_in_the_same_second_are_told_apart) {
     char first[MOLTEST_PATH];
     char second[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_file("molto_stamp_a", first, sizeof first));
@@ -323,7 +323,7 @@ MOLTEST(two_writes_in_the_same_second_are_told_apart) {
 }
 
 /* And the size comes back with it, since one call answers both. */
-MOLTEST(a_stamp_carries_the_size_as_well_as_the_time) {
+DESCRIBE(a_stamp_carries_the_size_as_well_as_the_time) {
     char path[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_file("molto_stamp_size", path, sizeof path));
     ASSERT_TRUE(fs_write_file(path, "12345"));

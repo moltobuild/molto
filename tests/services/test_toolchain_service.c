@@ -187,7 +187,7 @@ static project_target target_requiring(const char *feature) {
     return target;
 }
 
-MOLTEST(toolchain_reads_the_answer_from_the_resolver) {
+DESCRIBE(toolchain_reads_the_answer_from_the_resolver) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -213,7 +213,7 @@ MOLTEST(toolchain_reads_the_answer_from_the_resolver) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_is_asked_once_and_then_remembered) {
+DESCRIBE(toolchain_is_asked_once_and_then_remembered) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -248,7 +248,7 @@ MOLTEST(toolchain_is_asked_once_and_then_remembered) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_is_asked_again_when_the_request_changes) {
+DESCRIBE(toolchain_is_asked_again_when_the_request_changes) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -283,7 +283,7 @@ MOLTEST(toolchain_is_asked_again_when_the_request_changes) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_reports_when_nothing_satisfies_the_request) {
+DESCRIBE(toolchain_reports_when_nothing_satisfies_the_request) {
     /* Exit code 3 is pickup's "nothing matches", which is an answer rather
        than a malfunction and must not be mistaken for one. */
     pickup_stub stub;
@@ -302,7 +302,7 @@ MOLTEST(toolchain_reports_when_nothing_satisfies_the_request) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_reports_a_resolver_that_cannot_run) {
+DESCRIBE(toolchain_reports_a_resolver_that_cannot_run) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -317,7 +317,7 @@ MOLTEST(toolchain_reports_a_resolver_that_cannot_run) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_reports_an_unreadable_answer) {
+DESCRIBE(toolchain_reports_an_unreadable_answer) {
     pickup_stub stub;
     ASSERT_TRUE(stub_setup(&stub, "this is not toml", 0));
 
@@ -328,7 +328,7 @@ MOLTEST(toolchain_reports_an_unreadable_answer) {
     stub_teardown(&stub);
 }
 
-MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
+DESCRIBE(toolchain_lets_the_environment_override_the_resolver) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -366,7 +366,7 @@ MOLTEST(toolchain_lets_the_environment_override_the_resolver) {
  * and carrying only the two driver paths -- which is what this used to do --
  * compiles perfectly well and produces a program that cannot start.
  */
-MOLTEST(toolchain_carries_the_link_recipe_the_resolver_answered) {
+DESCRIBE(toolchain_carries_the_link_recipe_the_resolver_answered) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -402,7 +402,7 @@ MOLTEST(toolchain_carries_the_link_recipe_the_resolver_answered) {
 /* Pickup names the recipe section after the language it was asked about, so
    reading a fixed name would find the wrong flags for a C++ build -- or, when
    only [cxx] was written, none at all. */
-MOLTEST(toolchain_reads_the_recipe_of_the_language_it_asked_about) {
+DESCRIBE(toolchain_reads_the_recipe_of_the_language_it_asked_about) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -442,7 +442,7 @@ MOLTEST(toolchain_reads_the_recipe_of_the_language_it_asked_about) {
 /* The memo has to hold the whole answer. Recording only the driver paths would
    make the second build -- the one that reads the memo instead of asking --
    compile without the flags the first one used. */
-MOLTEST(toolchain_remembers_the_recipe_it_was_told) {
+DESCRIBE(toolchain_remembers_the_recipe_it_was_told) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -483,7 +483,7 @@ MOLTEST(toolchain_remembers_the_recipe_it_was_told) {
 /* Nine flags into eight slots. Keeping the first eight would build under a
    recipe the resolver never gave, which is the quietly-wrong build this whole
    path exists to prevent -- so the resolution fails and says so. */
-MOLTEST(toolchain_refuses_a_recipe_it_cannot_carry_whole) {
+DESCRIBE(toolchain_refuses_a_recipe_it_cannot_carry_whole) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));

@@ -47,7 +47,7 @@ static void write_escapes(json_writer *writer) {
     json_object_close(writer);
 }
 
-MOLTEST(json_write_escapes_what_would_break_a_document) {
+DESCRIBE(json_write_escapes_what_would_break_a_document) {
     char *text = written_by(write_escapes);
     ASSERT_NOT_NULL(text);
 
@@ -84,7 +84,7 @@ static void write_nested(json_writer *writer) {
     json_object_close(writer);
 }
 
-MOLTEST(json_write_nests_objects_and_arrays) {
+DESCRIBE(json_write_nests_objects_and_arrays) {
     char *text = written_by(write_nested);
     ASSERT_NOT_NULL(text);
 
@@ -116,7 +116,7 @@ static void write_empty(json_writer *writer) {
     json_object_close(writer);
 }
 
-MOLTEST(json_write_leaves_an_empty_container_on_one_line) {
+DESCRIBE(json_write_leaves_an_empty_container_on_one_line) {
     /* A package with no dependencies is the ordinary case, not the edge one,
        and `"components": []` is what it has to say. Spread over two lines it is
        still valid and still unreadable. */
@@ -134,7 +134,7 @@ MOLTEST(json_write_leaves_an_empty_container_on_one_line) {
     free(text);
 }
 
-MOLTEST(json_write_is_byte_for_byte_repeatable) {
+DESCRIBE(json_write_is_byte_for_byte_repeatable) {
     /* The whole value of a document that can be committed is that its diff is
        worth reading, and that requires two runs to agree exactly. */
     char *first = written_by(write_nested);

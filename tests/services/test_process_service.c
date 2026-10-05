@@ -61,7 +61,7 @@ static bool make_crasher(char *path, size_t size) {
     return moltest_fake_program(at, "behave fake_crashing_program\n", path, size);
 }
 
-MOLTEST(process_service) {
+DESCRIBE(process_service) {
     const char *ok[] = { "true", NULL };
     EXPECT_TRUE(process_run(ok) == 0);
 
@@ -80,7 +80,7 @@ MOLTEST(process_service) {
     EXPECT_EQ(128 + SIGABRT, process_run(killed));
 }
 
-MOLTEST(process_exports_env_only_to_the_child) {
+DESCRIBE(process_exports_env_only_to_the_child) {
     /* The child sees the variable... */
     const char *const argv[] = {
         "sh", "-c", "test \"$MOLTO_PROBE\" = \"exported\"", NULL
@@ -96,7 +96,7 @@ MOLTEST(process_exports_env_only_to_the_child) {
     EXPECT_TRUE(process_run_env(argv, NULL, 0) != 0);
 }
 
-MOLTEST(process_capture_all_reads_both_streams) {
+DESCRIBE(process_capture_all_reads_both_streams) {
     /* A compiler diagnoses on stderr and clang-tidy on stdout, so lint needs
        both; capturing only stdout would come back empty for the compiler. */
     const char *const argv[] = { "sh", "-c", "echo to-stdout; echo to-stderr >&2", NULL };
@@ -109,7 +109,7 @@ MOLTEST(process_capture_all_reads_both_streams) {
     EXPECT_FALSE(truncated);
 }
 
-MOLTEST(process_capture_all_exports_env_to_the_child) {
+DESCRIBE(process_capture_all_exports_env_to_the_child) {
     const char *const argv[] = { "sh", "-c", "echo \"$MOLTO_PROBE\"", NULL };
     const process_env_var vars[] = { { "MOLTO_PROBE", "exported" } };
     char out[256] = "";
@@ -119,7 +119,7 @@ MOLTEST(process_capture_all_exports_env_to_the_child) {
     EXPECT_NULL(getenv("MOLTO_PROBE"));
 }
 
-MOLTEST(process_capture_all_truncates_without_killing_the_child) {
+DESCRIBE(process_capture_all_truncates_without_killing_the_child) {
     /* More output than the buffer holds. The rest has to be read and thrown
        away: closing the pipe early would kill the child with SIGPIPE and report
        a signal death instead of the exit code it was about to give. */
@@ -134,7 +134,7 @@ MOLTEST(process_capture_all_truncates_without_killing_the_child) {
     EXPECT_EQ(sizeof out - 1, strlen(out));
 }
 
-MOLTEST(process_capture_all_reports_a_child_that_could_not_run) {
+DESCRIBE(process_capture_all_reports_a_child_that_could_not_run) {
     const char *const missing[] = { "molto_no_such_command_zzz", NULL };
     char out[64] = "";
     int code = process_capture_all(missing, NULL, 0, out, sizeof out, NULL);
@@ -146,7 +146,7 @@ MOLTEST(process_capture_all_reports_a_child_that_could_not_run) {
     EXPECT_EQ(128 + SIGABRT, process_capture_all(killed, NULL, 0, out, sizeof out, NULL));
 }
 
-MOLTEST(process_capture_still_leaves_stderr_alone) {
+DESCRIBE(process_capture_still_leaves_stderr_alone) {
     /* The old contract, guarded: pickup explains itself on stderr while Molto
        reads its answer on stdout. */
     const char *const argv[] = { "sh", "-c", "echo answer; echo noise >&2", NULL };
@@ -193,7 +193,7 @@ static unsigned long inherited_descriptors(void) {
  * long as it runs. Under `-j` that turns a parallel build into a queue behind
  * whichever unit happens to be slowest — not a deadlock, and all the harder to
  * see for it. */
-MOLTEST(a_capture_does_not_leak_its_pipe_into_another_child) {
+DESCRIBE(a_capture_does_not_leak_its_pipe_into_another_child) {
     const unsigned long alone = inherited_descriptors();
     ASSERT_TRUE(alone > 0);
 
@@ -209,7 +209,7 @@ MOLTEST(a_capture_does_not_leak_its_pipe_into_another_child) {
     EXPECT_EQ(0, held);
 }
 
-MOLTEST(process_builds_an_argv_from_a_list) {
+DESCRIBE(process_builds_an_argv_from_a_list) {
     str_list list;
     str_list_init(&list);
     ASSERT_TRUE(str_list_push(&list, "echo"));
@@ -231,7 +231,7 @@ MOLTEST(process_builds_an_argv_from_a_list) {
 
 /* --- exchanging a document with a child process (RFC-0014) --- */
 
-MOLTEST(process_exchange_sends_a_request_and_reads_the_answer) {
+DESCRIBE(process_exchange_sends_a_request_and_reads_the_answer) {
     /* `cat` is the identity plugin: it reads to EOF and writes back what it
        got, which is exactly the contract a frontend follows. */
     const char *const argv[] = {"cat", NULL};
@@ -245,7 +245,7 @@ MOLTEST(process_exchange_sends_a_request_and_reads_the_answer) {
     free(io.answer);
 }
 
-MOLTEST(process_exchange_does_not_deadlock_on_a_large_document) {
+DESCRIBE(process_exchange_does_not_deadlock_on_a_large_document) {
     /* The case that makes the poll loop necessary rather than nice. Writing the
        whole request before reading anything deadlocks here: the parent blocks
        on a full pipe to the child while the child blocks on a full pipe back,
@@ -266,7 +266,7 @@ MOLTEST(process_exchange_does_not_deadlock_on_a_large_document) {
     free(request);
 }
 
-MOLTEST(process_exchange_keeps_the_child_exit_code) {
+DESCRIBE(process_exchange_keeps_the_child_exit_code) {
     /* Exit 3 is a frontend declining — the file is not one it understands —
        which is not an error and lets molto try another. The exchange reports
        the number and does not interpret it. */
@@ -278,7 +278,7 @@ MOLTEST(process_exchange_keeps_the_child_exit_code) {
     free(io.answer);
 }
 
-MOLTEST(process_exchange_survives_a_child_that_never_reads) {
+DESCRIBE(process_exchange_survives_a_child_that_never_reads) {
     /* Without SIGPIPE ignored this ends molto rather than the exchange, and it
        is the ordinary shape of a plugin that refuses before reading. */
     const char *const argv[] = {"sh", "-c", "exit 3", NULL};
@@ -295,7 +295,7 @@ MOLTEST(process_exchange_survives_a_child_that_never_reads) {
     free(request);
 }
 
-MOLTEST(process_exchange_kills_a_child_that_never_finishes) {
+DESCRIBE(process_exchange_kills_a_child_that_never_finishes) {
     /* A plugin that hangs must not hang a build. */
     const char *const argv[] = {"sh", "-c", "sleep 30", NULL};
     process_exchange io = {.request = "{}", .timeout_ms = 200};
@@ -304,7 +304,7 @@ MOLTEST(process_exchange_kills_a_child_that_never_finishes) {
     free(io.answer);
 }
 
-MOLTEST(process_exchange_refuses_an_answer_past_its_cap) {
+DESCRIBE(process_exchange_refuses_an_answer_past_its_cap) {
     /* Refused mid-read rather than after: a document that does not fit is not
        going to be read whole, and reading it anyway is what the cap exists to
        prevent. */
@@ -315,7 +315,7 @@ MOLTEST(process_exchange_refuses_an_answer_past_its_cap) {
     free(io.answer);
 }
 
-MOLTEST(process_exchange_reports_a_command_that_is_not_there) {
+DESCRIBE(process_exchange_reports_a_command_that_is_not_there) {
     const char *const argv[] = {"molto-a-plugin-nobody-installed", NULL};
     process_exchange io = {.request = "{}", .timeout_ms = 5000};
 
@@ -323,7 +323,7 @@ MOLTEST(process_exchange_reports_a_command_that_is_not_there) {
     free(io.answer);
 }
 
-MOLTEST(process_exchange_closes_stdin_when_there_is_nothing_to_send) {
+DESCRIBE(process_exchange_closes_stdin_when_there_is_nothing_to_send) {
     /* A frontend asked for nothing still reads to EOF, so an empty request has
        to be a closed pipe and not an open one it would wait on forever. */
     const char *const argv[] = {"cat", NULL};

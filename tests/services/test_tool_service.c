@@ -149,7 +149,7 @@ static void workspace_teardown(const char *root) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(tool_resolve_reads_the_answer_of_pickup_tools) {
+DESCRIBE(tool_resolve_reads_the_answer_of_pickup_tools) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -171,7 +171,7 @@ MOLTEST(tool_resolve_reads_the_answer_of_pickup_tools) {
     stub_teardown(&stub);
 }
 
-MOLTEST(tool_resolve_remembers_the_answer_in_the_workspace_database) {
+DESCRIBE(tool_resolve_remembers_the_answer_in_the_workspace_database) {
     pickup_stub stub;
     char root[64];
     stub_answer answer;
@@ -199,7 +199,7 @@ MOLTEST(tool_resolve_remembers_the_answer_in_the_workspace_database) {
     stub_teardown(&stub);
 }
 
-MOLTEST(tool_resolve_asks_again_when_refresh_is_set) {
+DESCRIBE(tool_resolve_asks_again_when_refresh_is_set) {
     pickup_stub stub;
     char root[64];
     stub_answer answer;
@@ -221,7 +221,7 @@ MOLTEST(tool_resolve_asks_again_when_refresh_is_set) {
     stub_teardown(&stub);
 }
 
-MOLTEST(tool_resolve_prefers_the_environment_override_without_caching_it) {
+DESCRIBE(tool_resolve_prefers_the_environment_override_without_caching_it) {
     pickup_stub stub;
     stub_answer answer;
     ASSERT_TRUE(stub_answer_setup(&answer));
@@ -243,7 +243,7 @@ MOLTEST(tool_resolve_prefers_the_environment_override_without_caching_it) {
     stub_teardown(&stub);
 }
 
-MOLTEST(tool_resolve_reports_a_machine_with_no_tool_of_that_kind) {
+DESCRIBE(tool_resolve_reports_a_machine_with_no_tool_of_that_kind) {
     pickup_stub stub;
     /* Pickup ran and answered; there is simply no formatter here. That is a
        fact to act on — lint still has the compiler — not a malfunction. */
@@ -266,7 +266,7 @@ MOLTEST(tool_resolve_reports_a_machine_with_no_tool_of_that_kind) {
     stub_teardown(&stub);
 }
 
-MOLTEST(tool_resolve_reports_a_resolver_it_could_not_run) {
+DESCRIBE(tool_resolve_reports_a_resolver_it_could_not_run) {
     const char *previous = getenv("MOLTO_PICKUP");
     char saved[4096] = "";
     if (previous != NULL)
@@ -283,7 +283,7 @@ MOLTEST(tool_resolve_reports_a_resolver_it_could_not_run) {
         (void)unsetenv("MOLTO_PICKUP");
 }
 
-MOLTEST(tool_kind_names_are_what_pickup_reports) {
+DESCRIBE(tool_kind_names_are_what_pickup_reports) {
     /* These strings are the contract with pickup's `kind` field. */
     EXPECT_STREQ("formatter", tool_kind_name(tool_kind_formatter));
     EXPECT_STREQ("linter", tool_kind_name(tool_kind_linter));
@@ -335,7 +335,7 @@ static void sdk_env_teardown(sdk_env *env) {
 }
 
 #ifdef __APPLE__
-MOLTEST(tool_platform_sdk_asks_xcrun_on_macos) {
+DESCRIBE(tool_platform_sdk_asks_xcrun_on_macos) {
     sdk_env env;
     ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
 
@@ -348,7 +348,7 @@ MOLTEST(tool_platform_sdk_asks_xcrun_on_macos) {
     sdk_env_teardown(&env);
 }
 
-MOLTEST(tool_platform_sdk_takes_the_sdkroot_the_environment_sets) {
+DESCRIBE(tool_platform_sdk_takes_the_sdkroot_the_environment_sets) {
     sdk_env env;
     ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
     ASSERT_EQ(0, setenv("SDKROOT", "/user/sdk", 1));
@@ -361,7 +361,7 @@ MOLTEST(tool_platform_sdk_takes_the_sdkroot_the_environment_sets) {
     sdk_env_teardown(&env);
 }
 
-MOLTEST(tool_platform_sdk_explains_an_xcrun_that_failed) {
+DESCRIBE(tool_platform_sdk_explains_an_xcrun_that_failed) {
     /* What a Mac without the Command Line Tools answers. */
     sdk_env env;
     ASSERT_TRUE(sdk_env_setup(&env, "err xcrun: error: invalid active developer path\nexit 1\n"));
@@ -375,7 +375,7 @@ MOLTEST(tool_platform_sdk_explains_an_xcrun_that_failed) {
     sdk_env_teardown(&env);
 }
 
-MOLTEST(tool_platform_sdk_explains_an_xcrun_it_could_not_run) {
+DESCRIBE(tool_platform_sdk_explains_an_xcrun_it_could_not_run) {
     sdk_env env;
     ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));
     ASSERT_EQ(0, setenv("MOLTO_XCRUN", "/nonexistent/molto_no_xcrun_zzz", 1));
@@ -388,7 +388,7 @@ MOLTEST(tool_platform_sdk_explains_an_xcrun_it_could_not_run) {
     sdk_env_teardown(&env);
 }
 #else
-MOLTEST(tool_platform_sdk_names_nothing_off_macos) {
+DESCRIBE(tool_platform_sdk_names_nothing_off_macos) {
     /* Only macOS keeps its system headers in an SDK, so nothing is asked. */
     sdk_env env;
     ASSERT_TRUE(sdk_env_setup(&env, "out /fake/sdk\n"));

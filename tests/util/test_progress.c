@@ -17,7 +17,7 @@ static size_t captured(FILE *file, char *out, size_t out_size) {
     return read;
 }
 
-MOLTEST(the_spinner_cycles_through_its_frames) {
+DESCRIBE(the_spinner_cycles_through_its_frames) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -44,7 +44,7 @@ MOLTEST(the_spinner_cycles_through_its_frames) {
     (void)fclose(out);
 }
 
-MOLTEST(the_spinner_names_the_work_and_claims_no_figure) {
+DESCRIBE(the_spinner_names_the_work_and_claims_no_figure) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -62,7 +62,7 @@ MOLTEST(the_spinner_names_the_work_and_claims_no_figure) {
     (void)fclose(out);
 }
 
-MOLTEST(clearing_blanks_the_line_and_returns_to_it) {
+DESCRIBE(clearing_blanks_the_line_and_returns_to_it) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -80,7 +80,7 @@ MOLTEST(clearing_blanks_the_line_and_returns_to_it) {
 
 /* A line nobody drew on must not be cleared: on a pipe the clear would be the
    only thing written, and it would land in whatever was being piped. */
-MOLTEST(a_line_that_was_never_drawn_on_is_left_alone) {
+DESCRIBE(a_line_that_was_never_drawn_on_is_left_alone) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -105,7 +105,7 @@ MOLTEST(a_line_that_was_never_drawn_on_is_left_alone) {
 #define BRAILLE_LABEL "analyzing ..."
 #define BRAILLE_LINE_SIZE SPINNER_BRAILLE_SIZE(sizeof BRAILLE_LABEL)
 
-MOLTEST(the_braille_spinner_cycles_through_ten_frames) {
+DESCRIBE(the_braille_spinner_cycles_through_ten_frames) {
     char seen[SPINNER_BRAILLE_FRAMES][BRAILLE_LINE_SIZE];
     for (size_t frame = 0; frame < SPINNER_BRAILLE_FRAMES; frame++) {
         EXPECT_TRUE(spinner_braille_render(seen[frame], BRAILLE_LINE_SIZE, frame, BRAILLE_LABEL,
@@ -126,7 +126,7 @@ MOLTEST(the_braille_spinner_cycles_through_ten_frames) {
     EXPECT_STREQ(seen[0], wrapped);
 }
 
-MOLTEST(the_braille_line_names_the_work_and_ends_nothing) {
+DESCRIBE(the_braille_line_names_the_work_and_ends_nothing) {
     char line[BRAILLE_LINE_SIZE] = "";
     const size_t size = spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, false);
 
@@ -145,7 +145,7 @@ MOLTEST(the_braille_line_names_the_work_and_ends_nothing) {
 
 /* The glyph is Molto talking; the label is the work's own name. Painting the
    label would claim it means something it does not. */
-MOLTEST(colour_reaches_the_glyph_and_stops_before_the_label) {
+DESCRIBE(colour_reaches_the_glyph_and_stops_before_the_label) {
     char line[BRAILLE_LINE_SIZE] = "";
     ASSERT_TRUE(spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, true) > 0);
 
@@ -162,7 +162,7 @@ MOLTEST(colour_reaches_the_glyph_and_stops_before_the_label) {
 /* A glyph is three bytes and one column, and an escape is bytes and no columns
    at all. A buffer sized against either count is refused rather than half
    filled: a line cut through a glyph would be drawn, and drawn wrong. */
-MOLTEST(a_line_that_would_not_fit_whole_is_refused) {
+DESCRIBE(a_line_that_would_not_fit_whole_is_refused) {
     char line[sizeof BRAILLE_LABEL];
 
     EXPECT_EQ(0u, spinner_braille_render(line, sizeof line, 0, BRAILLE_LABEL, false));
@@ -182,7 +182,7 @@ MOLTEST(a_line_that_would_not_fit_whole_is_refused) {
 
 #define BAR_CELLS 32
 
-MOLTEST(the_bar_fills_in_proportion_to_the_work_done) {
+DESCRIBE(the_bar_fills_in_proportion_to_the_work_done) {
     char bar[PROGRESS_BAR_SIZE(BAR_CELLS)];
 
     EXPECT_EQ(BAR_CELLS * 3u, progress_bar_render(bar, sizeof bar, 0, 4, BAR_CELLS));
@@ -198,7 +198,7 @@ MOLTEST(the_bar_fills_in_proportion_to_the_work_done) {
 
 /* Floored on both counts: a bar that reads full while one unit is still
    compiling is a bar that lies, and so is a percentage that reads 100. */
-MOLTEST(the_bar_reaches_the_end_only_when_the_work_does) {
+DESCRIBE(the_bar_reaches_the_end_only_when_the_work_does) {
     char bar[PROGRESS_BAR_SIZE(BAR_CELLS)];
 
     (void)progress_bar_render(bar, sizeof bar, 999, 1000, BAR_CELLS);
@@ -212,7 +212,7 @@ MOLTEST(the_bar_reaches_the_end_only_when_the_work_does) {
 
 /* Nothing to compile is not nothing to say: the build is done, so the bar is
    full rather than undefined — and the arithmetic never divides by zero. */
-MOLTEST(a_build_with_nothing_to_compile_is_a_full_bar) {
+DESCRIBE(a_build_with_nothing_to_compile_is_a_full_bar) {
     char bar[PROGRESS_BAR_SIZE(BAR_CELLS)];
 
     (void)progress_bar_render(bar, sizeof bar, 0, 0, BAR_CELLS);
@@ -226,14 +226,14 @@ MOLTEST(a_build_with_nothing_to_compile_is_a_full_bar) {
 
 /* A glyph is three bytes and one column, so a buffer sized by the column count
    would be truncated a third of the way in. Refuse rather than half-draw. */
-MOLTEST(a_buffer_sized_in_columns_is_refused) {
+DESCRIBE(a_buffer_sized_in_columns_is_refused) {
     char bar[BAR_CELLS + 1];
 
     EXPECT_EQ(0u, progress_bar_render(bar, sizeof bar, 4, 4, BAR_CELLS));
     EXPECT_STREQ("", bar);
 }
 
-MOLTEST(the_bar_carries_no_escapes_and_no_figure_of_its_own) {
+DESCRIBE(the_bar_carries_no_escapes_and_no_figure_of_its_own) {
     char bar[PROGRESS_BAR_SIZE(BAR_CELLS)];
 
     (void)progress_bar_render(bar, sizeof bar, 1, 3, BAR_CELLS);
@@ -246,7 +246,7 @@ MOLTEST(the_bar_carries_no_escapes_and_no_figure_of_its_own) {
 /* Erasing with an escape rather than a run of spaces: the run assumes the
    terminal is at least as wide as it is long, and a bar redrawn twenty times a
    second on a narrower one would scroll the display on every frame. */
-MOLTEST(erasing_a_line_costs_one_escape_and_no_spaces) {
+DESCRIBE(erasing_a_line_costs_one_escape_and_no_spaces) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 
@@ -259,7 +259,7 @@ MOLTEST(erasing_a_line_costs_one_escape_and_no_spaces) {
     (void)fclose(out);
 }
 
-MOLTEST(a_redirected_stream_is_not_interactive) {
+DESCRIBE(a_redirected_stream_is_not_interactive) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 

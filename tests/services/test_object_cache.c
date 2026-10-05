@@ -34,7 +34,7 @@ static bool dep_source(const sandbox *at, char *out, size_t size) {
     return fs_format_path(out, size, "%s/sources/sqlite/3.53.4/any/sqlite3.c", at->cache);
 }
 
-MOLTEST(object_cache_covers_a_dependency_and_nothing_else) {
+DESCRIBE(object_cache_covers_a_dependency_and_nothing_else) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -51,7 +51,7 @@ MOLTEST(object_cache_covers_a_dependency_and_nothing_else) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_gives_one_path_to_two_projects_compiling_alike) {
+DESCRIBE(object_cache_gives_one_path_to_two_projects_compiling_alike) {
     /* The point of the whole thing: the output paths differ, everything that
        reaches the compiler does not, so one object serves both. */
     sandbox at;
@@ -69,7 +69,7 @@ MOLTEST(object_cache_gives_one_path_to_two_projects_compiling_alike) {
     EXPECT_STREQ(first, second);
 }
 
-MOLTEST(object_cache_separates_two_ways_of_compiling_the_same_file) {
+DESCRIBE(object_cache_separates_two_ways_of_compiling_the_same_file) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -90,7 +90,7 @@ MOLTEST(object_cache_separates_two_ways_of_compiling_the_same_file) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_names_the_coordinate_it_holds) {
+DESCRIBE(object_cache_names_the_coordinate_it_holds) {
     /* So a cache directory can be read by a person, and so two dependencies
        cannot collide on one entry. */
     sandbox at;
@@ -107,7 +107,7 @@ MOLTEST(object_cache_names_the_coordinate_it_holds) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_hashes_the_environment_as_it_stands) {
+DESCRIBE(object_cache_hashes_the_environment_as_it_stands) {
     /* The reason the environment is marked off instead of appended: molto
        composes the argv and knows it has no spaces, but it does not compose an
        environment value. Split on spaces, "X=a -o b" and "X=a -o c" both lose
@@ -130,7 +130,7 @@ MOLTEST(object_cache_hashes_the_environment_as_it_stands) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_still_ignores_the_output_arguments_before_the_mark) {
+DESCRIBE(object_cache_still_ignores_the_output_arguments_before_the_mark) {
     /* Marking the environment off must not cost the thing the cache is for:
        two projects with the same environment, writing to different places,
        still share one object. */
@@ -163,7 +163,7 @@ MOLTEST(object_cache_still_ignores_the_output_arguments_before_the_mark) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_keeps_the_key_it_had_before_environments_existed) {
+DESCRIBE(object_cache_keeps_the_key_it_had_before_environments_existed) {
     /* The key of a command that says nothing about its environment must not
        move, or every object every project already had cached is orphaned by an
        upgrade. The digest below was taken from the binary that predates the
@@ -185,7 +185,7 @@ MOLTEST(object_cache_keeps_the_key_it_had_before_environments_existed) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_has_no_path_for_something_it_does_not_cover) {
+DESCRIBE(object_cache_has_no_path_for_something_it_does_not_cover) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -197,7 +197,7 @@ MOLTEST(object_cache_has_no_path_for_something_it_does_not_cover) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_round_trips_an_object) {
+DESCRIBE(object_cache_round_trips_an_object) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
 
@@ -231,7 +231,7 @@ MOLTEST(object_cache_round_trips_an_object) {
     sandbox_close(&at);
 }
 
-MOLTEST(object_cache_put_is_survivable_when_there_is_nothing_to_put) {
+DESCRIBE(object_cache_put_is_survivable_when_there_is_nothing_to_put) {
     /* A cache that cannot be written costs a rebuild somewhere else and
        nothing more, so this must not fail a build. */
     sandbox at;

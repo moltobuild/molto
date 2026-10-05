@@ -13,7 +13,7 @@ static void seed_options(project_options *options) {
     memset(options, 0, sizeof *options);
 }
 
-MOLTEST(compile_flags_anchor_a_relative_include_at_the_root) {
+DESCRIBE(compile_flags_anchor_a_relative_include_at_the_root) {
     str_list argv;
     str_list_init(&argv);
 
@@ -26,7 +26,7 @@ MOLTEST(compile_flags_anchor_a_relative_include_at_the_root) {
     str_list_free(&argv);
 }
 
-MOLTEST(compile_flags_leave_an_absolute_include_alone) {
+DESCRIBE(compile_flags_leave_an_absolute_include_alone) {
     str_list argv;
     str_list_init(&argv);
 
@@ -36,7 +36,7 @@ MOLTEST(compile_flags_leave_an_absolute_include_alone) {
     str_list_free(&argv);
 }
 
-MOLTEST(compile_flags_prefix_defines_and_pass_raw_flags_verbatim) {
+DESCRIBE(compile_flags_prefix_defines_and_pass_raw_flags_verbatim) {
     project_options options;
     seed_options(&options);
     snprintf(options.defines[0], PROJECT_OPT_LEN, "%s", "FOO=1");
@@ -60,7 +60,7 @@ MOLTEST(compile_flags_prefix_defines_and_pass_raw_flags_verbatim) {
     str_list_free(&argv);
 }
 
-MOLTEST(compile_flags_push_the_standard_of_the_language_of_the_unit) {
+DESCRIBE(compile_flags_push_the_standard_of_the_language_of_the_unit) {
     project_target target;
     memset(&target, 0, sizeof target);
     snprintf(target.std, sizeof target.std, "%s", "c17");
@@ -78,7 +78,7 @@ MOLTEST(compile_flags_push_the_standard_of_the_language_of_the_unit) {
     str_list_free(&argv);
 }
 
-MOLTEST(compile_flags_push_no_standard_when_none_is_declared) {
+DESCRIBE(compile_flags_push_no_standard_when_none_is_declared) {
     project_target target;
     memset(&target, 0, sizeof target);
 
@@ -91,7 +91,7 @@ MOLTEST(compile_flags_push_no_standard_when_none_is_declared) {
     str_list_free(&argv);
 }
 
-MOLTEST(compile_flags_pick_the_cpp_driver_only_for_cpp_units) {
+DESCRIBE(compile_flags_pick_the_cpp_driver_only_for_cpp_units) {
     resolved_toolchain chain;
     memset(&chain, 0, sizeof chain);
     snprintf(chain.cc, sizeof chain.cc, "%s", "/usr/bin/gcc");
@@ -101,7 +101,7 @@ MOLTEST(compile_flags_pick_the_cpp_driver_only_for_cpp_units) {
     EXPECT_STREQ("/usr/bin/g++", compile_flags_driver(&chain, true));
 }
 
-MOLTEST(compile_flags_report_a_missing_cpp_driver_as_null) {
+DESCRIBE(compile_flags_report_a_missing_cpp_driver_as_null) {
     resolved_toolchain chain;
     memset(&chain, 0, sizeof chain);
     snprintf(chain.cc, sizeof chain.cc, "%s", "/usr/bin/gcc");

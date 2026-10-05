@@ -28,7 +28,7 @@ static void digest_of(const void *data, size_t length, char *hex_out) {
     sha256_finish(&state, hex_out);
 }
 
-MOLTEST(sha256_answers_the_published_vectors) {
+DESCRIBE(sha256_answers_the_published_vectors) {
     char hex[SHA256_HEX_SIZE];
 
     digest_of("", 0, hex);
@@ -43,7 +43,7 @@ MOLTEST(sha256_answers_the_published_vectors) {
 
 /* The expensive vector, and the one that exercises the length counter past
    anything a single update carries. */
-MOLTEST(sha256_answers_the_long_vector) {
+DESCRIBE(sha256_answers_the_long_vector) {
     sha256_state state;
     sha256_init(&state);
 
@@ -62,7 +62,7 @@ MOLTEST(sha256_answers_the_long_vector) {
  * the message fed in whole. This is the property the buffering exists to hold,
  * and the one a chunked file read depends on.
  */
-MOLTEST(sha256_does_not_care_how_the_message_is_divided) {
+DESCRIBE(sha256_does_not_care_how_the_message_is_divided) {
     char whole[SHA256_HEX_SIZE];
     digest_of(TWO_BLOCK_MESSAGE, strlen(TWO_BLOCK_MESSAGE), whole);
 
@@ -78,7 +78,7 @@ MOLTEST(sha256_does_not_care_how_the_message_is_divided) {
 
 /* Exactly one block, and one byte either side of it: the padding takes a
    different branch when the tail leaves no room for the length. */
-MOLTEST(sha256_handles_the_block_boundary) {
+DESCRIBE(sha256_handles_the_block_boundary) {
     char message[130];
     memset(message, 'x', sizeof message);
 
@@ -127,7 +127,7 @@ static bool write_file(const char *path, const void *data, size_t length) {
     return fclose(file) == 0 && ok;
 }
 
-MOLTEST(sha256_hashes_a_file) {
+DESCRIBE(sha256_hashes_a_file) {
     char dir[512];
     ASSERT_TRUE(moltest_temp_dir("molto_sha256", dir, sizeof dir));
 
@@ -142,7 +142,7 @@ MOLTEST(sha256_hashes_a_file) {
     (void)remove(path);
 }
 
-MOLTEST(sha256_hashes_an_empty_file) {
+DESCRIBE(sha256_hashes_an_empty_file) {
     char dir[512];
     ASSERT_TRUE(moltest_temp_dir("molto_sha256", dir, sizeof dir));
 
@@ -159,7 +159,7 @@ MOLTEST(sha256_hashes_an_empty_file) {
 
 /* Larger than SHA256_CHUNK_SIZE, so the read loop goes round more than once
    and the watcher is called with a total it can divide by. */
-MOLTEST(sha256_reports_progress_over_a_file_it_reads_in_chunks) {
+DESCRIBE(sha256_reports_progress_over_a_file_it_reads_in_chunks) {
     const size_t length = SHA256_CHUNK_SIZE * 2 + 7;
     char *data = malloc(length);
     ASSERT_NOT_NULL(data);
@@ -192,7 +192,7 @@ MOLTEST(sha256_reports_progress_over_a_file_it_reads_in_chunks) {
     (void)remove(path);
 }
 
-MOLTEST(sha256_says_no_when_the_file_is_not_there) {
+DESCRIBE(sha256_says_no_when_the_file_is_not_there) {
     char hex[SHA256_HEX_SIZE];
     EXPECT_FALSE(sha256_file("no/such/archive.tar.gz", hex));
 }

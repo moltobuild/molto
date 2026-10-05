@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-MOLTEST(run_command) {
+DESCRIBE(run_command) {
     char root[MOLTEST_PATH];
     EXPECT_TRUE(moltest_temp_dir("molto_run", root, sizeof root));
 

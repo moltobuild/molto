@@ -47,7 +47,7 @@ static void built_workspace_teardown(built_workspace *workspace) {
     (void)fs_remove_tree(workspace->root);
 }
 
-MOLTEST(clean_removes_build_output_but_keeps_the_incremental_state) {
+DESCRIBE(clean_removes_build_output_but_keeps_the_incremental_state) {
     built_workspace workspace;
     ASSERT_TRUE(built_workspace_setup(&workspace));
     ASSERT_TRUE(fs_path_exists(workspace.build_dir));
@@ -60,7 +60,7 @@ MOLTEST(clean_removes_build_output_but_keeps_the_incremental_state) {
     built_workspace_teardown(&workspace);
 }
 
-MOLTEST(clean_all_also_removes_the_incremental_state) {
+DESCRIBE(clean_all_also_removes_the_incremental_state) {
     built_workspace workspace;
     ASSERT_TRUE(built_workspace_setup(&workspace));
 
@@ -79,7 +79,7 @@ MOLTEST(clean_all_also_removes_the_incremental_state) {
     built_workspace_teardown(&workspace);
 }
 
-MOLTEST(clean_on_an_already_clean_workspace_succeeds) {
+DESCRIBE(clean_on_an_already_clean_workspace_succeeds) {
     built_workspace workspace;
     ASSERT_TRUE(built_workspace_setup(&workspace));
 
@@ -91,7 +91,7 @@ MOLTEST(clean_on_an_already_clean_workspace_succeeds) {
     built_workspace_teardown(&workspace);
 }
 
-MOLTEST(clean_outside_a_workspace_is_a_manifest_error) {
+DESCRIBE(clean_outside_a_workspace_is_a_manifest_error) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_noclean", root, sizeof root));
     char previous[4096];

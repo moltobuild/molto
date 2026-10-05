@@ -66,7 +66,7 @@ static char *render_by_file(const char *text, const diagnostic_context *ctx) {
          "    1 |     return u->name;\n"                                                           \
          "      |             ^~\n"
 
-MOLTEST(a_failed_unit_is_named_framed_and_accounted_for) {
+DESCRIBE(a_failed_unit_is_named_framed_and_accounted_for) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    return u->name;\n"));
     char text[1024];
@@ -94,7 +94,7 @@ MOLTEST(a_failed_unit_is_named_framed_and_accounted_for) {
 /* The caret goes under the character the compiler named. The compiler counts
    from one and from the start of the line; the frame counts from the rule it
    drew, and the two have to meet. */
-MOLTEST(the_caret_lands_on_the_character_the_compiler_named) {
+DESCRIBE(the_caret_lands_on_the_character_the_compiler_named) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    return u->name;\n"));
     char text[1024];
@@ -115,7 +115,7 @@ MOLTEST(the_caret_lands_on_the_character_the_compiler_named) {
 /* A compiler drew its own excerpt and its own caret. Both are dropped, because
    this file draws them again from the source and its own are the ones that
    line up with the frame. */
-MOLTEST(the_compilers_own_excerpt_and_caret_are_not_drawn_twice) {
+DESCRIBE(the_compilers_own_excerpt_and_caret_are_not_drawn_twice) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    return u->name;\n"));
     char text[1024];
@@ -135,7 +135,7 @@ MOLTEST(the_compilers_own_excerpt_and_caret_are_not_drawn_twice) {
 
 /* clang draws the same pair without a gutter, so the caret is what identifies
    it and the line above it goes with it. */
-MOLTEST(clangs_excerpt_and_caret_are_recognised_too) {
+DESCRIBE(clangs_excerpt_and_caret_are_recognised_too) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    return u->name;\n"));
     char text[1024];
@@ -161,7 +161,7 @@ MOLTEST(clangs_excerpt_and_caret_are_recognised_too) {
 
 /* Which of your own files reached the header that broke is the one thing an
    include chain says, and it is worth saying. */
-MOLTEST(an_include_chain_is_folded_into_the_locator) {
+DESCRIBE(an_include_chain_is_folded_into_the_locator) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "int x = \"oops\";\n"));
     char text[1024];
@@ -185,7 +185,7 @@ MOLTEST(an_include_chain_is_folded_into_the_locator) {
 
 /* The ordinary case for `<command line>`, for `<built-in>`, and for a source
    generated and then removed: there is a location but nothing to read at it. */
-MOLTEST(a_source_that_cannot_be_read_degrades_to_the_locator) {
+DESCRIBE(a_source_that_cannot_be_read_degrades_to_the_locator) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:42:17: error: something went wrong\n";
     const diagnostic_context ctx = {.unit = "gone.c"};
     char *block = render(text, &ctx, false);
@@ -200,7 +200,7 @@ MOLTEST(a_source_that_cannot_be_read_degrades_to_the_locator) {
 
 /* A unit that compiled is not a unit that failed, and the glyph says so before
    any of the words do. */
-MOLTEST(a_unit_that_only_warned_is_not_reported_as_failed) {
+DESCRIBE(a_unit_that_only_warned_is_not_reported_as_failed) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    int tmp = 0;\n"));
     char text[1024];
@@ -225,7 +225,7 @@ MOLTEST(a_unit_that_only_warned_is_not_reported_as_failed) {
 /* A project's own code belongs to no package, and a dependency in the shared
    cache has no path worth printing. Both lines are left out rather than
    printed empty. */
-MOLTEST(the_footer_omits_what_it_has_nothing_to_say_about) {
+DESCRIBE(the_footer_omits_what_it_has_nothing_to_say_about) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: broken\n";
     const diagnostic_context ctx = {.unit = "src/main.c", .compiler = "gcc 12.3.0"};
     char *block = render(text, &ctx, false);
@@ -240,7 +240,7 @@ MOLTEST(the_footer_omits_what_it_has_nothing_to_say_about) {
 
 /* A package with no version — a path dependency, whose bytes are whatever is
    on disk — is named without one rather than with an empty one. */
-MOLTEST(a_dependency_without_a_version_is_named_without_one) {
+DESCRIBE(a_dependency_without_a_version_is_named_without_one) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: broken\n";
     const diagnostic_context ctx = {.unit = "src/db.c", .package = "database"};
     char *block = render(text, &ctx, false);
@@ -254,7 +254,7 @@ MOLTEST(a_dependency_without_a_version_is_named_without_one) {
 
 /* A note explains the error above it, so it continues that box instead of
    announcing itself as a finding of its own. */
-MOLTEST(a_note_continues_the_box_the_error_opened) {
+DESCRIBE(a_note_continues_the_box_the_error_opened) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:9:1: error: redefinition of 'f'\n"
                        "/tmp/molto_no_such_source_zzz.c:3:1: note: previous definition is here\n";
     const diagnostic_context ctx = {.unit = "src/main.c"};
@@ -272,7 +272,7 @@ MOLTEST(a_note_continues_the_box_the_error_opened) {
 /* A missing semicolon in C cascades. Forty frames is not more readable than
    forty lines, so past the limit the normalized form takes over — and it still
    says everything the frame would have. */
-MOLTEST(past_the_frame_limit_the_one_line_form_takes_over) {
+DESCRIBE(past_the_frame_limit_the_one_line_form_takes_over) {
     char text[4096] = "";
     size_t used = 0;
     for(int i = 1; i <= 14; i++)
@@ -298,7 +298,7 @@ MOLTEST(past_the_frame_limit_the_one_line_form_takes_over) {
 /* A project that asked for -fdiagnostics-color=always gets its escapes back
    out here: they were chosen to stand out against a plain stream, and they
    fight a frame that colours itself. */
-MOLTEST(escapes_the_compiler_was_told_to_emit_are_taken_back_out) {
+DESCRIBE(escapes_the_compiler_was_told_to_emit_are_taken_back_out) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: "
                        "\033[01;31mvery\033[0m bad\n";
     const diagnostic_context ctx = {.unit = "src/main.c"};
@@ -311,7 +311,7 @@ MOLTEST(escapes_the_compiler_was_told_to_emit_are_taken_back_out) {
     free(block);
 }
 
-MOLTEST(colour_is_the_callers_to_ask_for) {
+DESCRIBE(colour_is_the_callers_to_ask_for) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: broken\n";
     const diagnostic_context ctx = {.unit = "src/main.c"};
 
@@ -327,7 +327,7 @@ MOLTEST(colour_is_the_callers_to_ask_for) {
 }
 
 /* Most units compile quietly, and a frame around nothing is not a report. */
-MOLTEST(a_unit_with_nothing_to_say_is_drawn_as_nothing) {
+DESCRIBE(a_unit_with_nothing_to_say_is_drawn_as_nothing) {
     const diagnostic_context ctx = {.unit = "src/main.c"};
     EXPECT_NULL(render("", &ctx, false));
     EXPECT_NULL(render("1 warning generated.\n", &ctx, false));
@@ -342,7 +342,7 @@ MOLTEST(a_unit_with_nothing_to_say_is_drawn_as_nothing) {
 
 /* A link is not a compile, and a block that said "Failed to compile" over a
    linker's words would be naming the wrong step. */
-MOLTEST(a_link_is_reported_as_a_link) {
+DESCRIBE(a_link_is_reported_as_a_link) {
     diagnostic_list found;
     diagnostic_list_init(&found);
     ASSERT_TRUE(diagnostic_parse_link("/usr/bin/ld: /tmp/x.o: in function `main':\n"
@@ -372,7 +372,7 @@ MOLTEST(a_link_is_reported_as_a_link) {
    caret, as bare text at the column it belongs to. Nothing on that line says
    it is a suggestion, and a reader who has not seen one before cannot tell
    `%zu` from noise. */
-MOLTEST(a_fix_it_is_stated_as_a_suggestion) {
+DESCRIBE(a_fix_it_is_stated_as_a_suggestion) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    printf(\"Vector {%d}\\n\", vec.size);\n"));
     char text[1024];
@@ -399,7 +399,7 @@ MOLTEST(a_fix_it_is_stated_as_a_suggestion) {
 }
 
 /* gcc draws the same thing in the same place, gutter and all. */
-MOLTEST(a_fix_it_is_read_out_of_gccs_gutter_too) {
+DESCRIBE(a_fix_it_is_read_out_of_gccs_gutter_too) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    strcpy(dst, src);\n"));
     char text[1024];
@@ -423,7 +423,7 @@ MOLTEST(a_fix_it_is_read_out_of_gccs_gutter_too) {
 /* Two edits to one line arrive on one line, each under the column it applies
    to. They are two suggestions and they are said as two, because "( )" with
    eight spaces in it is not something anyone can type. */
-MOLTEST(several_edits_on_one_line_are_said_one_by_one) {
+DESCRIBE(several_edits_on_one_line_are_said_one_by_one) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "    if (a = b) {\n"));
     char text[1024];
@@ -449,7 +449,7 @@ MOLTEST(several_edits_on_one_line_are_said_one_by_one) {
 /* Only the caret above says that a line is a suggestion. Text that follows
    anything else is prose, and prose read out as an edit would be an invention
    the compiler never made. */
-MOLTEST(an_indented_line_that_follows_no_caret_is_not_a_suggestion) {
+DESCRIBE(an_indented_line_that_follows_no_caret_is_not_a_suggestion) {
     const char *text = "/tmp/molto_no_such_source_zzz.c:1:1: error: broken\n"
                        "    while compiling the template instantiated here\n";
     const diagnostic_context ctx = {.unit = "src/main.c"};
@@ -465,7 +465,7 @@ MOLTEST(an_indented_line_that_follows_no_caret_is_not_a_suggestion) {
 /* The two compilers count the column they report differently, and a caret
    placed under the wrong model lands where the compiler was not pointing.
    Same source, same character, two numbers — and one caret column. */
-MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
+DESCRIBE(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "\t\treturn nope;\n"));
 
@@ -497,7 +497,7 @@ MOLTEST(a_caret_lands_in_the_same_place_whichever_model_counted_it) {
    runs a compiler pass and a clang-tidy pass over every file, and clang-tidy
    counts bytes whichever compiler the project builds with — so the model
    belongs to the diagnostic and not to the report that holds it. */
-MOLTEST(one_report_can_hold_two_tools_that_counted_columns_differently) {
+DESCRIBE(one_report_can_hold_two_tools_that_counted_columns_differently) {
     char path[64];
     ASSERT_TRUE(write_source(path, sizeof path, "\treturn nope;\n"));
 
@@ -537,7 +537,7 @@ MOLTEST(one_report_can_hold_two_tools_that_counted_columns_differently) {
    diagnostic it explains, on lines carrying no file of their own. It belongs
    to the file below it: attached to the one above, it would name the wrong
    source and never be drawn, since a chain is only shown when a frame opens. */
-MOLTEST(an_include_chain_opens_the_block_of_the_file_it_leads_to) {
+DESCRIBE(an_include_chain_opens_the_block_of_the_file_it_leads_to) {
     const char *text = "src/main.c:4:9: warning: unused variable 'x' [-Wunused-variable]\n"
                        "In file included from src/deep/uses.c:1:\n"
                        "include/broken.h:2:11: error: expected ';' at end of declaration\n";
@@ -560,7 +560,7 @@ MOLTEST(an_include_chain_opens_the_block_of_the_file_it_leads_to) {
 
 /* The same, when there is no block above for it to be swallowed by: a run
    that opens without a file is named by the first finding that has one. */
-MOLTEST(a_run_that_opens_without_a_file_is_named_by_what_it_introduces) {
+DESCRIBE(a_run_that_opens_without_a_file_is_named_by_what_it_introduces) {
     const char *text = "In file included from src/deep/uses.c:1:\n"
                        "include/broken.h:2:11: error: expected ';' at end of declaration\n";
     const diagnostic_context ctx = {.action = diagnostic_view_checking};
@@ -580,7 +580,7 @@ MOLTEST(a_run_that_opens_without_a_file_is_named_by_what_it_introduces) {
 
 /* One blank line between blocks, and none before the first: the separator
    belongs between two drawings and nowhere else. */
-MOLTEST(blocks_are_separated_from_each_other_and_not_from_the_top) {
+DESCRIBE(blocks_are_separated_from_each_other_and_not_from_the_top) {
     const char *text = "src/a.c:1:1: warning: first\n"
                        "src/b.c:1:1: warning: second\n";
     const diagnostic_context ctx = {.action = diagnostic_view_checking};
@@ -598,7 +598,7 @@ MOLTEST(blocks_are_separated_from_each_other_and_not_from_the_top) {
 /* Findings about one file that arrive in two runs — the compiler pass, then
    the linter pass — are two blocks about that file rather than one, because
    what came between them was about another file. Each still names itself. */
-MOLTEST(a_file_named_again_after_another_opens_a_second_block) {
+DESCRIBE(a_file_named_again_after_another_opens_a_second_block) {
     const char *text = "src/a.c:1:1: warning: from the compiler\n"
                        "src/b.c:1:1: warning: from the compiler\n"
                        "src/a.c:1:1: warning: from the linter [bugprone-branch-clone]\n";
@@ -618,7 +618,7 @@ MOLTEST(a_file_named_again_after_another_opens_a_second_block) {
    about the file it just processed comes after the findings in it. Both carry
    no file of their own, and reading every such entry as a preamble would hand
    the tail of one block to the next one. */
-MOLTEST(a_suggestion_stays_with_the_finding_it_follows) {
+DESCRIBE(a_suggestion_stays_with_the_finding_it_follows) {
     const char *text = "include/broken.h:2:11: error: expected ';' at end of declaration\n"
                        "    2 |         int x = 1\n"
                        "      |                  ^\n"

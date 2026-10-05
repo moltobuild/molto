@@ -34,7 +34,7 @@ static void run_batch(size_t workers, int n, task_fn fn) {
     task_pool_destroy(pool);
 }
 
-MOLTEST(task_pool) {
+DESCRIBE(task_pool) {
     /* Every task runs exactly once, across worker counts and N >> workers.
        workers == 1 covers the "single core drains the whole queue" case. */
     run_batch(1, 1000, increment_task);

@@ -19,7 +19,7 @@ static void workspace_teardown(const char *root) {
     (void)fs_remove_tree(root);
 }
 
-MOLTEST(style_config_uses_the_defaults_when_the_file_is_absent) {
+DESCRIBE(style_config_uses_the_defaults_when_the_file_is_absent) {
     char root[64];
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 
@@ -39,7 +39,7 @@ MOLTEST(style_config_uses_the_defaults_when_the_file_is_absent) {
     workspace_teardown(root);
 }
 
-MOLTEST(style_config_reads_every_canonical_key) {
+DESCRIBE(style_config_reads_every_canonical_key) {
     style_config config;
     style_config_defaults(&config);
     char err[256] = "";
@@ -74,7 +74,7 @@ MOLTEST(style_config_reads_every_canonical_key) {
     EXPECT_EQ(1, (int)config.paths.exclude_count);
 }
 
-MOLTEST(style_config_refuses_a_key_it_does_not_know) {
+DESCRIBE(style_config_refuses_a_key_it_does_not_know) {
     style_config config;
     style_config_defaults(&config);
     char err[256] = "";
@@ -91,7 +91,7 @@ MOLTEST(style_config_refuses_a_key_it_does_not_know) {
     EXPECT_NOT_NULL(strstr(err, "indent"));
 }
 
-MOLTEST(style_config_refuses_a_value_it_cannot_express) {
+DESCRIBE(style_config_refuses_a_value_it_cannot_express) {
     style_config config;
     char err[256] = "";
 
@@ -112,7 +112,7 @@ MOLTEST(style_config_refuses_a_value_it_cannot_express) {
                                     &config, err, sizeof err));
 }
 
-MOLTEST(style_config_refuses_a_preset_it_has_not_implemented) {
+DESCRIBE(style_config_refuses_a_preset_it_has_not_implemented) {
     style_config config;
     char err[256] = "";
 
@@ -128,7 +128,7 @@ MOLTEST(style_config_refuses_a_preset_it_has_not_implemented) {
     EXPECT_NOT_NULL(strstr(err, "unknown preset"));
 }
 
-MOLTEST(style_config_refuses_malformed_json) {
+DESCRIBE(style_config_refuses_malformed_json) {
     style_config config;
     style_config_defaults(&config);
     char err[256] = "";
@@ -142,7 +142,7 @@ MOLTEST(style_config_refuses_malformed_json) {
     EXPECT_NOT_NULL(strstr(err, "object"));
 }
 
-MOLTEST(lint_config_reads_a_severity_map) {
+DESCRIBE(lint_config_reads_a_severity_map) {
     lint_config config;
     lint_config_defaults(&config);
     char err[256] = "";
@@ -164,7 +164,7 @@ MOLTEST(lint_config_reads_a_severity_map) {
     EXPECT_EQ(lint_severity_off, config.rules[2].severity);
 }
 
-MOLTEST(lint_config_refuses_a_severity_that_is_not_off_warn_or_error) {
+DESCRIBE(lint_config_refuses_a_severity_that_is_not_off_warn_or_error) {
     lint_config config;
     lint_config_defaults(&config);
     char err[256] = "";
@@ -186,7 +186,7 @@ MOLTEST(lint_config_refuses_a_severity_that_is_not_off_warn_or_error) {
  * written one of these files already knows this one, and a second spelling of a
  * familiar idea is a thing to learn for nothing.
  */
-MOLTEST(lint_config_reads_a_rule_with_options) {
+DESCRIBE(lint_config_reads_a_rule_with_options) {
     lint_config config;
     lint_config_defaults(&config);
     char err[256] = "";
@@ -216,7 +216,7 @@ MOLTEST(lint_config_reads_a_rule_with_options) {
 
 /* Both halves of the array are checked, and the message names what was written
    rather than describing what was expected. */
-MOLTEST(lint_config_refuses_a_rule_array_that_is_not_severity_and_options) {
+DESCRIBE(lint_config_refuses_a_rule_array_that_is_not_severity_and_options) {
     lint_config config;
     char err[256] = "";
 
@@ -248,7 +248,7 @@ MOLTEST(lint_config_refuses_a_rule_array_that_is_not_severity_and_options) {
  * told nothing about headers and therefore reported nothing in them, and no
  * project had declared that. Off is a decision; off by accident is what ended.
  */
-MOLTEST(lint_config_reads_the_project_s_headers_by_default) {
+DESCRIBE(lint_config_reads_the_project_s_headers_by_default) {
     lint_config config;
     lint_config_defaults(&config);
     EXPECT_TRUE(config.headers);
@@ -266,7 +266,7 @@ MOLTEST(lint_config_reads_the_project_s_headers_by_default) {
     EXPECT_FALSE(lint_config_parse("{\"headers\": \"yes\"}", &config, err, sizeof err));
 }
 
-MOLTEST(lint_config_reports_too_many_rules_as_an_error) {
+DESCRIBE(lint_config_reports_too_many_rules_as_an_error) {
     char document[4096] = "{\"rules\": {";
     size_t used = strlen(document);
     for (int i = 0; i < LINT_MAX_RULES + 1; i++)
@@ -283,7 +283,7 @@ MOLTEST(lint_config_reports_too_many_rules_as_an_error) {
     EXPECT_NOT_NULL(strstr(err, "too many"));
 }
 
-MOLTEST(style_excludes_match_a_directory_pattern) {
+DESCRIBE(style_excludes_match_a_directory_pattern) {
     style_excludes excludes;
     memset(&excludes, 0, sizeof excludes);
     snprintf(excludes.exclude[0], STYLE_EXCLUDE_MAX, "%s", "vendor/**");
@@ -299,7 +299,7 @@ MOLTEST(style_excludes_match_a_directory_pattern) {
     EXPECT_FALSE(style_excludes_match(&excludes, "src/net.c"));
 }
 
-MOLTEST(style_config_reads_the_file_from_the_workspace_root) {
+DESCRIBE(style_config_reads_the_file_from_the_workspace_root) {
     char root[64];
     ASSERT_TRUE(workspace_setup(root, sizeof root));
 

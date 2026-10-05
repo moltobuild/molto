@@ -254,7 +254,7 @@ static int run_lint(const lint_fixture *fixture, diagnostic_list *out) {
     "src/main.c: In function 'main':\n" \
     "src/main.c:1:16: warning: unused variable 'x' [-Wunused-variable]"
 
-MOLTEST(lint_collects_what_the_compiler_reports) {
+DESCRIBE(lint_collects_what_the_compiler_reports) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -269,7 +269,7 @@ MOLTEST(lint_collects_what_the_compiler_reports) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_also_runs_the_linter_that_pickup_reports) {
+DESCRIBE(lint_also_runs_the_linter_that_pickup_reports) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0,
         "src/main.c:1:5: error: an assignment within an 'if' condition is bug-prone "
@@ -285,7 +285,7 @@ MOLTEST(lint_also_runs_the_linter_that_pickup_reports) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_falls_back_to_the_compiler_when_there_is_no_linter) {
+DESCRIBE(lint_falls_back_to_the_compiler_when_there_is_no_linter) {
     lint_fixture fixture;
     /* The compiler pass is what RFC-0005 promises with nothing installed, so a
        machine without a linter still gets a useful answer. */
@@ -299,7 +299,7 @@ MOLTEST(lint_falls_back_to_the_compiler_when_there_is_no_linter) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_passes_the_project_settings_and_produces_no_build_output) {
+DESCRIBE(lint_passes_the_project_settings_and_produces_no_build_output) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -346,7 +346,7 @@ static bool add_dependency(const lint_fixture *fixture) {
                       "\n[deps]\ngreet = { path = \"modules/greet\" }\n");
 }
 
-MOLTEST(lint_analyses_against_what_the_dependencies_export) {
+DESCRIBE(lint_analyses_against_what_the_dependencies_export) {
     /* Lint used to resolve nothing at all, so a project with any dependency was
        told its own sources could not find their headers — a diagnostic that
        blames the user for a file Molto never looked for. The defines matter for
@@ -388,7 +388,7 @@ static bool write_resolver(const char *path) {
     return moltest_fake_program(path, "behave fake_pkg_config\n", NULL, 0);
 }
 
-MOLTEST(lint_analyses_against_what_the_host_provides) {
+DESCRIBE(lint_analyses_against_what_the_host_provides) {
     /* The build resolves `[target].host` (RFC-0016) and lint has to resolve it
        too. While it did not, a project naming a toolkit compiled cleanly and
        then reported `file not found` for that toolkit's header on every one of
@@ -430,7 +430,7 @@ MOLTEST(lint_analyses_against_what_the_host_provides) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_resolves_the_standard_the_way_the_build_does) {
+DESCRIBE(lint_resolves_the_standard_the_way_the_build_does) {
     /* A compile line is composed from the document now, where `-std` is a
        unit-scope option and unit scope reaches the line last (RFC-0013). So
        `[target].std` wins over a `-std=` written by hand into `[target].flags`,
@@ -460,7 +460,7 @@ MOLTEST(lint_resolves_the_standard_the_way_the_build_does) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
+DESCRIBE(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
 
@@ -482,7 +482,7 @@ MOLTEST(lint_hands_the_compile_arguments_to_the_linter_after_the_separator) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_orders_the_diagnostics_by_source) {
+DESCRIBE(lint_orders_the_diagnostics_by_source) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
     ASSERT_TRUE(write_file(fixture.root, "src/aaa.c", "int a(void){return 0;}\n"));
@@ -506,7 +506,7 @@ MOLTEST(lint_orders_the_diagnostics_by_source) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_skips_the_sources_linter_json_excludes) {
+DESCRIBE(lint_skips_the_sources_linter_json_excludes) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, NULL));
     ASSERT_TRUE(write_file(fixture.root, "src/vendor/third.c", "int t(void){return 0;}\n"));
@@ -526,7 +526,7 @@ MOLTEST(lint_skips_the_sources_linter_json_excludes) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_reports_a_tool_that_failed_without_saying_why) {
+DESCRIBE(lint_reports_a_tool_that_failed_without_saying_why) {
     lint_fixture fixture;
     /* A tool that fails silently still has to fail the lint, which it does by
        producing an error diagnostic like any other. */
@@ -540,7 +540,7 @@ MOLTEST(lint_reports_a_tool_that_failed_without_saying_why) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_refuses_a_rule_it_cannot_translate) {
+DESCRIBE(lint_refuses_a_rule_it_cannot_translate) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
     ASSERT_TRUE(write_file(fixture.root, "linter.json",
@@ -555,7 +555,7 @@ MOLTEST(lint_refuses_a_rule_it_cannot_translate) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_reports_an_invalid_configuration) {
+DESCRIBE(lint_reports_an_invalid_configuration) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, NULL));
     ASSERT_TRUE(write_file(fixture.root, "linter.json", "{\"rules\": \n"));
@@ -612,7 +612,7 @@ static int run_lint_refreshing(const lint_fixture *fixture, diagnostic_list *out
     return lint_project(fixture->root, &request, out);
 }
 
-MOLTEST(lint_replays_a_recorded_result_instead_of_running_the_tools_again) {
+DESCRIBE(lint_replays_a_recorded_result_instead_of_running_the_tools_again) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -644,7 +644,7 @@ MOLTEST(lint_replays_a_recorded_result_instead_of_running_the_tools_again) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_analyses_a_source_again_once_it_changes) {
+DESCRIBE(lint_analyses_a_source_again_once_it_changes) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -677,7 +677,7 @@ MOLTEST(lint_analyses_a_source_again_once_it_changes) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_analyses_a_source_again_once_the_env_changes) {
+DESCRIBE(lint_analyses_a_source_again_once_the_env_changes) {
     /* The tools run in the project's [env], so a recorded diagnostic answers
        for one environment and not another. */
     lint_fixture fixture;
@@ -701,7 +701,7 @@ MOLTEST(lint_analyses_a_source_again_once_the_env_changes) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_analyses_everything_again_when_asked_to_refresh) {
+DESCRIBE(lint_analyses_everything_again_when_asked_to_refresh) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -719,7 +719,7 @@ MOLTEST(lint_analyses_everything_again_when_asked_to_refresh) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_does_not_record_a_tool_that_failed_without_explaining_itself) {
+DESCRIBE(lint_does_not_record_a_tool_that_failed_without_explaining_itself) {
     lint_fixture fixture;
     /* Exits non-zero and says nothing: Molto synthesises an error for it. */
     ASSERT_TRUE(fixture_setup(&fixture, "", 1, NULL));
@@ -740,7 +740,7 @@ MOLTEST(lint_does_not_record_a_tool_that_failed_without_explaining_itself) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_does_not_record_a_result_for_content_that_is_already_gone) {
+DESCRIBE(lint_does_not_record_a_result_for_content_that_is_already_gone) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0, NULL));
 
@@ -807,7 +807,7 @@ static bool linter_says(const lint_fixture *fixture, const char *transcript, int
     return write_stub(fixture->linter, fixture->log, transcript, "1", code);
 }
 
-MOLTEST(lint_command_fails_when_an_error_is_reported) {
+DESCRIBE(lint_command_fails_when_an_error_is_reported) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
     ASSERT_TRUE(linter_says(&fixture,
@@ -822,7 +822,7 @@ MOLTEST(lint_command_fails_when_an_error_is_reported) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_command_fails_when_the_linter_could_not_process_a_file) {
+DESCRIBE(lint_command_fails_when_the_linter_could_not_process_a_file) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
     ASSERT_TRUE(linter_says(&fixture, TIDY_COULD_NOT_PROCESS, 1));
@@ -832,7 +832,7 @@ MOLTEST(lint_command_fails_when_the_linter_could_not_process_a_file) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_command_fails_when_the_linter_gives_up_without_a_diagnostic) {
+DESCRIBE(lint_command_fails_when_the_linter_gives_up_without_a_diagnostic) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
     /* Only the banner and a failing status: no parsed error to count, and the
@@ -844,7 +844,7 @@ MOLTEST(lint_command_fails_when_the_linter_gives_up_without_a_diagnostic) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_command_succeeds_when_there_are_only_warnings) {
+DESCRIBE(lint_command_succeeds_when_there_are_only_warnings) {
     lint_fixture fixture;
     /* Documented: a warning is reported and still succeeds. */
     ASSERT_TRUE(fixture_setup(&fixture, COMPILER_TRANSCRIPT, 0,
@@ -855,7 +855,7 @@ MOLTEST(lint_command_succeeds_when_there_are_only_warnings) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_command_succeeds_on_a_clean_run) {
+DESCRIBE(lint_command_succeeds_on_a_clean_run) {
     lint_fixture fixture;
     ASSERT_TRUE(fixture_setup(&fixture, "", 0, ""));
 
@@ -882,7 +882,7 @@ static bool sdk_fixture_setup(lint_fixture *fixture) {
 }
 
 #ifdef __APPLE__
-MOLTEST(lint_tells_the_linter_where_the_macos_sdk_is) {
+DESCRIBE(lint_tells_the_linter_where_the_macos_sdk_is) {
     /* Upstream clang, which is what clang-tidy is, does not look for the SDK
        the way Apple's clang does, and macOS has no /usr/include: without being
        told, clang-tidy reports `'stdio.h' file not found` on every source. */
@@ -905,7 +905,7 @@ MOLTEST(lint_tells_the_linter_where_the_macos_sdk_is) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_respects_an_sdk_the_environment_already_names) {
+DESCRIBE(lint_respects_an_sdk_the_environment_already_names) {
     /* SDKROOT is how a user, or Xcode, says which SDK they mean; lint asking
        xcrun over it would silently analyse against a different one. */
     lint_fixture fixture;
@@ -925,7 +925,7 @@ MOLTEST(lint_respects_an_sdk_the_environment_already_names) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_respects_an_sdk_the_project_env_names) {
+DESCRIBE(lint_respects_an_sdk_the_project_env_names) {
     lint_fixture fixture;
     ASSERT_TRUE(sdk_fixture_setup(&fixture));
     ASSERT_TRUE(write_file(fixture.root, "Project.toml",
@@ -946,7 +946,7 @@ MOLTEST(lint_respects_an_sdk_the_project_env_names) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_does_not_give_a_second_sysroot_to_a_command_that_has_one) {
+DESCRIBE(lint_does_not_give_a_second_sysroot_to_a_command_that_has_one) {
     /* A project that names its SDK on the compile line has decided; the linter
        sees that line after the separator and needs nothing else. */
     lint_fixture fixture;
@@ -971,7 +971,7 @@ MOLTEST(lint_does_not_give_a_second_sysroot_to_a_command_that_has_one) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_still_runs_the_linter_when_the_sdk_cannot_be_found) {
+DESCRIBE(lint_still_runs_the_linter_when_the_sdk_cannot_be_found) {
     /* A Mac without the Command Line Tools. Lint says why the linter is about
        to miss the system headers, and runs it anyway: what it reports is still
        the honest answer, and the compiler pass is unaffected. */
@@ -993,7 +993,7 @@ MOLTEST(lint_still_runs_the_linter_when_the_sdk_cannot_be_found) {
     fixture_teardown(&fixture);
 }
 
-MOLTEST(lint_analyses_again_once_the_sdk_changes) {
+DESCRIBE(lint_analyses_again_once_the_sdk_changes) {
     /* The system headers live in the SDK, and the dependency lists the cache
        watches leave system headers out, so the SDK itself has to be part of
        what a recorded result answers for. */
@@ -1014,7 +1014,7 @@ MOLTEST(lint_analyses_again_once_the_sdk_changes) {
     fixture_teardown(&fixture);
 }
 #else
-MOLTEST(lint_gives_the_linter_no_sdk_off_macos) {
+DESCRIBE(lint_gives_the_linter_no_sdk_off_macos) {
     /* Only macOS keeps its system headers in an SDK. Everywhere else the
        linter finds them where the compiler does, and nothing is asked. */
     lint_fixture fixture;

@@ -30,7 +30,7 @@ static json_document *read_database(const char *root) {
     return doc;
 }
 
-MOLTEST(compile_db) {
+DESCRIBE(compile_db) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_cdb", root, sizeof root));
 

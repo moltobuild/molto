@@ -37,7 +37,7 @@ static size_t visible_columns(const char *s) {
 
 #define FIT_BUFFER 512
 
-MOLTEST(a_line_that_fits_is_copied_unchanged) {
+DESCRIBE(a_line_that_fits_is_copied_unchanged) {
     char out[FIT_BUFFER];
 
     EXPECT_EQ(11u, viewport_fit("hello world", 40, out, sizeof out));
@@ -50,7 +50,7 @@ MOLTEST(a_line_that_fits_is_copied_unchanged) {
 
 /* A glyph is three bytes and one column, so a cut counted in bytes would land
    two thirds of the way into a character and put a broken one on the screen. */
-MOLTEST(a_line_is_cut_by_columns_and_not_by_bytes) {
+DESCRIBE(a_line_is_cut_by_columns_and_not_by_bytes) {
     char out[FIT_BUFFER];
     char blocks[121] = "";
     for(size_t i = 0; i < 40; i++)
@@ -60,7 +60,7 @@ MOLTEST(a_line_is_cut_by_columns_and_not_by_bytes) {
     EXPECT_EQ(10u, visible_columns(out));
 }
 
-MOLTEST(an_escape_costs_bytes_and_no_columns) {
+DESCRIBE(an_escape_costs_bytes_and_no_columns) {
     char out[FIT_BUFFER];
 
     /* Three columns of a line whose first six bytes are worth none of them. */
@@ -69,7 +69,7 @@ MOLTEST(an_escape_costs_bytes_and_no_columns) {
     EXPECT_EQ(0, strncmp(out, "\033[32m●\033[0m", 12));
 }
 
-MOLTEST(a_cut_never_lands_inside_an_escape) {
+DESCRIBE(a_cut_never_lands_inside_an_escape) {
     char out[FIT_BUFFER];
 
     /* The budget runs out where the sequence begins. */
@@ -89,7 +89,7 @@ MOLTEST(a_cut_never_lands_inside_an_escape) {
     }
 }
 
-MOLTEST(a_cut_never_lands_inside_a_character) {
+DESCRIBE(a_cut_never_lands_inside_a_character) {
     char out[FIT_BUFFER];
 
     /* Two bytes each, so three columns is six bytes and not five. */
@@ -97,7 +97,7 @@ MOLTEST(a_cut_never_lands_inside_a_character) {
     EXPECT_STREQ("áéí", out);
 }
 
-MOLTEST(a_truncated_line_closes_the_colour_it_opened) {
+DESCRIBE(a_truncated_line_closes_the_colour_it_opened) {
     char out[FIT_BUFFER];
 
     (void)viewport_fit("\033[31mabcdef", 3, out, sizeof out);
@@ -111,7 +111,7 @@ MOLTEST(a_truncated_line_closes_the_colour_it_opened) {
 
 /* The pin for NO_COLOR: a stream that asked for no escapes receives none, and
    a cut is not an excuse to write one. */
-MOLTEST(a_plain_line_that_is_cut_gains_no_escape) {
+DESCRIBE(a_plain_line_that_is_cut_gains_no_escape) {
     char out[FIT_BUFFER];
 
     EXPECT_EQ(3u, viewport_fit("abcdef", 3, out, sizeof out));
@@ -119,7 +119,7 @@ MOLTEST(a_plain_line_that_is_cut_gains_no_escape) {
     EXPECT_NULL(strchr(out, '\033'));
 }
 
-MOLTEST(a_line_with_no_room_at_all_is_an_empty_line) {
+DESCRIBE(a_line_with_no_room_at_all_is_an_empty_line) {
     char out[FIT_BUFFER];
 
     EXPECT_EQ(0u, viewport_fit("hello", 0, out, sizeof out));
@@ -131,7 +131,7 @@ MOLTEST(a_line_with_no_room_at_all_is_an_empty_line) {
 
 /* A buffer sized by the column count would be overrun by the third character
    outside ASCII. Refuse rather than half-write, as the bar does. */
-MOLTEST(a_buffer_sized_in_columns_is_refused) {
+DESCRIBE(a_buffer_sized_in_columns_is_refused) {
     char out[16];
 
     EXPECT_EQ(0u, viewport_fit("hello", 12, out, sizeof out));
@@ -140,7 +140,7 @@ MOLTEST(a_buffer_sized_in_columns_is_refused) {
 
 /* Escapes cost bytes and no columns, so a line of nothing else has no length a
    column count can predict. It must stop at the buffer, not at the budget. */
-MOLTEST(a_line_of_nothing_but_escapes_stops_at_the_buffer) {
+DESCRIBE(a_line_of_nothing_but_escapes_stops_at_the_buffer) {
     char line[4096] = "";
     for(size_t i = 0; i < 400; i++)
         (void)strcat(line, "\033[31m");
@@ -152,7 +152,7 @@ MOLTEST(a_line_of_nothing_but_escapes_stops_at_the_buffer) {
     EXPECT_EQ(written, strlen(out));
 }
 
-MOLTEST(the_region_is_a_third_of_the_screen_at_most) {
+DESCRIBE(the_region_is_a_third_of_the_screen_at_most) {
     EXPECT_EQ(8u, viewport_height(20, 24, 8));
     EXPECT_EQ(4u, viewport_height(20, 12, 8));
 
@@ -164,7 +164,7 @@ MOLTEST(the_region_is_a_third_of_the_screen_at_most) {
     EXPECT_EQ(0u, viewport_height(20, 2, 8));
 }
 
-MOLTEST(the_size_comes_from_the_environment_when_nothing_else_will_say) {
+DESCRIBE(the_size_comes_from_the_environment_when_nothing_else_will_say) {
     viewport_size size = viewport_size_from_env("120", "40");
     EXPECT_EQ(120u, size.columns);
     EXPECT_EQ(40u, size.rows);
@@ -205,7 +205,7 @@ static size_t occurrences(const char *text, const char *needle) {
 
 static const viewport_size WIDE = {.columns = 80, .rows = 24};
 
-MOLTEST(a_region_repaints_where_the_last_one_was) {
+DESCRIBE(a_region_repaints_where_the_last_one_was) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -231,7 +231,7 @@ MOLTEST(a_region_repaints_where_the_last_one_was) {
 
 /* The rows a frame gives up have to be blanked, or they sit under the region
    for the rest of the build saying something that stopped being true. */
-MOLTEST(a_region_that_shrinks_erases_what_it_no_longer_shows) {
+DESCRIBE(a_region_that_shrinks_erases_what_it_no_longer_shows) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -260,7 +260,7 @@ MOLTEST(a_region_that_shrinks_erases_what_it_no_longer_shows) {
     (void)fclose(out);
 }
 
-MOLTEST(a_region_that_grows_writes_the_rows_it_did_not_have) {
+DESCRIBE(a_region_that_grows_writes_the_rows_it_did_not_have) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -289,7 +289,7 @@ MOLTEST(a_region_that_grows_writes_the_rows_it_did_not_have) {
 
 /* The whole point of the module: a row wider than the terminal would take two
    rows of it, and every movement after that would land somewhere else. */
-MOLTEST(a_row_wider_than_the_terminal_is_cut_before_it_is_drawn) {
+DESCRIBE(a_row_wider_than_the_terminal_is_cut_before_it_is_drawn) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -311,7 +311,7 @@ MOLTEST(a_row_wider_than_the_terminal_is_cut_before_it_is_drawn) {
 /* The height of a build's region moves constantly as workers pick units up and
    put them down, so growing and shrinking are the ordinary case and not the
    edge. What each frame must not do is count from a height it no longer has. */
-MOLTEST(a_region_counts_from_the_height_it_last_drew) {
+DESCRIBE(a_region_counts_from_the_height_it_last_drew) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -344,7 +344,7 @@ MOLTEST(a_region_counts_from_the_height_it_last_drew) {
     (void)fclose(out);
 }
 
-MOLTEST(a_region_that_drew_nothing_is_not_cleared) {
+DESCRIBE(a_region_that_drew_nothing_is_not_cleared) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -359,7 +359,7 @@ MOLTEST(a_region_that_drew_nothing_is_not_cleared) {
     (void)fclose(out);
 }
 
-MOLTEST(clearing_takes_the_region_off_and_leaves_the_cursor_on_its_first_row) {
+DESCRIBE(clearing_takes_the_region_off_and_leaves_the_cursor_on_its_first_row) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
     viewport view;
@@ -393,7 +393,7 @@ MOLTEST(clearing_takes_the_region_off_and_leaves_the_cursor_on_its_first_row) {
 /* A temporary file is not a terminal, so the ioctl cannot answer and the
    environment is what is left. That fallback is the path the tests above pin,
    and this is what reaches it. */
-MOLTEST(a_stream_with_no_terminal_behind_it_falls_back) {
+DESCRIBE(a_stream_with_no_terminal_behind_it_falls_back) {
     FILE *out = tmpfile();
     ASSERT_NOT_NULL(out);
 

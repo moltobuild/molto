@@ -76,7 +76,7 @@ static const sbom_component *component_named(const sbom_document *document, cons
     return NULL;
 }
 
-MOLTEST(the_document_describes_the_package_and_what_it_links) {
+DESCRIBE(the_document_describes_the_package_and_what_it_links) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     EXPECT_TRUE(make_package(&at, "png",
@@ -117,7 +117,7 @@ MOLTEST(the_document_describes_the_package_and_what_it_links) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_path_dependency_is_reported_as_unverified) {
+DESCRIBE(a_path_dependency_is_reported_as_unverified) {
     /* Its bytes are whatever is on disk, so there is no checksum to state. The
        component still belongs in the document — leaving it out would be a
        document that quietly describes less than the build contains — but it
@@ -150,7 +150,7 @@ MOLTEST(a_path_dependency_is_reported_as_unverified) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_development_dependency_stays_out_unless_it_is_asked_for) {
+DESCRIBE(a_development_dependency_stays_out_unless_it_is_asked_for) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
     EXPECT_TRUE(make_package(&at, "png", "[about]\nlicense = \"libpng-2.0\"\n"));
@@ -187,7 +187,7 @@ MOLTEST(a_development_dependency_stays_out_unless_it_is_asked_for) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_package_in_both_tables_ships) {
+DESCRIBE(a_package_in_both_tables_ships) {
     /* One name is one node carrying both scopes (RFC-0008), so the test that
        decides whether it belongs in the document is on the bit and not on
        equality. Getting that wrong drops a library that is genuinely linked
@@ -223,7 +223,7 @@ MOLTEST(a_package_in_both_tables_ships) {
     sandbox_close(&at);
 }
 
-MOLTEST(a_package_with_no_dependencies_is_an_empty_document) {
+DESCRIBE(a_package_with_no_dependencies_is_an_empty_document) {
     /* The ordinary case for a small project, and the one an emitter is most
        likely to turn into a broken array. */
     project_ctx ctx;
@@ -247,7 +247,7 @@ MOLTEST(a_package_with_no_dependencies_is_an_empty_document) {
     dep_graph_free(graph);
 }
 
-MOLTEST(components_come_out_sorted_by_name) {
+DESCRIBE(components_come_out_sorted_by_name) {
     /* The graph is sorted already; what this pins is that collecting does not
        lose the order. A document whose diff reorders itself between runs is
        one nobody reads, which is the same reason Molto.lock is sorted. */
