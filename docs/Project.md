@@ -307,6 +307,12 @@ point gcovr or lcov at `build/coverage/`. `[profile.coverage]` is an ordinary
 profile table for anything else you want there. The profile needs a GCC- or
 Clang-compatible compiler, and is refused with MSVC ([RFC-0019](../rfcs/0019-the-coverage-profile.md)).
 
+A suite of several executables (`mode = "per_file"`) is measured as one run:
+`molto test` tells each executable its place in it, `MOLTO_TEST_INDEX` (from 1)
+of `MOLTO_TEST_COUNT`, so a plugin erases the counters in the first and reports
+in the last. The first runs alone before any other and the last alone after
+every other ([RFC-0020](../rfcs/0020-test-run-position.md)).
+
 ### I need environment variables during the build or the run
 
 ```toml
@@ -317,7 +323,9 @@ MY_APP_LOG = "debug"
 Exported into the compiler and linker invocations, and into the program under
 `molto run` and `molto test`. Variables are set **in the child process** after
 forking, so Molto's own environment is never modified and one project's `[env]`
-cannot leak elsewhere. Values must be strings.
+cannot leak elsewhere. Values must be strings. `MOLTO_TEST_INDEX` and
+`MOLTO_TEST_COUNT` are the exception: `molto test` sets them for each test
+executable, and an `[env]` entry of either name does not reach it (RFC-0020).
 
 Changing `[env]` recompiles and re-links, for the same reason changing a define
 does: it is part of what an object was built from, not merely how it was

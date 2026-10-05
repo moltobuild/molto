@@ -11,6 +11,11 @@
    `forwarded_count` arguments after `--` are passed to every test binary, so a
    framework's own options (`-v`, `-k <filter>`) reach it.
    Returns exit_ok if every test passes, otherwise a molto_exit_code. */
+/* What each test binary is told about its place in the run (RFC-0020): its
+   position from 1, and how many binaries the run starts. */
+#define TEST_RUN_INDEX_VAR "MOLTO_TEST_INDEX"
+#define TEST_RUN_COUNT_VAR "MOLTO_TEST_COUNT"
+
 [[nodiscard]] int test_command_run(const char *requested_profile, bool refresh_toolchain,
                                    size_t jobs, char *const *forwarded, int forwarded_count);
 
