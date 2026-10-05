@@ -2,7 +2,7 @@
 
 - RFC Number: 0020
 - Title: A Test Executable's Place in the Run
-- Status: Draft
+- Status: Accepted
 - Created: 2026-10-05
 
 ## Summary
@@ -68,6 +68,22 @@ The order is the order `molto test` prints the executables in. They run one
 after another, and one that fails does not stop the rest, so the executable
 whose index equals the count is always the last to run.
 
+### The order Molto keeps
+
+The position is only worth something if the first executable really starts
+the run and the last really ends it. Molto guarantees both, whatever way it
+schedules executables now or later:
+
+- the executable with index 1 runs alone, and finishes before any other starts;
+- the executable with index `MOLTO_TEST_COUNT` starts only after every other
+  has finished;
+- those in between may run one after another, as today, or at once.
+
+Today every executable runs alone, so the guarantee costs nothing. If
+`molto test` starts executables in parallel one day, it keeps the first and
+the last apart and parallelises the rest: two executables run on their own,
+and no plugin written against this RFC has to change.
+
 A run with a single executable, the `single` mode, says `1` and `1`. An
 executable started by hand, outside `molto test`, sees neither variable.
 
@@ -94,7 +110,9 @@ the others saying the report comes with the last executable.
 - **Report, merge or erase anything.** It names a position. The counters, and
   what they mean, stay the test framework's (RFC-0019).
 - **Order executables for a plugin's sake.** The order is the one Molto already
-  runs them in.
+  runs them in; it only keeps the first and the last on their own.
+- **Set anything for `molto run`.** It starts one program, which has no place
+  in a run of several.
 
 ## Molto testing itself
 
@@ -119,14 +137,15 @@ belong to the test framework.
 judging: the first executable would still apply the floor to part of the run.
 Knowing the last one is needed anyway, and with it the first comes for free.
 
-**A run directory.** Molto could hand each executable a directory shared by the
-run, where plugins leave state and count themselves. It covers executables run
-in parallel, which the index does not, at the cost of a protocol every plugin
-has to implement. It can be added when Molto runs tests in parallel.
+**A run directory, or a count of finished executables.** Molto could hand each
+executable a directory shared by the run, where plugins leave state and count
+themselves, and the last to finish reports. It allows every executable to run
+at once, at the cost of a locking protocol every plugin has to get right, on
+every platform. Keeping the first and the last on their own gives the same
+result to plugins that only read two variables.
 
-## Unresolved questions
-
-- **Parallel runs.** If `molto test` ever starts executables at once, the
-  highest index is no longer the last to finish. The run directory above, or a
-  count of finished executables, would then replace "index equals count".
-- Whether `molto run` should set anything similar. Nothing needs it today.
+**Extra runs before and after.** Molto could start an executable once more,
+before and after the suite, only to erase and to report. An executable that
+does not know the convention, such as a `per_file` test with its own `main()`,
+would run its tests again. The position is passive: an executable that ignores
+it loses nothing.
