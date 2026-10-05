@@ -135,7 +135,9 @@ DESCRIBE(a_token_is_never_an_argument_and_never_left_behind) {
                                      sizeof err));
     EXPECT_NULL(strstr(ran, "s3cr3t-token"));
     EXPECT_NOT_NULL(strstr(ran, "--config"));
-    EXPECT_STREQ("header = \"authorization: Bearer s3cr3t-token\"\n", config_text);
+    /* The line, not its ending: the file is written in text mode, so Windows
+       ends it with "\r\n", which curl reads the same. */
+    EXPECT_NOT_NULL(strstr(config_text, "header = \"authorization: Bearer s3cr3t-token\""));
     EXPECT_TRUE(config_private);
     EXPECT_FALSE(fs_path_exists(config_path));
     EXPECT_NOT_NULL(strstr(ran, "--request PUT"));
