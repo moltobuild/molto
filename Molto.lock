@@ -19,6 +19,6 @@ dependencies = []
 
 [[package]]
 name = "moltest_mock"
-source = "git+https://github.com/moltobuild/moltest-mock#v0.2.0"
+source = "git+https://github.com/moltobuild/moltest-mock#v0.4.0"
 scopes = ["dev"]
 dependencies = []
