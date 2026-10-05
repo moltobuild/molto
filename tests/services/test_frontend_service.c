@@ -2,7 +2,7 @@
 
 #include <molto/build/profile.h>
 
-#include "private_home.h"
+#include "../private_home.h"
 
 #include <molto/services/frontend_service.h>
 #include <molto/util/thread.h>

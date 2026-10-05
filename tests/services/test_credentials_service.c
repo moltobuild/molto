@@ -1,6 +1,6 @@
 #include <moltest.h>
 
-#include "private_home.h"
+#include "../private_home.h"
 
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
