@@ -186,7 +186,7 @@ line, and none of that changes which packages the graph contains.
 Adds a dependency to the `[deps]` table of `Project.toml`, writing an **exact
 version**: the one given after `@`, or the newest the registry offers when it is
 omitted. Accepts the same dependency sources defined in RFC-0003 (registry, git,
-path, archive, recipe). `--dev` adds it to `[dev-deps]` instead, for a
+path, archive, recipe). `--dev` (`-d`) adds it to `[dev-deps]` instead, for a
 dependency that must not reach the package's binary (RFC-0008).
 
 `molto add git+<url>[#<ref>]` takes a git source in the spelling `Molto.lock`

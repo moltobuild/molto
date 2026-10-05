@@ -464,7 +464,7 @@ Three rules worth knowing:
 ```sh
 molto add sqlite                      # the newest release, written as an exact version
 molto add sqlite@3.53.4               # that one
-molto add tinytest --dev --path ../tt # into [dev-deps]
+molto add tinytest -d --path ../tt   # into [dev-deps]; -d is --dev
 molto add git+https://github.com/moltobuild/moltest --dev  # git; name from the URL
 molto add git+https://github.com/org/zlib#v1.3.1            # at that tag
 molto remove sqlite
