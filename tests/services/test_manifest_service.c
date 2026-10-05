@@ -25,7 +25,7 @@ DESCRIBE(manifest_service) {
     EXPECT_TRUE(!manifest_is_valid_name("a/b"));    /* slash */
 
     /* Rendering a valid manifest. */
-    char *toml = manifest_render_default("my_app", project_kind_binary);
+    char *toml = manifest_render_default("my_app", project_kind_binary, NULL);
     EXPECT_TRUE(toml != NULL);
     if (toml != NULL) {
         EXPECT_TRUE(strstr(toml, "name = \"my_app\"") != NULL);
@@ -35,7 +35,7 @@ DESCRIBE(manifest_service) {
     }
 
     /* Invalid name yields no manifest. */
-    EXPECT_TRUE(manifest_render_default("Bad Name", project_kind_library) == NULL);
+    EXPECT_TRUE(manifest_render_default("Bad Name", project_kind_library, "v1.0.0") == NULL);
 }
 
 DESCRIBE(manifest_accepts_an_exact_version) {
@@ -80,7 +80,7 @@ DESCRIBE(manifest_rejects_a_version_that_is_not_one) {
 }
 
 DESCRIBE(manifest_declares_a_language_standard) {
-    char *toml = manifest_render_default("my_app", project_kind_binary);
+    char *toml = manifest_render_default("my_app", project_kind_binary, NULL);
     ASSERT_NOT_NULL(toml);
 
     /* Left to the compiler, the standard varies by toolchain and version, so a
@@ -106,7 +106,7 @@ DESCRIBE(manifest_declares_a_language_standard) {
 }
 
 DESCRIBE(manifest_declares_the_project_include_directory) {
-    char *toml = manifest_render_default("my_app", project_kind_binary);
+    char *toml = manifest_render_default("my_app", project_kind_binary, NULL);
     ASSERT_NOT_NULL(toml);
 
     /* `include` is the one [target] key that ships active. A header under
@@ -290,13 +290,15 @@ DESCRIBE(manifest_about_refuses_a_malformed_license) {
 }
 
 DESCRIBE(manifest_for_a_library_is_static_and_tested_with_moltest) {
-    char *toml = manifest_render_default("my_lib", project_kind_library);
+    /* Pinned to the release it was given, never a branch: what a new project
+       builds against is decided once, in its first diff (RFC-0003). */
+    char *toml = manifest_render_default("my_lib", project_kind_library, "v9.8.7");
     ASSERT_NOT_NULL(toml);
 
     EXPECT_NOT_NULL(strstr(toml, "artifact = \"static\""));
     EXPECT_NOT_NULL(strstr(toml, "mode = \"single\""));
-    EXPECT_NOT_NULL(strstr(toml, "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", branch = \""
-                                 MANIFEST_MOLTEST_BRANCH "\" }"));
+    EXPECT_NOT_NULL(strstr(toml, "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", tag = \"v9.8.7\" }"));
+    EXPECT_NULL(strstr(toml, "branch"));
 
     /* And it is a manifest Molto reads back as what it says. */
     char err[256] = "";
@@ -310,7 +312,7 @@ DESCRIBE(manifest_for_a_library_is_static_and_tested_with_moltest) {
 }
 
 DESCRIBE(manifest_for_a_binary_names_its_artifact) {
-    char *toml = manifest_render_default("my_app", project_kind_binary);
+    char *toml = manifest_render_default("my_app", project_kind_binary, NULL);
     ASSERT_NOT_NULL(toml);
 
     /* Spelled out even though it is the default: the key is how a reader
@@ -324,4 +326,8 @@ DESCRIBE(manifest_for_a_binary_names_its_artifact) {
     EXPECT_EQ(0, ctx.dev_deps.count);
 
     free(toml);
+}
+
+DESCRIBE(manifest_for_a_library_needs_a_release_to_pin) {
+    EXPECT_NULL(manifest_render_default("my_lib", project_kind_library, NULL));
 }

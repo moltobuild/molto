@@ -16,7 +16,7 @@ DESCRIBE(scaffold) {
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
-    EXPECT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_ok);
+    EXPECT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_ok);
 
     char path[700];
     /* Layout: Project.toml, src/, tests/, and a starter src/main.c. */
@@ -40,7 +40,7 @@ DESCRIBE(scaffold) {
     /* Re-scaffolding must not clobber an existing main.c (and reports the
        manifest already exists). */
     EXPECT_TRUE(fs_write_file(path, "int main(void) { return 7; }\n"));
-    EXPECT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_invalid_manifest);
+    EXPECT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_invalid_manifest);
     char *kept = fs_read_file(path);
     EXPECT_TRUE(kept != NULL && strstr(kept, "return 7") != NULL);
     free(kept);
@@ -55,7 +55,7 @@ DESCRIBE(scaffold_creates_the_include_directory_the_manifest_declares) {
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_ok);
 
     /* The generated manifest declares include = ["include"], so the directory
        has to exist: a manifest that points at nothing is worse than one that
@@ -74,7 +74,7 @@ DESCRIBE(scaffold_ignores_the_directories_molto_owns) {
 
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_ok);
 
     /* Without this, `git add -A` on a fresh project commits the build output
        and the workspace database, which is binary and changes on every build. */
@@ -108,7 +108,7 @@ DESCRIBE(scaffold_keeps_an_existing_gitignore) {
     snprintf(path, sizeof path, "%s/.gitignore", project);
     ASSERT_TRUE(fs_write_file(path, "*.log\n"));
 
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_ok);
 
     char *ignore = fs_read_file(path);
     ASSERT_NOT_NULL(ignore);
@@ -137,7 +137,7 @@ DESCRIBE(scaffold_library_writes_a_header_a_source_and_a_moltest_suite) {
     ASSERT_TRUE(moltest_temp_dir("molto_lib", root, sizeof root));
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_library) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_library, MANIFEST_MOLTEST_KNOWN_TAG) == exit_ok);
 
     EXPECT_TRUE(holds(project, "include/demo.h", "#ifndef DEMO_H"));
     EXPECT_TRUE(holds(project, "include/demo.h", "int demo_add(int a, int b);"));
@@ -164,7 +164,7 @@ DESCRIBE(scaffold_library_keeps_existing_sources) {
     snprintf(path, sizeof path, "%s/src/demo.c", project);
     ASSERT_TRUE(fs_write_file(path, "int mine;\n"));
 
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_library) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_library, MANIFEST_MOLTEST_KNOWN_TAG) == exit_ok);
     EXPECT_TRUE(holds(project, "src/demo.c", "int mine;"));
 
     (void)fs_remove_tree(root);
@@ -175,7 +175,7 @@ DESCRIBE(scaffold_binary_declares_an_executable) {
     ASSERT_TRUE(moltest_temp_dir("molto_bin", root, sizeof root));
     char project[600];
     snprintf(project, sizeof project, "%s/demo", root);
-    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary) == exit_ok);
+    ASSERT_TRUE(scaffold_project(project, "demo", project_kind_binary, NULL) == exit_ok);
 
     EXPECT_TRUE(holds(project, "Project.toml", "artifact = \"executable\""));
     EXPECT_FALSE(holds(project, "Project.toml", "[dev-deps]"));

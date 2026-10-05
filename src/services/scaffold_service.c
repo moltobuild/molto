@@ -3,6 +3,7 @@
 #include <molto/exit_code.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/manifest_service.h>
+#include <molto/services/source_service.h>
 
 #include <ctype.h>
 #include <limits.h>
@@ -17,7 +18,8 @@ static bool make_subdir(const char *root, const char *sub) {
     return fs_make_dir(path);
 }
 
-static int write_manifest(const char *root, const char *name, project_kind kind) {
+static int write_manifest(const char *root, const char *name, project_kind kind,
+                          const char *moltest_tag) {
     char path[PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/Project.toml", root)) {
         fprintf(stderr, "molto: path too long to compose (%s)\n", root);
@@ -27,7 +29,7 @@ static int write_manifest(const char *root, const char *name, project_kind kind)
         fprintf(stderr, "molto: '%s' already exists\n", path);
         return exit_invalid_manifest;
     }
-    char *content = manifest_render_default(name, kind);
+    char *content = manifest_render_default(name, kind, moltest_tag);
     if(content == NULL) {
         fprintf(stderr, "molto: failed to render manifest\n");
         return exit_build_failure;
@@ -143,7 +145,8 @@ static int write_library_files(const char *root, const char *name) {
     return write_named_file(root, "tests/test_%s.c", name, content, rendered);
 }
 
-int scaffold_project(const char *root, const char *name, project_kind kind) {
+int scaffold_project(const char *root, const char *name, project_kind kind,
+                     const char *moltest_tag) {
     if(!manifest_is_valid_name(name)) {
         fprintf(stderr, "molto: invalid package name '%s' (use snake_case)\n", name);
         return exit_usage_error;
@@ -158,7 +161,7 @@ int scaffold_project(const char *root, const char *name, project_kind kind) {
         fprintf(stderr, "molto: could not create project layout\n");
         return exit_build_failure;
     }
-    int result = write_manifest(root, name, kind);
+    int result = write_manifest(root, name, kind, moltest_tag);
     if(result != exit_ok)
         return result;
     result = kind == project_kind_library ? write_library_files(root, name)
@@ -166,4 +169,16 @@ int scaffold_project(const char *root, const char *name, project_kind kind) {
     if(result != exit_ok)
         return result;
     return write_starter_file(root, ".gitignore", gitignore_template);
+}
+
+void scaffold_newest_moltest_tag(char *out, size_t size) {
+    char err[512] = "";
+    if(source_git_newest_release(MANIFEST_MOLTEST_GIT, out, size, err, sizeof err))
+        return;
+    /* Offline is a fine place to start a project; a branch is not a fine
+       thing to start it on. The newest release this molto knows of is still
+       a release, and the manifest says which. */
+    snprintf(out, size, "%s", MANIFEST_MOLTEST_KNOWN_TAG);
+    fprintf(stderr, "molto: %s; moltest pinned to %s, the newest release this molto knows\n", err,
+            MANIFEST_MOLTEST_KNOWN_TAG);
 }

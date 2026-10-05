@@ -71,12 +71,15 @@ debug_info = false
 mode = "single"         # moltest registers the tests and owns main()
 
 [dev-deps]
-moltest = { git = "https://github.com/moltobuild/moltest", branch = "master" }
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
 ```
 
 `artifact`, `std` and `include` ship active; the rest are commented
 documentation. moltest is offered, not required: delete the `[dev-deps]` line
-and the test to use something else.
+and the test to use something else. It is pinned to the newest release when the
+project is created, asked of its repository; offline, to the newest release
+that molto knows, and molto says so. Never to a branch, which would let whatever
+lands on it next into the project without a diff.
 
 `molto new my_app --bin` creates a **program** instead: the same manifest with
 `artifact = "executable"` and without `[test]` or `[dev-deps]`, and a starter

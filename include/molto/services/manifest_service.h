@@ -102,12 +102,18 @@ typedef enum {
     project_kind_binary,  /* artifact = "executable", with a src/main.c */
 } project_kind;
 
-/* Where a new library's moltest comes from. */
+/* Where a new library's moltest comes from, and the newest release this molto
+   was built knowing of: what `molto new` pins when the repository cannot be
+   asked. Never a branch, which would let whatever lands on it next into every
+   project created from it, with no diff anyone read (RFC-0003). */
 #define MANIFEST_MOLTEST_GIT "https://github.com/moltobuild/moltest"
-#define MANIFEST_MOLTEST_BRANCH "master"
+#define MANIFEST_MOLTEST_KNOWN_TAG "v0.3.0"
 
 /* Render a default Project.toml of the given kind for a package named `name`.
-   Returns a heap-allocated string the caller must free(), or NULL on error. */
-[[nodiscard]] char *manifest_render_default(const char *name, project_kind kind);
+   A library is tested with moltest pinned to `moltest_tag`, which it needs;
+   a binary ignores it. Returns a heap-allocated string the caller must free(),
+   or NULL on error. */
+[[nodiscard]] char *manifest_render_default(const char *name, project_kind kind,
+                                            const char *moltest_tag);
 
 #endif /* MOLTO_MANIFEST_SERVICE_H */

@@ -65,7 +65,9 @@ the key exists.
 its own repository; the starter manifest names it like any other dependency,
 and deleting that line and the test is all it takes to use something else.
 Until moltest is published to the registry it is taken from git
-(`https://github.com/moltobuild/moltest`, branch `master`).
+(`https://github.com/moltobuild/moltest`), pinned to the newest release tag at
+the moment the project is created; offline, to the newest release that molto
+knows. Never a branch: an exact version, chosen once, in a diff (RFC-0003).
 
 The generated manifest declares `[target].std`. Left undeclared, the language
 standard is whatever the local compiler defaults to, which varies by toolchain

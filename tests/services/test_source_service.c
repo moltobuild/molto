@@ -876,3 +876,31 @@ DESCRIBE(providing_nothing_touches_nothing) {
     char err[256] = "";
     EXPECT_TRUE(source_provide("/nonexistent/path", &empty, err, sizeof err));
 }
+
+/* --- the newest release a git repository tags --- */
+
+DESCRIBE(the_newest_release_is_the_highest_stable_version_tag) {
+    /* What `git ls-remote --tags --refs` prints: one ref per line, in the
+       order git sorts names, which is not the order of versions. */
+    static const char *const listing =
+        "1111111111111111111111111111111111111111\trefs/tags/v0.10.0\n"
+        "2222222222222222222222222222222222222222\trefs/tags/v0.2.0\n"
+        "3333333333333333333333333333333333333333\trefs/tags/v0.9.1\n"
+        "4444444444444444444444444444444444444444\trefs/tags/v1.0.0-rc.1\n"
+        "5555555555555555555555555555555555555555\trefs/tags/nightly\n"
+        "6666666666666666666666666666666666666666\trefs/tags/0.11.0\n";
+    char tag[64] = "";
+    ASSERT_TRUE(source_newest_release_tag(listing, tag, sizeof tag));
+    /* A pre-release is not a release, and a tag that is no version is not one
+       either; a bare 0.11.0 counts, and is written as it was tagged. */
+    EXPECT_STREQ("0.11.0", tag);
+}
+
+DESCRIBE(a_listing_without_a_release_has_no_newest) {
+    char tag[64] = "";
+    EXPECT_FALSE(source_newest_release_tag("", tag, sizeof tag));
+    EXPECT_FALSE(source_newest_release_tag(
+        "1111111111111111111111111111111111111111\trefs/tags/v2.0.0-beta\n"
+        "2222222222222222222222222222222222222222\trefs/tags/latest\n",
+        tag, sizeof tag));
+}
