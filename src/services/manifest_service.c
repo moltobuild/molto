@@ -278,25 +278,34 @@ static const char manifest_template[] =
 /* What a library is tested with. moltest is the ecosystem's tester and owns
    main(), so the suite links into one executable. It is a dependency like any
    other, written where the user can see it and delete it: nothing in molto
-   requires it. Taken from git until moltest is on the registry. */
+   requires it. Taken from git until moltest is on the registry, at the release
+   it was given: the tag goes in through `%s`. */
 static const char library_test_section[] =
     "\n"
     "[test]\n"
     "mode = \"single\"         # moltest registers the tests and owns main()\n"
     "\n"
     "[dev-deps]\n"
-    "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", branch = \"" MANIFEST_MOLTEST_BRANCH "\" }\n";
+    "moltest = { git = \"" MANIFEST_MOLTEST_GIT "\", tag = \"%s\" }\n";
 
-char *manifest_render_default(const char *name, project_kind kind) {
+char *manifest_render_default(const char *name, project_kind kind, const char *moltest_tag) {
     if(!manifest_is_valid_name(name))
         return NULL;
+    const bool library = kind == project_kind_library;
+    char tests[sizeof library_test_section + 64] = "";
+    if(library) {
+        const int written = moltest_tag == NULL
+                                ? -1
+                                : snprintf(tests, sizeof tests, library_test_section, moltest_tag);
+        if(written < 0 || (size_t)written >= sizeof tests)
+            return NULL;
+    }
     /* Written out rather than left to the default: `executable` is what an
        absent key means (RFC-0003), and a starter manifest that says which one
        it is teaches the key instead of hiding it. */
-    const bool library = kind == project_kind_library;
     const char *artifact = library ? "static" : "executable";
     const char *padding = library ? "       " : "   ";
-    const char *tail = library ? library_test_section : "";
+    const char *tail = tests;
     int needed = snprintf(NULL, 0, manifest_template, name, artifact, padding, tail);
     if(needed < 0)
         return NULL;

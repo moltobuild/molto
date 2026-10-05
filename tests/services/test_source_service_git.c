@@ -1,7 +1,9 @@
 #include <moltest.h>
 #include <moltest_mock.h>
 
+#include <molto/services/manifest_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/scaffold_service.h>
 #include <molto/services/source_service.h>
 
 #include <stdio.h>
@@ -102,4 +104,41 @@ DESCRIBE(a_repository_that_names_no_default_branch_asks_for_a_ref) {
     process_capture_mock.custom_fake = git_answers;
     EXPECT_FALSE(ask(NULL));
     EXPECT_NOT_NULL(strstr(err, "add #<ref>"));
+}
+
+DESCRIBE(the_newest_release_is_asked_of_the_repositorys_tags) {
+    answer = "1111111111111111111111111111111111111111\trefs/tags/v0.2.0\n"
+             "2222222222222222222222222222222222222222\trefs/tags/v0.3.0\n";
+    process_capture_mock.custom_fake = git_answers;
+    char tag[64] = "";
+    ASSERT_TRUE(source_git_newest_release("https://example.com/repo", tag, sizeof tag, err,
+                                          sizeof err));
+    EXPECT_STREQ("v0.3.0", tag);
+    EXPECT_STREQ("git ls-remote --tags --refs https://example.com/repo", ran);
+}
+
+DESCRIBE(a_repository_without_releases_says_so) {
+    answer = "";
+    process_capture_mock.custom_fake = git_answers;
+    char tag[64] = "";
+    EXPECT_FALSE(source_git_newest_release("https://example.com/repo", tag, sizeof tag, err,
+                                           sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "no release"));
+}
+
+DESCRIBE(a_new_library_pins_the_newest_moltest) {
+    answer = "1111111111111111111111111111111111111111\trefs/tags/v0.4.2\n";
+    process_capture_mock.custom_fake = git_answers;
+    char tag[64] = "";
+    scaffold_newest_moltest_tag(tag, sizeof tag);
+    EXPECT_STREQ("v0.4.2", tag);
+}
+
+DESCRIBE(offline_a_new_library_pins_the_release_molto_knows) {
+    /* Never a branch: without an answer, the newest release this molto was
+       built knowing of. */
+    process_capture_mock.return_val = 128;
+    char tag[64] = "";
+    scaffold_newest_moltest_tag(tag, sizeof tag);
+    EXPECT_STREQ(MANIFEST_MOLTEST_KNOWN_TAG, tag);
 }

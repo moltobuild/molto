@@ -10,7 +10,11 @@ int new_command_run(const char *name, project_kind kind) {
         fprintf(stderr, "molto: 'new' requires a project name\n");
         return exit_usage_error;
     }
-    int code = scaffold_project(name, name, kind);
+    /* Asked only for a library: a binary has no tests to pin anything for. */
+    char moltest_tag[64] = "";
+    if(kind == project_kind_library)
+        scaffold_newest_moltest_tag(moltest_tag, sizeof moltest_tag);
+    int code = scaffold_project(name, name, kind, moltest_tag);
     if(code == exit_ok)
         printf("Created %s '%s'\n", kind == project_kind_library ? "library" : "binary", name);
     return code;

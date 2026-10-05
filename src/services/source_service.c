@@ -4,6 +4,7 @@
 #include <molto/services/paths_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/recipe_service.h>
+#include <molto/util/semver.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -821,5 +822,61 @@ bool source_provide(const char *root, const struct recipe_provide *provide, char
         if(!provide_one(root, root_real, &provide->items[i], i, err, err_size))
             return false;
     }
+    return true;
+}
+
+/* The tag `line` of an ls-remote listing names, or NULL: "<sha>\trefs/tags/<tag>". */
+static const char *tag_of(const char *line, size_t length, char *tag, size_t size) {
+    static const char prefix[] = "refs/tags/";
+    const char *tab = memchr(line, '\t', length);
+    if(tab == NULL)
+        return NULL;
+    const char *name = tab + 1;
+    const size_t rest = length - (size_t)(name - line);
+    if(rest <= sizeof prefix - 1 || strncmp(name, prefix, sizeof prefix - 1) != 0)
+        return NULL;
+    const size_t tag_length = rest - (sizeof prefix - 1);
+    if(tag_length >= size)
+        return NULL;
+    memcpy(tag, name + sizeof prefix - 1, tag_length);
+    tag[tag_length] = '\0';
+    return tag;
+}
+
+bool source_newest_release_tag(const char *listing, char *out, size_t size) {
+    bool found = false;
+    semver newest = {0};
+    for(const char *line = listing; *line != '\0';) {
+        const char *end = strchr(line, '\n');
+        const size_t length = end != NULL ? (size_t)(end - line) : strlen(line);
+        char tag[128];
+        semver version;
+        /* A release is a version, with or without the `v` tags usually carry,
+           and not a pre-release: a new project starts on what was released. */
+        if(tag_of(line, length, tag, sizeof tag) != NULL &&
+           semver_parse(tag[0] == 'v' ? tag + 1 : tag, &version) && version.prerelease[0] == '\0' &&
+           (!found || semver_compare(&version, &newest) > 0) && strlen(tag) < size) {
+            newest = version;
+            snprintf(out, size, "%s", tag);
+            found = true;
+        }
+        line = end != NULL ? end + 1 : line + length;
+    }
+    return found;
+}
+
+bool source_git_newest_release(const char *url, char *out, size_t size, char *err,
+                               size_t err_size) {
+    if(url[0] == '-')
+        return fail(err, err_size, "a git URL may not begin with '-'");
+    const char *argv[] = {"git", "ls-remote", "--tags", "--refs", url, NULL};
+    char captured[8192] = "";
+    const int code = process_capture(argv, captured, sizeof captured);
+    if(code == 127)
+        return fail(err, err_size, "git is not installed, and molto needs it to ask for a release");
+    if(code != 0)
+        return fail_about(err, err_size, "could not reach the repository", url);
+    if(!source_newest_release_tag(captured, out, size))
+        return fail_about(err, err_size, "the repository tags no release", url);
     return true;
 }

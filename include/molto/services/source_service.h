@@ -195,4 +195,13 @@ struct recipe_provide;
 [[nodiscard]] bool source_provide(const char *root, const struct recipe_provide *provide, char *err,
                                   size_t err_size);
 
+/* The newest release in what `git ls-remote --tags --refs` printed: the
+   highest tag that is a version, with or without a leading `v`, and not a
+   pre-release. Written as it was tagged. False when there is none. */
+[[nodiscard]] bool source_newest_release_tag(const char *listing, char *out, size_t size);
+
+/* Ask the repository at `url` for its newest release (see above). */
+[[nodiscard]] bool source_git_newest_release(const char *url, char *out, size_t size, char *err,
+                                             size_t err_size);
+
 #endif /* MOLTO_SOURCE_SERVICE_H */

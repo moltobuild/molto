@@ -17,7 +17,10 @@ int init_command_run(project_kind kind) {
     }
     const char *slash = strrchr(cwd, '/');
     const char *base = slash != NULL ? slash + 1 : cwd;
-    int code = scaffold_project(".", base, kind);
+    char moltest_tag[64] = "";
+    if(kind == project_kind_library)
+        scaffold_newest_moltest_tag(moltest_tag, sizeof moltest_tag);
+    int code = scaffold_project(".", base, kind, moltest_tag);
     if(code == exit_ok)
         printf("Initialized %s '%s'\n", kind == project_kind_library ? "library" : "binary", base);
     return code;
