@@ -43,6 +43,18 @@ replaces = ["src/services/process_service.c"]
 file = "tests/services/test_registry_service_curl.c"
 replaces = ["src/services/process_service.c"]
 
+# What the registry answers, without a registry: every status, and an answer
+# about another coordinate than the one asked for.
+[[test.isolated]]
+file = "tests/services/test_resolve_service_registry.c"
+replaces = ["src/services/registry_service.c"]
+
+# A small registry and a fetcher that only counts: the walk, the downloads it
+# puts off, and the search for a way out of a conflict.
+[[test.isolated]]
+file = "tests/services/test_dep_graph_registry.c"
+replaces = ["src/services/resolve_service.c", "src/services/source_service.c"]
+
 # Development dependencies come from molto's shared store, fetched once and
 # reused by every project that names the same tag. The suite is therefore built
 # by molto: the bootstrap Makefile builds the first molto and nothing else, and
