@@ -302,8 +302,10 @@ replaces = ["src/services/process_service.c"]   # or "dep:src/x.c", or "dep"
 
 That file links into an executable of its own, `build/<profile>/tests/<stem>`,
 without those sources; the rest of the suite keeps its mode. Everything else
-the project and its dependencies compiled is linked as an archive, so the test
-fakes only what its code under test reaches. A replacement that names no
+the project and its dependencies compiled is linked as an archive, so only the
+files the test reaches are linked; the test fakes what those files call. The
+linker takes a file whole, so that includes calls from functions the test never
+runs, and a missing one is an undefined symbol molto points back to here. A replacement that names no
 source of the build, or names a `[dev-deps]` package, is a manifest error. A
 call between two functions of one `.c` cannot be faked: move one of them to
 another file ([RFC-0021](../rfcs/0021-isolated-tests.md)).

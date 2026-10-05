@@ -206,6 +206,11 @@ Where it differs from the design above:
   replaced source defined the missing symbol needs that source's symbols, from
   an object reader per format. The note says the test replaces those files and
   that a function of them it reaches has to be faked.
+- **What a test fakes is per file, not per call.** The linker takes an archive
+  member whole, so a test fakes every function of a replaced source that the
+  files it pulls in call, including from functions it never runs. Molto's
+  first isolated test fakes `process_run` because `source_service.c` clones
+  with it, though the test only asks git for references.
 - **Not in the IR document.** `molto ir` still describes the suite as before;
   the isolated executables are composed when the tests are linked.
 

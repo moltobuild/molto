@@ -206,7 +206,8 @@ static bool is_test_file(const char *root, const char *source) {
  * The archive is the point. Linked loose, every remaining object is in the
  * binary, and each one that calls into a replaced source needs a fake whether
  * the test reaches it or not. From an archive the linker takes only the
- * members the test reaches, so it fakes what its code calls and nothing else.
+ * members the test reaches. It takes each of those whole, so the test fakes
+ * what they call, used or not, and nothing beyond them.
  * One archive needs no --start-group: a linker rescans an archive's own index
  * until it stops pulling members. The framework stays loose because a
  * constructor in a member nothing references would never be pulled in.
@@ -249,8 +250,8 @@ static bool is_test_file(const char *root, const char *source) {
         /* What the linker cannot know: the symbol it missed most likely lived
            in a file this test asked to leave out. */
         build_report_message(context->report,
-                             "molto: note: %s replaces %s%s; a function of it the test reaches "
-                             "has to be faked in the test\n",
+                             "molto: note: %s replaces %s%s; a function of it that the linked "
+                             "code calls has to be faked in the test\n",
                              entry->file, entry->replaces[0],
                              entry->replace_count > 1 ? " and more" : "");
         ok = false;

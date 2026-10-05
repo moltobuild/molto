@@ -31,6 +31,12 @@ flags = ["-Wall", "-Wextra", "-Wpedantic", "-pthread"]
 # into one executable.
 mode = "single"
 
+# What git answers, without git: its failures are the paths a real repository
+# cannot be made to take on demand. Linked alone, without the real processes.
+[[test.isolated]]
+file = "tests/services/test_source_service_git.c"
+replaces = ["src/services/process_service.c"]
+
 # Development dependencies come from molto's shared store, fetched once and
 # reused by every project that names the same tag. The suite is therefore built
 # by molto: the bootstrap Makefile builds the first molto and nothing else, and
@@ -40,6 +46,8 @@ moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
 # The coverage report and its floor (moltest-coverage.toml), at the end of
 # `molto test --profile coverage` (RFC-0019).
 moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.2.0" }
+# Fakes for the isolated tests below, the ones that replace a source (RFC-0021).
+moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.2.0" }
 
 [profile.debug]
 opt_level = 0
