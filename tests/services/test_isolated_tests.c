@@ -1,6 +1,7 @@
 #include <moltest.h>
 
 #include <molto/build/profile.h>
+#include <molto/build/report.h>
 #include <molto/exit_code.h>
 #include <molto/services/build_service.h>
 #include <molto/services/fs_service.h>
@@ -222,5 +223,64 @@ DESCRIBE(an_isolated_test_without_the_fake_it_needs_fails_to_link) {
               build_tests(root, profile_debug, NULL, false, 0, &binaries, NULL));
 
     str_list_free(&binaries);
+    (void)fs_remove_tree(root);
+}
+
+/* Build the tests with a report written to a file, and hand back what it said.
+   Caller frees. */
+static char *build_and_read_report(const char *root, int *code) {
+    char path[MOLTEST_PATH];
+    if(!moltest_temp_file("molto_isolated_report", path, sizeof path))
+        return NULL;
+    FILE *out = fopen(path, "w");
+    if(out == NULL)
+        return NULL;
+    build_report *report = build_report_create(out);
+    str_list binaries;
+    str_list_init(&binaries);
+    *code = build_tests_with(root, profile_debug, NULL, false, 0, &binaries, NULL, NULL, report);
+    build_report_destroy(report);
+    str_list_free(&binaries);
+    fclose(out);
+    char *text = fs_read_file(path);
+    remove(path);
+    return text;
+}
+
+DESCRIBE(the_link_note_names_both_places_a_missing_fake_can_come_from) {
+    /* app.c also calls ext_log(), which nothing in src/ defines: in the shared
+       suite tests/test_fakes.c fakes it, as one fakes another library. The
+       isolated test links without that file, and the linker takes app.c whole,
+       so ext_log() is missing — and it was never the replaced file's. */
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(clock_project(root, sizeof root,
+                              "[package]\nname = \"app\"\n"
+                              "[test]\nmode = \"single\"\nsources = [\"harness\"]\n"
+                              "[[test.isolated]]\n"
+                              "file = \"tests/test_zone.c\"\n"
+                              "replaces = [\"src/clock.c\"]\n"));
+    ASSERT_TRUE(write_in(root, "src/log.c",
+                         "void ext_log(int level);\n"
+                         "int app_logged(void) { ext_log(1); return 0; }\n"
+                         "int clock_now(void);\n"
+                         "int app_now(void) { return clock_now(); }\n"));
+    ASSERT_TRUE(write_in(root, "harness/main.c",
+                         "int check(void);\nint main(void) { return check(); }\n"));
+    ASSERT_TRUE(write_in(root, "tests/test_fakes.c",
+                         "int app_logged(void);\n"
+                         "void ext_log(int level) { (void)level; }\n"
+                         "int check(void) { return app_logged(); }\n"));
+    ASSERT_TRUE(write_in(root, "tests/test_zone.c",
+                         "int app_now(void);\n"
+                         "int clock_now(void) { return 7; }\n"
+                         "int check(void) { return app_now() == 7 ? 0 : 1; }\n"));
+
+    int code = 0;
+    char *said = build_and_read_report(root, &code);
+    EXPECT_EQ(exit_build_failure, code);
+    ASSERT_NOT_NULL(said);
+    EXPECT_NOT_NULL(strstr(said, "tests/test_zone.c replaces src/clock.c"));
+    EXPECT_NOT_NULL(strstr(said, "another test file"));
+    free(said);
     (void)fs_remove_tree(root);
 }
