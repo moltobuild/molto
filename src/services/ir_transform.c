@@ -73,14 +73,15 @@ static bool push_links(ir_option **array, size_t *count, const str_list *values)
     return true;
 }
 
-static bool push_includes(ir_include **array, size_t *count, const str_list *values) {
+static bool push_includes(ir_include **array, size_t *count, const str_list *values, bool system) {
     for(size_t i = 0; i < str_list_count(values); i++) {
-        /* Not `system`, and that is a decision rather than an omission: -isystem
-           suppresses warnings in the headers it names, and Molto has never
-           passed it for a dependency. Saying `system` here would silence
-           diagnostics no build has silenced before, from a document nobody
-           asked to change. */
-        if(!ir_add_include(array, count, str_list_get(values, i), ir_scope_target, false))
+        /* Not `system` for a package molto compiles, and that is a decision
+           rather than an omission: -isystem suppresses warnings in the headers
+           it names, and Molto has never passed it for one. A platform package
+           (RFC-0022) is the exception, for the reason a host library is: its
+           headers are the platform's, and a warning from inside gtk/gtk.h is
+           not something a consumer can fix. */
+        if(!ir_add_include(array, count, str_list_get(values, i), ir_scope_target, system))
             return false;
     }
     return true;
@@ -106,11 +107,13 @@ static bool describe_all(ir_document *doc, const prepared_deps *deps, ir_dep_sco
            is told too. Ahead of the libraries, as the project's are. Defines
            stay off the link line for the reason they do there. */
         if(dep == NULL ||
-           !push_includes(&dep->includes, &dep->include_count, &unit->exports.includes) ||
+           !push_includes(&dep->includes, &dep->include_count, &unit->exports.includes,
+                          unit->system) ||
            !push_defines(&dep->options, &dep->option_count, &unit->exports.defines) ||
            !push_options(&dep->options, &dep->option_count, &unit->exports.flags) ||
            !push_options(&dep->links, &dep->link_count, &unit->exports.flags) ||
-           !push_links(&dep->links, &dep->link_count, &unit->exports.links)) {
+           !push_links(&dep->links, &dep->link_count, &unit->exports.links) ||
+           !push_options(&dep->links, &dep->link_count, &unit->exports.link_flags)) {
             snprintf(err, err_size, "out of memory describing dependency '%s'", unit->name);
             return false;
         }
@@ -248,7 +251,7 @@ static bool describe_target(ir_document *doc, const prepared_unit *unit, const c
     if(target == NULL || !ir_set_target_package(target, unit->name) ||
        !push_defines(&target->options, &target->option_count, &unit->defines) ||
        !push_options(&target->options, &target->option_count, &unit->flags) ||
-       !push_includes(&target->includes, &target->include_count, &unit->includes)) {
+       !push_includes(&target->includes, &target->include_count, &unit->includes, false)) {
         snprintf(err, err_size, "out of memory describing package '%s'", unit->name);
         return false;
     }

@@ -4,6 +4,7 @@
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/pack_service.h>
+#include <molto/services/platform_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/source_service.h>
@@ -49,6 +50,10 @@ typedef struct {
        to upload. Absent means "binary", which is what every recipe published
        before the key existed was. */
     bool from_source;
+    /* form = "platform" (RFC-0022): also a recipe and nothing else, whose files
+       are pinned in the platforms' own repositories. Implies `from_source`'s
+       "no bytes to upload" without its tables. */
+    bool from_platform;
     /* How the blob is packed, as the recipe declares it. Empty when it says
        nothing, which is every recipe written before a toolchain had to run on
        Windows and is read as the default for the target. */
@@ -92,18 +97,20 @@ static bool has_table(const toml_document *doc, const char *kind, const char *ta
 /* Which mode the recipe is in. Declared, never inferred from which tables
    happen to be present: a source recipe with a misspelled [souce] would
    otherwise be a valid binary one whose archive merely went missing. */
-static bool read_form(const toml_document *doc, bool *from_source) {
+static bool read_form(const toml_document *doc, bool *from_source, bool *from_platform) {
     char form[COORDINATE_MAX] = "";
-    if(!toml_get_string(doc, "", "form", form, sizeof form)) {
-        *from_source = false;
+    *from_source = false;
+    *from_platform = false;
+    if(!toml_get_string(doc, "", "form", form, sizeof form))
         return true;
-    }
-    if(strcmp(form, "binary") == 0) {
-        *from_source = false;
+    if(strcmp(form, "binary") == 0)
         return true;
-    }
     if(strcmp(form, "source") == 0) {
         *from_source = true;
+        return true;
+    }
+    if(strcmp(form, "platform") == 0) {
+        *from_platform = true;
         return true;
     }
     fprintf(stderr, "molto: unknown recipe form '%s'\n", form);
@@ -113,6 +120,10 @@ static bool read_form(const toml_document *doc, bool *from_source) {
 /* A source recipe describes something to be built on the machine that wants
    it, which a toolchain and a tool exist precisely to avoid. */
 static bool check_tables(const toml_document *doc, const coordinate *at) {
+    /* A platform recipe's tables are read whole in check_content, by the
+       reader a consumer uses; there is no single table to look for first. */
+    if(at->from_platform)
+        return true;
     if(at->from_source) {
         if(strcmp(at->kind, "package") != 0) {
             fprintf(stderr, "molto: a %s recipe must be form = \"binary\"\n", at->kind);
@@ -181,6 +192,23 @@ static bool check_content(const toml_document *doc, const coordinate *at) {
     const doc_view view = doc_from_toml(doc);
     char err[256] = "";
 
+    if(at->from_platform) {
+        recipe_coordinate coordinate;
+        platform_recipe platforms;
+        if(!recipe_read_coordinate(view, &coordinate, err, sizeof err) ||
+           !platform_recipe_read(view, &platforms, err, sizeof err)) {
+            report(err);
+            return false;
+        }
+        fprintf(stderr, "  platforms");
+        for(size_t i = 0; i < platforms.count; i++)
+            fprintf(stderr, " %s (%zu files)%s", platforms.items[i].name,
+                    str_list_count(&platforms.items[i].urls), i + 1 < platforms.count ? "," : "");
+        fprintf(stderr, "\n");
+        platform_recipe_free(&platforms);
+        return true;
+    }
+
     recipe_artifacts artifacts;
     if(!recipe_read_artifacts(view, &artifacts, err, sizeof err)) {
         report(err);
@@ -240,8 +268,8 @@ static bool read_coordinate(const char *path, coordinate *out) {
               read_key(doc, "name", out->name, sizeof out->name) &&
               read_key(doc, "version", out->version, sizeof out->version) &&
               read_key(doc, "target", out->target, sizeof out->target) &&
-              read_form(doc, &out->from_source) && check_version(out) && check_tables(doc, out) &&
-              check_content(doc, out);
+              read_form(doc, &out->from_source, &out->from_platform) && check_version(out) &&
+              check_tables(doc, out) && check_content(doc, out);
 
     /* Optional, and read rather than inferred from a filename: the registry
        stores what the recipe declares, so this is the same statement molto
@@ -468,7 +496,8 @@ static bool refused(const char *what, const registry_response *response) {
  */
 static bool put_through_registry(const credentials *creds, const char *path, const char *archive,
                                  const char *checksum) {
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     char err[512] = "";
     if(!registry_upload_blob(creds->registry, creds->token, path, archive, checksum, &response, err,
                              sizeof err)) {
@@ -504,7 +533,8 @@ static bool put_through_registry(const credentials *creds, const char *path, con
 }
 
 static bool put_to_signed_url(const registry_signed_upload *signed_upload, const char *archive) {
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     char err[512] = "";
     if(!registry_put_signed(signed_upload, archive, &response, err, sizeof err)) {
         report(err);
@@ -558,7 +588,8 @@ static bool record(const credentials *creds, const coordinate *at, const char *r
     if(!fs_format_path(path, sizeof path, "/v1/%ss", at->kind))
         return fs_report_long_path("the publish path");
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     char err[512] = "";
     if(!registry_publish_recipe(creds->registry, creds->token, path, recipe, &response, err,
                                 sizeof err)) {
@@ -594,7 +625,7 @@ static int publish_source(const coordinate *at, const char *recipe_path, const c
     }
 
     describe(at, creds.registry);
-    fprintf(stderr, "  source   recipe only, no archive\n");
+    fprintf(stderr, "  %s recipe only, no archive\n", at->from_platform ? "platform" : "source  ");
     if(dry_run) {
         fprintf(stderr, "  dry run: nothing was sent\n");
         return exit_ok;
@@ -709,8 +740,9 @@ int publish_command_run(const char *recipe, const char *file, const char *pack, 
     if(!read_coordinate(recipe_path, &at))
         return exit_invalid_manifest;
 
-    const int code = at.from_source ? publish_source(&at, recipe_path, file, pack, dry_run)
-                                    : publish_binary(&at, recipe_path, file, pack, dry_run);
+    const int code = at.from_source || at.from_platform
+                         ? publish_source(&at, recipe_path, file, pack, dry_run)
+                         : publish_binary(&at, recipe_path, file, pack, dry_run);
     if(code != exit_ok || dry_run)
         return code;
 

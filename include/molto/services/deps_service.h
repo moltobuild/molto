@@ -52,6 +52,11 @@ typedef struct {
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */
     str_list links;    /* -l */
+    /* Link-line flags, verbatim and for the link line only: what a platform
+       package (RFC-0022) answers with — `-l:libgtk-4.so.1`, `-L…` and
+       `-Wl,-rpath,…`. Not `flags`, which reach the compile line too, where an
+       `-L` is an unused-argument warning on every translation unit. */
+    str_list link_flags;
 } prepared_interface;
 
 typedef struct {
@@ -82,6 +87,17 @@ typedef struct {
        it is compiled with. Filled from the same recipe table and in the same
        pass as the sum on `prepared_deps`, so the two cannot disagree. */
     prepared_interface exports;
+    /* A platform package's headers are the platform's, and a warning from
+       inside gtk/gtk.h is not something a consumer can fix: its include
+       directories are passed as system ones, as a host library's are. */
+    bool system;
+    /* Directories outside molto's cache this package may name — a host's own
+       headers, when the host answered for it. A bound for the document, taken
+       from what molto resolved and never from what the document says. */
+    str_list bounds;
+    /* Where its DLLs are, for a Windows executable that has to find them
+       beside itself. */
+    str_list runtime_dirs;
 } prepared_unit;
 
 typedef struct {
@@ -90,10 +106,12 @@ typedef struct {
     size_t unit_count;
     /* The interface of all of them together: what the consumer's own sources
        compile against, and what its link line carries. */
-    str_list includes; /* -I directories */
-    str_list defines;  /* -D */
-    str_list flags;    /* passed verbatim */
-    str_list links;    /* -l */
+    str_list includes;     /* -I directories */
+    str_list defines;      /* -D */
+    str_list flags;        /* passed verbatim */
+    str_list links;        /* -l */
+    str_list link_flags;   /* link line only, verbatim (see prepared_interface) */
+    str_list runtime_dirs; /* DLL directories, for beside an executable */
 } prepared_deps;
 
 void prepared_deps_init(prepared_deps *out);

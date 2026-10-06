@@ -28,7 +28,7 @@ DESCRIBE(registry_get_reports_a_registry_it_cannot_reach) {
        branch without waiting for a timeout. A malformed argv would fail here
        too, but differently: curl would complain about its own options rather
        than about the connection. */
-    registry_response response;
+    static registry_response response;
     char err[256] = "";
 
     EXPECT_FALSE(registry_get("http://127.0.0.1:1", "/v1/packages", &response, err, sizeof err));
@@ -58,7 +58,7 @@ static bool serve_fixture(const char *directory, process_handle *out) {
 /* Waits for the server to answer, so the test does not race its startup. */
 static bool wait_for_server(void) {
     for (int attempt = 0; attempt < 50; attempt++) {
-        registry_response response;
+        static registry_response response;
         char err[256] = "";
         if (registry_get(BASE_URL, "/", &response, err, sizeof err))
             return true;
@@ -89,7 +89,7 @@ DESCRIBE(registry_get_reads_a_body_and_its_status) {
         SKIP("python3 is not installed, so there is no server to read from");
 
     if (wait_for_server()) {
-        registry_response response;
+        static registry_response response;
         char err[256] = "";
         EXPECT_TRUE(registry_get(BASE_URL, "/v1/packages/sqlite/3.53.4", &response, err,
                                  sizeof err));
@@ -161,7 +161,7 @@ static bool serve_status(const char *directory, const char *status, process_hand
 
 static bool wait_for_presign_server(void) {
     for(int attempt = 0; attempt < 50; attempt++) {
-        registry_response response;
+        static registry_response response;
         char err[256] = "";
         if(registry_get(PRESIGN_URL, "/", &response, err, sizeof err))
             return true;

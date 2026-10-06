@@ -420,7 +420,8 @@ static bool newest_version(const char *base_url, const char *name, char *out, si
     if(!fs_format_path(path, sizeof path, TOOL_VERSIONS_PATH, name))
         return recipe_error(err, err_size, "the path for '%s' is too long", name);
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!ask(base_url, path, &response, err, err_size))
         return false;
 
@@ -466,7 +467,8 @@ bool plugin_prepare(const char *base_url, const char *name, const char *version,
     if(!fs_format_path(path, sizeof path, TOOL_ARTIFACT_PATH, name, resolved, target))
         return recipe_error(err, err_size, "the path for '%s' is too long", name);
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!ask(base_url, path, &response, err, err_size))
         return false;
 

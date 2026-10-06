@@ -148,7 +148,7 @@ DESCRIBE(a_token_is_never_an_argument_and_never_left_behind) {
 DESCRIBE(a_failed_request_leaves_no_credential_behind_either) {
     exit_code = 7;
     answer = "curl: (7) Failed to connect";
-    registry_response out;
+    static registry_response out;
     EXPECT_FALSE(registry_publish_recipe("https://registry.example", "s3cr3t-token", "/v1/r",
                                          "/tmp/recipe.toml", &out, err, sizeof err));
     EXPECT_STRNE("", config_path);
