@@ -539,11 +539,7 @@ static bool verify(const char *file, const char *expected, char *err, size_t err
 static bool xz_answers(const char *program) {
     const char *argv[] = {program, "--version", NULL};
     char ignored[256] = "";
-    process_spec spec = {.stdout_to = process_stream_capture,
-                         .stderr_to = process_stream_capture,
-                         .capture = ignored,
-                         .capture_size = sizeof ignored};
-    return process_execute(argv, &spec) == 0;
+    return process_capture(argv, ignored, sizeof ignored) == 0;
 }
 
 static bool xz_program(char *out, size_t size, char *err, size_t err_size) {
