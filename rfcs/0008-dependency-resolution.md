@@ -388,6 +388,13 @@ written as: that is what makes a branch dependency reproducible. A `path` source
 carries no checksum, because its bytes are whatever is on disk — which is the
 point of a path dependency and the reason it cannot be published.
 
+A relative `path` is relative to whatever declared it: the manifest, or the
+recipe of the dependency that names it. A recipe beside its sibling writes
+`libiconv = { path = "../libiconv" }` and means that sibling for every consumer,
+not only for one that happens to sit next to it. Under a path dependency the
+lock spells the result from the project root (`path+../../libiconv`); under a
+fetched source, the anchor is the directory it was fetched into.
+
 ```toml
 version = 1
 root = "my_app"

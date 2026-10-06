@@ -566,6 +566,35 @@ static bool queue_push(queue *q, const project_dep *dep, const char *required_by
     return true;
 }
 
+/* A relative path in a recipe's `[deps]` means relative to that recipe, as one
+   in a manifest means relative to the manifest. Rewritten before it is queued,
+   because the walk anchors every path at the project root.
+ *
+   Under a path dependency the result stays spelled from the project root —
+   `..` and `../libiconv` become `../../libiconv` — so the lock file records
+   what the manifest would have written rather than where this machine keeps
+   it. Under any other source there is no such spelling, and the fetched
+   directory is the anchor. */
+static bool anchor_nested(const project_dep *requirer, visited *found, char *err, size_t err_size) {
+    const bool under_path =
+        requirer->resolution == dep_resolution_carried && requirer->source == dep_source_path;
+    const char *base = under_path ? requirer->location : found->root;
+    if(base[0] == '\0')
+        return true;
+
+    for(size_t i = 0; i < found->deps.count; i++) {
+        project_dep *child = &found->deps.items[i];
+        if(child->resolution != dep_resolution_carried || child->source != dep_source_path ||
+           fs_path_is_absolute(child->location))
+            continue;
+        char joined[sizeof child->location];
+        if((size_t)snprintf(joined, sizeof joined, "%s/%s", base, child->location) >= sizeof joined)
+            return set_error(err, err_size, "the path '%s/%s' is too long", base, child->location);
+        snprintf(child->location, sizeof child->location, "%s", joined);
+    }
+    return true;
+}
+
 static bool enqueue_all(queue *q, const project_deps *deps, const char *required_by, unsigned scope,
                         char *err, size_t err_size) {
     for(size_t i = 0; i < deps->count; i++) {
@@ -752,6 +781,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     found->platform = NULL;
 
     ok = record_edges(node, &found->deps, err, err_size) &&
+         anchor_nested(dep, found, err, err_size) &&
          enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);
     if(ok)
         ok = graph_push(graph, node, err, err_size);
