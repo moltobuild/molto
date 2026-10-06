@@ -26,8 +26,12 @@
    it, so that a molto predating plugins refuses the document rather than
    ignoring a table it does not know and installing an executable whose
    permissions it never saw. Raising this is what makes such a recipe readable
-   here, and it is only honest because this reader does understand the table. */
-#define RECIPE_SCHEMA_MAX 2
+   here, and it is only honest because this reader does understand the table.
+
+   Schema 3 is `form = "platform"` (RFC-0022), for the same reason: a reader
+   that predates the form must refuse it rather than take a recipe with no
+   [source] for a binary whose archive went missing. */
+#define RECIPE_SCHEMA_MAX 3
 
 /* The schema that introduced `[plugin]`, and the least a recipe carrying that
    table may declare.
@@ -38,6 +42,10 @@
  * at schema 3 is a plugin recipe; `[plugin]` at schema 1 is the hazard the
  * comment above describes, which is only a hazard because nothing refused it. */
 #define RECIPE_SCHEMA_PLUGIN 2
+
+/* The schema that introduced `form = "platform"`, and the least such a recipe
+   may declare. */
+#define RECIPE_SCHEMA_PLATFORM 3
 
 #define RECIPE_COORDINATE_MAX 128
 #define RECIPE_MAX_SOURCES 32
@@ -50,6 +58,9 @@
 typedef enum {
     recipe_form_binary,
     recipe_form_source,
+    /* Files a platform's own repository publishes, pinned per platform and
+       unpacked rather than built (RFC-0022). */
+    recipe_form_platform,
 } recipe_form;
 
 typedef struct {

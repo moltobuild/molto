@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <molto/project/project_ctx.h>
+#include <molto/services/platform_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/util/str_list.h>
 
@@ -94,6 +95,12 @@ typedef struct {
        package in a build needs no second pass and no network. Empty
        throughout when the recipe stated nothing, which is allowed. */
     manifest_about about;
+    /* Platform form only (RFC-0022), and NULL otherwise: every platform the
+       recipe pins, and — once the graph is materialized — what this machine
+       got from them. A platform package has no sources; `answer` is the whole
+       of what it contributes to a build. Both owned by the node. */
+    platform_recipe *platform;
+    platform_answer *answer;
 } dep_node;
 
 typedef struct dep_graph dep_graph;

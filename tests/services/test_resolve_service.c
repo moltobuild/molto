@@ -42,7 +42,7 @@ static bool resolve(const char *body, resolved_dep *out, char *err, size_t err_s
 DESCRIBE(resolve_reads_a_source_recipe_from_a_release_body) {
     /* The whole of C3 in one assertion set: a coordinate goes in, and what
        comes out is what the fetcher takes and what a compile line needs. */
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     ASSERT_TRUE(resolve(ENVELOPE(SOURCE_TARGET), &dep, err, sizeof err));
 
@@ -75,7 +75,7 @@ DESCRIBE(resolve_prefers_the_any_target) {
         ENVELOPE("{\"target\":\"x86_64-linux-gnu\",\"yanked\":false,\"metadata\":{}},"
                  SOURCE_TARGET);
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     ASSERT_TRUE(resolve(body, &dep, err, sizeof err));
     EXPECT_STREQ("any", dep.coordinate.target);
@@ -87,7 +87,7 @@ DESCRIBE(resolve_skips_a_yanked_artifact) {
     static const char *const body = ENVELOPE(
         "{\"target\":\"any\",\"yanked\":true,\"metadata\":{}}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(body, &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "yanked"));
@@ -100,7 +100,7 @@ DESCRIBE(resolve_reports_when_only_platform_targets_exist) {
         ENVELOPE("{\"target\":\"x86_64-linux-gnu\",\"yanked\":false,\"metadata\":{}},"
                  "{\"target\":\"aarch64-darwin\",\"yanked\":false,\"metadata\":{}}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(body, &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "x86_64-linux-gnu"));
@@ -108,21 +108,21 @@ DESCRIBE(resolve_reports_when_only_platform_targets_exist) {
 }
 
 DESCRIBE(resolve_reports_an_empty_target_list) {
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(ENVELOPE(""), &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "no targets"));
 }
 
 DESCRIBE(resolve_reports_a_body_that_is_not_json) {
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve("<html>502 Bad Gateway</html>", &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "not JSON"));
 }
 
 DESCRIBE(resolve_reports_an_answer_with_no_targets_key) {
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve("{\"kind\":\"package\",\"name\":\"sqlite\"}", &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "'targets'"));
@@ -131,7 +131,7 @@ DESCRIBE(resolve_reports_an_answer_with_no_targets_key) {
 DESCRIBE(resolve_reports_an_artifact_with_no_recipe) {
     static const char *const body = ENVELOPE("{\"target\":\"any\",\"yanked\":false}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(body, &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "no recipe"));
@@ -146,7 +146,7 @@ DESCRIBE(resolve_rejects_a_recipe_that_describes_something_else) {
                  "\"metadata\":{\"kind\":\"package\",\"name\":\"sqlite\","
                  "\"version\":\"3.53.5\",\"target\":\"any\"}}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(body, &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "3.53.5"));
@@ -161,7 +161,7 @@ DESCRIBE(resolve_reads_a_binary_artifacts_url_and_checksum) {
         "\"name\":\"sqlite\",\"version\":\"3.53.4\",\"target\":\"any\","
         "\"package\":{\"include\":[\"include\"],\"link\":[\"sqlite3\"]}}}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     ASSERT_TRUE(resolve(body, &dep, err, sizeof err));
 
@@ -182,14 +182,14 @@ DESCRIBE(resolve_reports_a_source_recipe_whose_source_table_is_broken) {
                  "\"name\":\"sqlite\",\"version\":\"3.53.4\",\"target\":\"any\","
                  "\"source\":{\"archive\":\"https://x/y.zip\"}}}");
 
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve(body, &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "sha256"));
 }
 
 DESCRIBE(resolve_reports_a_registry_it_cannot_reach) {
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve_version("http://127.0.0.1:1", "sqlite", "3.53.4", &dep, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "registry"));
@@ -276,7 +276,7 @@ DESCRIBE(a_release_is_remembered_for_a_coordinate_nothing_fetched) {
 DESCRIBE(a_platform_asked_for_and_not_published_names_what_was) {
     /* A plugin asks for the host's platform (RFC-0014); what the release has
        instead is what can be acted on. */
-    resolved_dep dep;
+    static resolved_dep dep;
     char err[512] = "";
     EXPECT_FALSE(resolve_read_release_for(ENVELOPE(SOURCE_TARGET), "sqlite", "3.53.4",
                                           "x86_64-linux", &dep, err, sizeof err));
@@ -299,7 +299,7 @@ DESCRIBE(a_release_kept_by_an_older_molto_beside_the_sources_is_still_read) {
     snprintf(legacy, sizeof legacy, "%s/.molto-release.json", sources);
     ASSERT_TRUE(fs_write_file(legacy, ENVELOPE(SOURCE_TARGET)));
 
-    resolved_dep dep;
+    static resolved_dep dep;
     ASSERT_TRUE(resolve_remembered("sqlite", "3.53.4", &dep));
     EXPECT_STREQ("sqlite", dep.coordinate.name);
     /* And nothing at all for a coordinate never seen. */
@@ -307,4 +307,37 @@ DESCRIBE(a_release_kept_by_an_older_molto_beside_the_sources_is_still_read) {
 
     (void)unsetenv("MOLTO_CACHE");
     (void)fs_remove_tree(root);
+}
+
+/* --- a platform recipe (RFC-0022) --- */
+
+#define PLATFORM_TARGET                                                                            \
+    "{\"kind\":\"package\",\"form\":\"platform\",\"name\":\"sqlite\",\"version\":\"3.53.4\","       \
+    "\"target\":\"any\",\"yanked\":false,\"download_url\":null,"                                    \
+    "\"metadata\":{\"schema\":3,\"form\":\"platform\",\"kind\":\"package\",\"name\":\"sqlite\","    \
+    "\"version\":\"3.53.4\",\"target\":\"any\",\"host\":{\"pkgconfig\":\"sqlite3\"},"               \
+    "\"platform\":[{\"name\":\"arch-x86_64\",\"os\":\"linux\",\"arch\":\"x86_64\","                 \
+    "\"distro\":\"arch\",\"format\":\"pacman\",\"runtime\":\"host\","                               \
+    "\"include\":[\"usr/include\"],\"link\":[\":libsqlite3.so.0\"],"                                \
+    "\"file\":[{\"url\":\"https://archive.archlinux.org/packages/s/sqlite/sqlite.pkg.tar.zst\","    \
+    "\"sha256\":\"1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d\"}]}]}}"
+
+/* The registry serves the recipe as JSON, and every platform and file in it is
+   read while that answer is alive: the walk needs the pins to digest them for
+   the lock before anything is fetched. */
+DESCRIBE(resolve_reads_a_platform_recipe_from_a_release_body) {
+    static resolved_dep dep;
+    char err[512] = "";
+    ASSERT_TRUE(resolve(ENVELOPE(PLATFORM_TARGET), &dep, err, sizeof err));
+
+    EXPECT_EQ(recipe_form_platform, dep.coordinate.form);
+    ASSERT_TRUE(dep.platform != NULL);
+    EXPECT_STREQ("sqlite3", dep.platform->pkgconfig);
+    ASSERT_EQ(1u, dep.platform->count);
+    EXPECT_STREQ("arch-x86_64", dep.platform->items[0].name);
+    EXPECT_STREQ(":libsqlite3.so.0", str_list_get(&dep.platform->items[0].link, 0));
+    EXPECT_EQ(1u, str_list_count(&dep.platform->items[0].urls));
+
+    resolved_dep_release(&dep);
+    EXPECT_TRUE(dep.platform == NULL);
 }

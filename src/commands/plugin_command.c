@@ -214,7 +214,8 @@ static int run_install(const char *spec, const char *registry, bool assume_yes) 
     }
     const char *version = split_version(name);
 
-    plugin_candidate candidate;
+    /* Static: it embeds REGISTRY_BODY_MAX. */
+    static plugin_candidate candidate;
     char err[512] = "";
     if(!plugin_prepare(registry, name, version, &candidate, err, sizeof err)) {
         fprintf(stderr, "molto: %s\n", err);

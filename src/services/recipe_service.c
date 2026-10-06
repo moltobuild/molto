@@ -76,6 +76,8 @@ static bool read_form(doc_view doc, recipe_form *out, char *err, size_t err_size
         *out = recipe_form_binary;
     else if(strcmp(form, "source") == 0)
         *out = recipe_form_source;
+    else if(strcmp(form, "platform") == 0)
+        *out = recipe_form_platform;
     else
         return set_error(err, err_size, "unknown recipe form '%s'", form);
     return true;
@@ -84,12 +86,26 @@ static bool read_form(doc_view doc, recipe_form *out, char *err, size_t err_size
 bool recipe_read_coordinate(doc_view doc, recipe_coordinate *out, char *err, size_t err_size) {
     memset(out, 0, sizeof *out);
 
-    return read_schema(doc, &out->schema, err, err_size) &&
-           read_form(doc, &out->form, err, err_size) &&
-           read_required(doc, "kind", out->kind, sizeof out->kind, err, err_size) &&
-           read_required(doc, "name", out->name, sizeof out->name, err, err_size) &&
-           read_required(doc, "version", out->version, sizeof out->version, err, err_size) &&
-           read_required(doc, "target", out->target, sizeof out->target, err, err_size);
+    if(!read_schema(doc, &out->schema, err, err_size) ||
+       !read_form(doc, &out->form, err, err_size) ||
+       !read_required(doc, "kind", out->kind, sizeof out->kind, err, err_size) ||
+       !read_required(doc, "name", out->name, sizeof out->name, err, err_size) ||
+       !read_required(doc, "version", out->version, sizeof out->version, err, err_size) ||
+       !read_required(doc, "target", out->target, sizeof out->target, err, err_size))
+        return false;
+
+    /* The schema is what makes an older molto refuse the form instead of
+       reading a recipe with no [source] as a binary whose upload failed, so
+       a platform recipe that does not declare it is the hazard it exists to
+       prevent (RFC-0022). */
+    if(out->form == recipe_form_platform && out->schema < RECIPE_SCHEMA_PLATFORM)
+        return set_error(err, err_size,
+                         "a platform recipe must declare schema %d or later, so a molto that "
+                         "does not know the form refuses it rather than misreading it",
+                         RECIPE_SCHEMA_PLATFORM);
+    if(out->form == recipe_form_platform && strcmp(out->kind, "package") != 0)
+        return set_error(err, err_size, "only a package may take form = \"platform\"");
+    return true;
 }
 
 /* --- [artifacts] --- */

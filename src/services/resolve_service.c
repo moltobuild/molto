@@ -176,9 +176,27 @@ static bool read_artifact(json_value artifact, const char *name, const char *ver
 
     if(out->coordinate.form == recipe_form_source)
         return source_read(recipe, &out->source, err, err_size);
+    if(out->coordinate.form == recipe_form_platform) {
+        out->platform = calloc(1, sizeof *out->platform);
+        if(out->platform == NULL)
+            return set_error(err, err_size, "out of memory reading %s %s", name, version);
+        if(!platform_recipe_read(recipe, out->platform, err, err_size)) {
+            resolved_dep_release(out);
+            return false;
+        }
+        return true;
+    }
 
     read_binary_fields(artifact, out);
     return true;
+}
+
+void resolved_dep_release(resolved_dep *dep) {
+    if(dep->platform == NULL)
+        return;
+    platform_recipe_free(dep->platform);
+    free(dep->platform);
+    dep->platform = NULL;
 }
 
 bool resolve_read_release_for(const char *body, const char *name, const char *version,
@@ -236,7 +254,8 @@ static bool fetch_listing(const char *base_url, const char *name, str_list *out,
     if(!fs_format_path(path, sizeof path, "/v1/packages/%s", name))
         return set_error(err, err_size, "the registry path for %s is too long", name);
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!registry_get(base_url, path, &response, err, err_size))
         return false;
     if(response.status == 404)
@@ -346,7 +365,8 @@ bool resolve_version(const char *base_url, const char *name, const char *version
     if(!fs_format_path(path, sizeof path, "/v1/packages/%s/%s", name, version))
         return set_error(err, err_size, "the registry path for %s %s is too long", name, version);
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!registry_get(base_url, path, &response, err, err_size))
         return false;
 

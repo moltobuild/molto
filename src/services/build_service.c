@@ -13,6 +13,7 @@
 #include <molto/services/host_service.h>
 #include <molto/services/ir_transform.h>
 #include <molto/services/object_cache.h>
+#include <molto/services/platform_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/services/source_service.h>
 #include <molto/services/toolchain_service.h>
@@ -160,7 +161,15 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size) {
             host_dirs += host[i].include_count;
     }
 
-    const size_t count = deps->unit_count + dev->unit_count + host_dirs;
+    /* And a platform package's, when the host answered for it (RFC-0022):
+       resolved by molto, carried on the unit, never read off the document. */
+    size_t platform_dirs = 0;
+    for(size_t i = 0; i < deps->unit_count; i++)
+        platform_dirs += str_list_count(&deps->units[i].bounds);
+    for(size_t i = 0; i < dev->unit_count; i++)
+        platform_dirs += str_list_count(&dev->units[i].bounds);
+
+    const size_t count = deps->unit_count + dev->unit_count + host_dirs + platform_dirs;
     const char **roots = NULL;
     if(count > 0) {
         roots = (const char **)calloc(count, sizeof *roots);
@@ -177,6 +186,14 @@ size_t project_env_fingerprint(const project_env *env, char *out, size_t size) {
         for(size_t i = 0; i < ctx->target.host_count; i++) {
             for(size_t j = 0; j < host[i].include_count; j++)
                 roots[at++] = host[i].includes[j];
+        }
+        for(size_t i = 0; i < deps->unit_count; i++) {
+            for(size_t j = 0; j < str_list_count(&deps->units[i].bounds); j++)
+                roots[at++] = str_list_get(&deps->units[i].bounds, j);
+        }
+        for(size_t i = 0; i < dev->unit_count; i++) {
+            for(size_t j = 0; j < str_list_count(&dev->units[i].bounds); j++)
+                roots[at++] = str_list_get(&dev->units[i].bounds, j);
         }
     }
 
@@ -557,6 +574,19 @@ int build_project_with(const char *root, build_profile profile, const char *plat
                                           any_compiled, db, root, report);
             if(produced && node->kind == ir_target_shared)
                 build_place_shared_links(directory, &names, report);
+        }
+        /* Windows looks for a program's DLLs beside it, and a bundled platform
+           package (RFC-0022) has no rpath to say otherwise: its runtime is
+           copied next to the executable, and only what changed is copied
+           again. Empty everywhere else, so this is a no-op off Windows. */
+        if(produced && node->kind == ir_target_executable &&
+           str_list_count(&plan.deps.runtime_dirs) > 0) {
+            char runtime_err[512] = "";
+            if(!platform_copy_runtime(&plan.deps.runtime_dirs, directory, runtime_err,
+                                      sizeof runtime_err)) {
+                build_report_message(report, "molto: %s\n", runtime_err);
+                produced = false;
+            }
         }
         if(!produced)
             result = exit_build_failure;

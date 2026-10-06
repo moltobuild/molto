@@ -213,7 +213,8 @@ bool registry_create_token(const char *base_url, const char *email, const char *
     if(n < 0 || (size_t)n >= sizeof payload)
         return fail(err, err_size, "those credentials are too long");
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!request(base_url, NULL, "POST", "/v1/auth/token", "application/json", NULL, "--data",
                 payload, &response, err, err_size))
         return false;
@@ -385,7 +386,8 @@ bool registry_presign_blob(const char *base_url, const char *token, const char *
     char checksum_header[128];
     snprintf(checksum_header, sizeof checksum_header, "x-molto-checksum: %s", checksum);
 
-    registry_response response;
+    /* Static: it embeds REGISTRY_BODY_MAX, and this runs on the main thread. */
+    static registry_response response;
     if(!request(base_url, token, "POST", path, NULL, checksum_header, NULL, NULL, &response, err,
                 err_size))
         return false;

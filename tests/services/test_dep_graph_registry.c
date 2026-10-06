@@ -29,10 +29,14 @@ MOCK_VALUE_FUNC(bool, resolve_version, const char *, const char *, const char *,
 MOCK_VALUE_FUNC(bool, resolve_versions, const char *, const char *, str_list *, char *, size_t);
 MOCK_VALUE_FUNC(bool, resolve_remembered, const char *, const char *, resolved_dep *);
 MOCK_VOID_FUNC(resolve_remember, const char *, const char *, const char *);
+/* No release here is a platform recipe, so there is never one to free. */
+MOCK_VOID_FUNC(resolved_dep_release, resolved_dep *);
 MOCK_VALUE_FUNC(bool, source_fetch, const source_spec *, const char *, const char *, const char *,
                 char *, size_t, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_provide, const char *, const struct recipe_provide *, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_cache_key, const source_spec *, char *, size_t, char *, size_t);
+/* Reached only through platform_service, which nothing here resolves to. */
+MOCK_VALUE_FUNC(bool, source_cache_root, char *, size_t);
 /* Never about a registry dependency, but src/project/project_deps.c checks a
    git or archive origin with it, and the linker takes that file whole. Every
    origin here is valid. */

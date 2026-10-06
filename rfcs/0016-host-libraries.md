@@ -217,7 +217,10 @@ nobody reads. A capability the lock has never seen is recorded now; one it has
 is left alone, and the note is what says this machine disagrees.
 
 What does not exist: any resolver that is not pkg-config, and a capability in a
-recipe rather than a manifest.
+recipe rather than a manifest. RFC-0022's `[host] pkgconfig` is the nearest
+thing: a platform recipe asks the host first, and uses the answer instead of
+downloading anything — but it is the recipe's fallback order, not a capability
+a consumer's build is required to have.
 
 ## Non-Goals
 

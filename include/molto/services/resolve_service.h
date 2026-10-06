@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <molto/project/project_deps.h>
+#include <molto/services/platform_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/services/source_service.h>
@@ -52,10 +53,18 @@ typedef struct {
        the registry at all. */
     char download_url[SOURCE_URL_MAX];
     char checksum[SOURCE_DIGEST_MAX];
+    /* Platform form only (RFC-0022): every platform the recipe pins, read while
+       the answer is alive. Owned; resolved_dep_release frees it, and it is NULL
+       for the other forms. */
+    platform_recipe *platform;
     /* The answer this was read from, verbatim, for resolve_remember. Empty
        when the answer came from disk — it is already there. */
     char body[REGISTRY_BODY_MAX];
 } resolved_dep;
+
+/* Free what a resolved_dep owns — its platform recipe — and leave it NULL. The
+   rest of the struct is values and needs nothing. */
+void resolved_dep_release(resolved_dep *dep);
 
 /* Ask `base_url` for `name` at exactly `version`. */
 [[nodiscard]] bool resolve_version(const char *base_url, const char *name, const char *version,

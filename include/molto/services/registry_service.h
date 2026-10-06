@@ -19,8 +19,13 @@
 /* Largest answer read back. Most replies are a few hundred bytes, but a
    release listing carries one whole recipe per target it was published for
    (RFC-0010), so the ceiling is set by the biggest of those rather than by the
-   typical case. The buffer it feeds is static, so this is BSS and not stack. */
-#define REGISTRY_BODY_MAX 65536
+   typical case. The buffer it feeds is static, so this is BSS and not stack.
+
+   A platform recipe (RFC-0022) is the biggest: GTK pins 281 files, about 80 KB
+   of JSON per release, and a package's listing carries every release. 64 KB
+   refused the first one; a megabyte holds a dozen. Nothing that embeds this
+   size lives on a stack — a Windows main thread has one or two megabytes. */
+#define REGISTRY_BODY_MAX (1024 * 1024)
 
 /* The official registry: where a dependency resolves when neither the manifest
    nor a stored credential names one. */

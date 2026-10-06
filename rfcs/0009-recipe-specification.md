@@ -58,6 +58,9 @@ explicit key rather than by which tables happen to be absent:
   source for naming one of these directly; it is withdrawn, and that document
   says why.
 
+A third form, `form = "platform"`, pins files that each platform's own
+repository already publishes; RFC-0022 specifies it.
+
 The discriminator is explicit because inference is what turns a typo into a
 different document. A source recipe with a misspelled `[souce]` table would, by
 inference, be a valid binary recipe with a missing archive; declared, it is an
@@ -813,5 +816,6 @@ package should be one, and should publish as `kind = "package"` with a real
 - [RFC-0008: Dependency Resolution](0008-dependency-resolution.md) — how a source recipe is reached, and why by version
 - [RFC-0010: Registry Specification](0010-registry-specification.md) — how a recipe is published and served
 - [RFC-0014: Plugin System](0014-plugin-system.md) — the `[plugin]` table, and the frontend `via = "frontend"` hands a build to
+- [RFC-0022: Platform Packages](0022-platform-packages.md) — the third form, for a library every platform already packages
 
 See also `spec.md` sections 8 (Recipes) and 9 (Artifacts).

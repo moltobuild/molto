@@ -71,10 +71,23 @@ static bool set_error(char *err, size_t err_size, const char *format, ...) {
 
 /* --- the graph as a container --- */
 
+static void release_platform(platform_recipe **platform) {
+    if(*platform == NULL)
+        return;
+    platform_recipe_free(*platform);
+    free(*platform);
+    *platform = NULL;
+}
+
 static void node_free(dep_node *node) {
     if(node == NULL)
         return;
     str_list_free(&node->dependencies);
+    release_platform(&node->platform);
+    if(node->answer != NULL) {
+        platform_answer_free(node->answer);
+        free(node->answer);
+    }
     free(node);
 }
 
@@ -250,7 +263,8 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
                                 recipe_build *build, recipe_provide *provide, project_deps *deps,
-                                manifest_about *about, char *err, size_t err_size) {
+                                manifest_about *about, char *version, size_t version_size,
+                                platform_recipe **platform, char *err, size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
@@ -271,11 +285,34 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
         return set_error(err, err_size, "%s is not valid TOML: %s", path, parse_err);
 
     const doc_view view = doc_from_toml(doc);
-    const bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
-                    recipe_read_build(view, build, err, err_size) &&
-                    recipe_read_provide(view, provide, err, err_size) &&
-                    project_deps_read_doc(view, deps, err, err_size) &&
-                    manifest_read_about(view, "about", about, err, err_size);
+    bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
+              recipe_read_build(view, build, err, err_size) &&
+              recipe_read_provide(view, provide, err, err_size) &&
+              project_deps_read_doc(view, deps, err, err_size) &&
+              manifest_read_about(view, "about", about, err, err_size);
+
+    /* A carried recipe may be a platform one: the way a recipe in development
+       is tried before it is published, as `{ path = "…/gtk" }`. Only then is
+       the coordinate read, because only then is the version where the files
+       are cached; a source recipe a git repository carries has never been
+       required to state one. */
+    char form[32] = "";
+    if(ok && doc_get_string(view, "", "form", form, sizeof form) && strcmp(form, "platform") == 0) {
+        recipe_coordinate coordinate;
+        *platform = calloc(1, sizeof **platform);
+        ok = *platform != NULL ? recipe_read_coordinate(view, &coordinate, err, err_size) &&
+                                     platform_recipe_read(view, *platform, err, err_size)
+                               : set_error(err, err_size, "out of memory reading %s", path);
+        /* Refused rather than cut: the version names the cache directory, and
+           a shortened one is a different coordinate's directory. */
+        if(ok && strlen(coordinate.version) >= version_size)
+            ok = set_error(err, err_size, "%s: the version is longer than %zu characters", path,
+                           version_size - 1);
+        if(ok)
+            memcpy(version, coordinate.version, strlen(coordinate.version) + 1);
+        else
+            release_platform(platform);
+    }
     toml_free(doc);
     return ok;
 }
@@ -302,7 +339,14 @@ typedef struct {
     bool deferred;
     source_spec spec;
     char target[RECIPE_COORDINATE_MAX];
+    /* Platform form only, owned until the node takes it. */
+    platform_recipe *platform;
 } visited;
+
+static void visited_free(visited *found) {
+    release_platform(&found->platform);
+    free(found);
+}
 
 /* Everything a registry dependency contributes to the graph, and not one byte
    of its sources: the recipe already says what it depends on, so the walk can
@@ -321,7 +365,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
     bool ok = resolve_remembered(dep->name, dep->version, resolved) ||
               resolve_version(registry_for(ctx, dep, creds), dep->name, dep->version, resolved, err,
                               err_size);
-    if(ok && resolved->coordinate.form != recipe_form_source)
+    if(ok && resolved->coordinate.form == recipe_form_binary)
         ok = set_error(err, err_size,
                        "%s %s is published as a prebuilt artifact, and molto cannot consume one "
                        "yet",
@@ -341,8 +385,18 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         out->about = resolved->about;
         out->spec = resolved->source;
         out->deferred = true;
+        /* A platform package's files are fetched when the graph is
+           materialized, like a source's, and its checksum is a digest of
+           every platform's pins: one value whichever platform a machine
+           chooses, so the lock does not flip between two developers. */
+        if(resolved->platform != NULL) {
+            out->platform = resolved->platform;
+            resolved->platform = NULL;
+            platform_recipe_digest(out->platform, out->checksum);
+        }
     }
 
+    resolved_dep_release(resolved);
     free(resolved);
     return ok;
 }
@@ -402,8 +456,17 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
         snprintf(out->checksum, sizeof out->checksum, "%s", spec.sha256);
     }
 
-    return read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->provide,
-                               &out->deps, &out->about, err, err_size);
+    char version[DEP_VERSION_MAX] = "";
+    if(!read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->provide,
+                            &out->deps, &out->about, version, sizeof version, &out->platform, err,
+                            err_size))
+        return false;
+    if(out->platform != NULL) {
+        snprintf(out->version, sizeof out->version, "%s", version);
+        platform_recipe_digest(out->platform, out->checksum);
+        out->deferred = true;
+    }
+    return true;
 }
 
 /* --- the walk --- */
@@ -539,12 +602,32 @@ static bool defer_fetch(dep_graph *graph, size_t node, const char *name, const v
  * Runs after the whole graph is known and known to be conflict-free, which is
  * the point of putting it off: nothing is on disk for a version the user is
  * about to be asked to change. */
+/* A platform package: the host's answer, or this machine's platform fetched
+   and unpacked (RFC-0022). Its root is wherever that left the files. */
+static bool materialize_platform(dep_node *node, char *err, size_t err_size) {
+    node->answer = calloc(1, sizeof *node->answer);
+    if(node->answer == NULL)
+        return set_error(err, err_size, "out of memory resolving dependencies");
+    platform_answer_init(node->answer);
+    char reason[512] = "";
+    if(!platform_resolve(node->platform, node->name, node->version, node->answer, reason,
+                         sizeof reason))
+        return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
+    snprintf(node->root, sizeof node->root, "%s", node->answer->root);
+    return true;
+}
+
 static bool materialize(dep_graph *graph, char *err, size_t err_size) {
     for(size_t i = 0; i < graph->fetch_count; i++) {
         const deferred_fetch *entry = &graph->fetches[i];
         dep_node *node = graph->nodes[entry->node];
         char reason[512] = "";
 
+        if(node->platform != NULL) {
+            if(!materialize_platform(node, err, err_size))
+                return false;
+            continue;
+        }
         if(!source_fetch(&entry->spec, entry->name, entry->version, entry->target, node->root,
                          sizeof node->root, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", entry->name, reason);
@@ -642,7 +725,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     }
 
     if(!ok) {
-        free(found);
+        visited_free(found);
         return entry->required_by[0] == '\0'
                    ? set_error(err, err_size, "dependency '%s': %s", dep->name, reason)
                    : set_error(err, err_size, "dependency '%s', required by '%s': %s", dep->name,
@@ -651,7 +734,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
 
     dep_node *node = calloc(1, sizeof *node);
     if(node == NULL) {
-        free(found);
+        visited_free(found);
         return set_error(err, err_size, "out of memory resolving dependencies");
     }
     str_list_init(&node->dependencies);
@@ -665,6 +748,8 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     node->artifacts = found->artifacts;
     node->provide = found->provide;
     node->about = found->about;
+    node->platform = found->platform;
+    found->platform = NULL;
 
     ok = record_edges(node, &found->deps, err, err_size) &&
          enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);
@@ -675,7 +760,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     else if(!ok)
         node_free(node);
 
-    free(found);
+    visited_free(found);
     return ok;
 }
 

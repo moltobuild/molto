@@ -34,6 +34,8 @@ void prepared_deps_init(prepared_deps *out) {
     str_list_init(&out->defines);
     str_list_init(&out->flags);
     str_list_init(&out->links);
+    str_list_init(&out->link_flags);
+    str_list_init(&out->runtime_dirs);
 }
 
 void prepared_deps_free(prepared_deps *out) {
@@ -46,6 +48,9 @@ void prepared_deps_free(prepared_deps *out) {
         str_list_free(&out->units[i].exports.defines);
         str_list_free(&out->units[i].exports.flags);
         str_list_free(&out->units[i].exports.links);
+        str_list_free(&out->units[i].exports.link_flags);
+        str_list_free(&out->units[i].bounds);
+        str_list_free(&out->units[i].runtime_dirs);
     }
     free(out->units);
     out->units = NULL;
@@ -54,6 +59,8 @@ void prepared_deps_free(prepared_deps *out) {
     str_list_free(&out->defines);
     str_list_free(&out->flags);
     str_list_free(&out->links);
+    str_list_free(&out->link_flags);
+    str_list_free(&out->runtime_dirs);
 }
 
 /* Room for one more dependency, initialised and named. Grown one at a time:
@@ -84,6 +91,10 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     str_list_init(&unit->exports.defines);
     str_list_init(&unit->exports.flags);
     str_list_init(&unit->exports.links);
+    str_list_init(&unit->exports.link_flags);
+    unit->system = false;
+    str_list_init(&unit->bounds);
+    str_list_init(&unit->runtime_dirs);
     return unit;
 }
 
@@ -103,7 +114,8 @@ static bool append_interface(prepared_deps *out, const prepared_interface *expor
     return append_list(&out->includes, &exports->includes, err, err_size) &&
            append_list(&out->defines, &exports->defines, err, err_size) &&
            append_list(&out->flags, &exports->flags, err, err_size) &&
-           append_list(&out->links, &exports->links, err, err_size);
+           append_list(&out->links, &exports->links, err, err_size) &&
+           append_list(&out->link_flags, &exports->link_flags, err, err_size);
 }
 
 /* --- collecting what a dependency contributes --- */
@@ -222,7 +234,9 @@ static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_
     bool ok = true;
     for(size_t i = 0; ok && i < str_list_count(&reached); i++) {
         const dep_node *other = dep_graph_find(graph, str_list_get(&reached, i));
-        if(other != NULL)
+        if(other != NULL && other->answer != NULL)
+            ok = append_list(&unit->includes, &other->answer->includes, err, err_size);
+        else if(other != NULL)
             ok = push_options(&other->artifacts.options, other->root, &unit->includes,
                               &unit->defines, &unit->flags, err, err_size);
     }
@@ -235,8 +249,28 @@ static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_
                         &unit->defines, &unit->flags, err, err_size);
 }
 
+/* A platform package (RFC-0022): no sources and no defines, only where its
+   headers are and what the link line needs. Everything here was resolved by
+   molto — from the host or from files it verified — and is taken verbatim. */
+static bool collect_platform(const dep_node *node, prepared_deps *out, char *err, size_t err_size) {
+    const platform_answer *answer = node->answer;
+    prepared_unit *unit = unit_open(out, node, err, err_size);
+    if(unit == NULL)
+        return false;
+    unit->system = true;
+    return append_list(&unit->exports.includes, &answer->includes, err, err_size) &&
+           append_list(&unit->exports.link_flags, &answer->links, err, err_size) &&
+           append_list(&unit->bounds, &answer->bounds, err, err_size) &&
+           append_list(&unit->runtime_dirs, &answer->runtime_dirs, err, err_size) &&
+           append_list(&out->runtime_dirs, &answer->runtime_dirs, err, err_size) &&
+           append_interface(out, &unit->exports, err, err_size);
+}
+
 static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps *out, char *err,
                     size_t err_size) {
+    if(node->answer != NULL)
+        return collect_platform(node, out, err, err_size);
+
     const recipe_artifacts *artifacts = &node->artifacts;
     /* Only a source drop contributes translation units. A static or shared
        artifact is already built, and molto cannot consume one yet. */
