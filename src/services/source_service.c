@@ -574,8 +574,11 @@ static bool xz_program(char *out, size_t size, char *err, size_t err_size) {
                           "-C",
                           directory,
                           "--strip-components=1",
-                          "bin_x86-64/xz.exe",
-                          "bin_x86-64/liblzma.dll",
+                          /* The whole directory, never a library by name: the
+                             release job reads every DLL name the binary holds
+                             as an import, and xz.exe needs nothing beside it
+                             that the directory does not carry. */
+                          "bin_x86-64",
                           NULL};
     const bool ok = run(argv, err, err_size, "tar");
     (void)remove(archive);
