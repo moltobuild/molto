@@ -303,8 +303,13 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
         ok = *platform != NULL ? recipe_read_coordinate(view, &coordinate, err, err_size) &&
                                      platform_recipe_read(view, *platform, err, err_size)
                                : set_error(err, err_size, "out of memory reading %s", path);
+        /* Refused rather than cut: the version names the cache directory, and
+           a shortened one is a different coordinate's directory. */
+        if(ok && strlen(coordinate.version) >= version_size)
+            ok = set_error(err, err_size, "%s: the version is longer than %zu characters", path,
+                           version_size - 1);
         if(ok)
-            snprintf(version, version_size, "%s", coordinate.version);
+            memcpy(version, coordinate.version, strlen(coordinate.version) + 1);
         else
             release_platform(platform);
     }
