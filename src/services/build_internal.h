@@ -309,8 +309,9 @@ void build_warn_if_not_saved(wsdb *db);
 /* Resolve what the manifest depends on and take the workspace lock. False with
    a message in `err`; a project with no dependencies at all succeeds without
    doing anything. */
-[[nodiscard]] bool build_prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
-                                          prepared_deps *dev_out, char *err, size_t err_size);
+[[nodiscard]] bool build_prepare_and_lock(const char *root, const char *platform, project_ctx *ctx,
+                                          prepared_deps *out, prepared_deps *dev_out, char *err,
+                                          size_t err_size);
 
 /* --- build_service.c: the plan, and what a document says --- */
 

@@ -408,7 +408,8 @@ static int frontend_exit_code(frontend_result answer) {
        C++ decides which driver this build needs as much as the project's own
        code does. */
     char deps_err[512] = "";
-    if(!build_prepare_and_lock(root, ctx_out, &plan->deps, &plan->dev, deps_err, sizeof deps_err)) {
+    if(!build_prepare_and_lock(root, platform, ctx_out, &plan->deps, &plan->dev, deps_err,
+                               sizeof deps_err)) {
         fprintf(stderr, "molto: %s\n", deps_err);
         return exit_dependency_failure;
     }

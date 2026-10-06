@@ -107,6 +107,38 @@ DESCRIBE(the_graph_reaches_past_what_the_manifest_declared) {
     sandbox_close(&at);
 }
 
+/* A recipe's relative path is relative to that recipe, the way a manifest's is
+   relative to the manifest. Resolved against the project instead, a package
+   that names its sibling as `../b` works only for a consumer that happens to
+   sit beside it. */
+DESCRIBE(a_nested_relative_path_is_relative_to_the_recipe_that_names_it) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    EXPECT_TRUE(make_package(&at, "a", "[deps]\nb = { path = \"../b\" }\n"));
+    EXPECT_TRUE(make_package(&at, "b", "[deps]\nc = { path = \"../c\" }\n"));
+    EXPECT_TRUE(make_package(&at, "c", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    EXPECT_STREQ("", err);
+    EXPECT_EQ(3u, dep_graph_count(graph));
+
+    char expected[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(expected, sizeof expected, "%s/a/../b/../c", at.root));
+    const dep_node *c = dep_graph_find(graph, "c");
+    ASSERT_NOT_NULL(c);
+    EXPECT_STREQ(expected, c->root);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}
+
 /* The edges, recorded per node, are what a lock file writes as `dependencies`
    and what makes the graph reconstructible without walking it again. */
 DESCRIBE(a_node_records_its_own_edges_sorted) {

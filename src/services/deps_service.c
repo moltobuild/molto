@@ -343,7 +343,10 @@ bool deps_prepare(const project_ctx *ctx, prepared_deps *out, char *err, size_t 
     if(!dep_graph_resolve(ctx, &graph, err, err_size))
         return false;
 
-    const bool ok = deps_prepare_graph(graph, out, err, err_size);
+    /* This machine's OS: the callers that take this route build for no
+       other. */
+    const bool ok = dep_graph_select_os(graph, recipe_os_for_platform(NULL), err, err_size) &&
+                    deps_prepare_graph(graph, out, err, err_size);
     dep_graph_free(graph);
     return ok;
 }

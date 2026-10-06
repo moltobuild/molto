@@ -202,15 +202,88 @@ static bool read_options(doc_view doc, const char *table, project_options *out, 
                             &out->flag_count, err, err_size);
 }
 
+/* The names a per-OS table is spelled with, in recipe_os order. */
+static const char *const OS_NAMES[RECIPE_OS_COUNT] = {"linux", "macos", "windows"};
+
+/* `[artifacts.<os>]` and `[artifacts.private.<os>]` for one OS. The keys are
+   `[artifacts]`'s lists, and only those: a scalar like `type` or `std` cannot
+   be appended to, and RFC-0003 gives no way to say one differs by platform. */
+static bool read_os_table(doc_view doc, const char *os, recipe_os_artifacts *out, char *err,
+                          size_t err_size) {
+    char table[64];
+    char private_table[64];
+    snprintf(table, sizeof table, ARTIFACTS_SECTION ".%s", os);
+    snprintf(private_table, sizeof private_table, ARTIFACTS_PRIVATE_SECTION ".%s", os);
+    return doc_read_strings(doc, table, "sources", out->sources[0], RECIPE_MAX_SOURCES,
+                            RECIPE_SOURCE_MAX, &out->source_count, err, err_size) &&
+           doc_read_strings(doc, table, "exclude", out->exclude[0], RECIPE_MAX_SOURCES,
+                            RECIPE_SOURCE_MAX, &out->exclude_count, err, err_size) &&
+           doc_read_strings(doc, table, "link", out->link[0], PROJECT_MAX_LINK,
+                            PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
+           read_options(doc, table, &out->options, err, err_size) &&
+           read_options(doc, private_table, &out->private_options, err, err_size);
+}
+
+static bool read_per_os(doc_view doc, recipe_artifacts *out, char *err, size_t err_size) {
+    for(size_t i = 0; i < RECIPE_OS_COUNT; i++) {
+        char table[64];
+        char private_table[64];
+        snprintf(table, sizeof table, ARTIFACTS_SECTION ".%s", OS_NAMES[i]);
+        snprintf(private_table, sizeof private_table, ARTIFACTS_PRIVATE_SECTION ".%s", OS_NAMES[i]);
+        if(!doc_has_table(doc, table) && !doc_has_table(doc, private_table))
+            continue;
+
+        /* Refused below the schema that defines it, because the reader that
+           predates it would not refuse: it would ignore the table and build
+           without whatever the table added (RFC-0009). */
+        long schema = 1;
+        if(!read_schema(doc, &schema, err, err_size))
+            return false;
+        if(schema < RECIPE_SCHEMA_PER_OS)
+            return set_error(err, err_size,
+                             "[artifacts.%s] needs schema %d or later, so a molto that does not "
+                             "know the table refuses the recipe rather than building without it",
+                             OS_NAMES[i], RECIPE_SCHEMA_PER_OS);
+
+        recipe_os_artifacts *os = &out->per_os[i];
+        if(!read_os_table(doc, OS_NAMES[i], os, err, err_size))
+            return false;
+        /* An empty `sources` means every file; appending to it would turn
+           "everything" into "only these" on one platform, which is the
+           opposite of adding. */
+        if(os->source_count > 0 && out->source_count == 0)
+            return set_error(err, err_size,
+                             "[artifacts.%s].sources adds to [artifacts].sources, which lists "
+                             "none and so already means every file; use [artifacts.<os>].exclude "
+                             "on the platforms that must not compile them",
+                             OS_NAMES[i]);
+    }
+    return true;
+}
+
+static bool has_any_table(doc_view doc) {
+    if(doc_has_table(doc, ARTIFACTS_SECTION) || doc_has_table(doc, ARTIFACTS_PRIVATE_SECTION))
+        return true;
+    for(size_t i = 0; i < RECIPE_OS_COUNT; i++) {
+        char table[64];
+        char private_table[64];
+        snprintf(table, sizeof table, ARTIFACTS_SECTION ".%s", OS_NAMES[i]);
+        snprintf(private_table, sizeof private_table, ARTIFACTS_PRIVATE_SECTION ".%s", OS_NAMES[i]);
+        if(doc_has_table(doc, table) || doc_has_table(doc, private_table))
+            return true;
+    }
+    return false;
+}
+
 bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_t err_size) {
     memset(out, 0, sizeof *out);
     /* RFC-0009's default, seeded before reading so an absent key keeps it. */
     out->type = recipe_artifact_static;
 
-    /* Either table on its own is enough. A recipe whose only statement is a
+    /* Any table on its own is enough. A recipe whose only statement is a
        private flag declares nothing directly under `[artifacts]`, and asking
        about that table alone would skip the whole read in silence. */
-    if(!doc_has_table(doc, ARTIFACTS_SECTION) && !doc_has_table(doc, ARTIFACTS_PRIVATE_SECTION))
+    if(!has_any_table(doc))
         return true;
 
     return read_type(doc, &out->type, err, err_size) &&
@@ -225,7 +298,8 @@ bool recipe_read_artifacts(doc_view doc, recipe_artifacts *out, char *err, size_
            doc_read_strings(doc, ARTIFACTS_SECTION, "link", out->link[0], PROJECT_MAX_LINK,
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
            read_options(doc, ARTIFACTS_SECTION, &out->options, err, err_size) &&
-           read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size);
+           read_options(doc, ARTIFACTS_PRIVATE_SECTION, &out->private_options, err, err_size) &&
+           read_per_os(doc, out, err, err_size);
 }
 
 /* --- [[provide]] --- */
@@ -384,4 +458,83 @@ bool recipe_artifacts_wants(const recipe_artifacts *artifacts, const char *name)
     if(artifacts->source_count > 0 && !listed_in(artifacts->sources, artifacts->source_count, name))
         return false;
     return !listed_in(artifacts->exclude, artifacts->exclude_count, name);
+}
+
+/* --- the build's OS --- */
+
+recipe_os recipe_os_for_platform(const char *platform) {
+    if(platform == NULL || platform[0] == '\0') {
+#if defined(_WIN32)
+        return recipe_os_windows;
+#elif defined(__APPLE__)
+        return recipe_os_macos;
+#elif defined(__linux__)
+        return recipe_os_linux;
+#else
+        return recipe_os_none;
+#endif
+    }
+    /* The spellings a triple uses for each: `x86_64-w64-mingw32` and
+       `x86_64-pc-windows-msvc`, `aarch64-apple-darwin`, `x86_64-linux-gnu`. */
+    if(strstr(platform, "windows") != NULL || strstr(platform, "mingw") != NULL ||
+       strstr(platform, "-w64-") != NULL)
+        return recipe_os_windows;
+    if(strstr(platform, "darwin") != NULL || strstr(platform, "apple") != NULL ||
+       strstr(platform, "macos") != NULL)
+        return recipe_os_macos;
+    if(strstr(platform, "linux") != NULL)
+        return recipe_os_linux;
+    return recipe_os_none;
+}
+
+/* `count` entries of `from` onto the end of `to`, which holds `*to_count` of
+   `capacity`. Overflow names the key, since the list that overflowed is the
+   merge of two tables and neither alone is too long. */
+static bool append_strings(char *to, size_t *to_count, size_t capacity, size_t width,
+                           const char *from, size_t count, const char *os, const char *key,
+                           char *err, size_t err_size) {
+    if(*to_count + count > capacity)
+        return set_error(err, err_size,
+                         "[artifacts].%s and [artifacts.%s].%s together hold more than %zu entries",
+                         key, os, key, capacity);
+    for(size_t i = 0; i < count; i++)
+        snprintf(to + (*to_count + i) * width, width, "%s", from + i * width);
+    *to_count += count;
+    return true;
+}
+
+static bool append_options(project_options *to, const project_options *from, const char *os,
+                           char *err, size_t err_size) {
+    return append_strings(to->defines[0], &to->define_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
+                          from->defines[0], from->define_count, os, "defines", err, err_size) &&
+           append_strings(to->include[0], &to->include_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
+                          from->include[0], from->include_count, os, "include", err, err_size) &&
+           append_strings(to->flags[0], &to->flag_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
+                          from->flags[0], from->flag_count, os, "flags", err, err_size);
+}
+
+bool recipe_artifacts_select_os(recipe_artifacts *artifacts, recipe_os os, char *err,
+                                size_t err_size) {
+    if(artifacts->os_selected)
+        return true;
+    bool ok = true;
+    if(os != recipe_os_none) {
+        const recipe_os_artifacts *add = &artifacts->per_os[os];
+        const char *name = OS_NAMES[os];
+        ok =
+            append_strings(artifacts->sources[0], &artifacts->source_count, RECIPE_MAX_SOURCES,
+                           RECIPE_SOURCE_MAX, add->sources[0], add->source_count, name, "sources",
+                           err, err_size) &&
+            append_strings(artifacts->exclude[0], &artifacts->exclude_count, RECIPE_MAX_SOURCES,
+                           RECIPE_SOURCE_MAX, add->exclude[0], add->exclude_count, name, "exclude",
+                           err, err_size) &&
+            append_strings(artifacts->link[0], &artifacts->link_count, PROJECT_MAX_LINK,
+                           PROJECT_LINK_NAME_MAX, add->link[0], add->link_count, name, "link", err,
+                           err_size) &&
+            append_options(&artifacts->options, &add->options, name, err, err_size) &&
+            append_options(&artifacts->private_options, &add->private_options, name, err, err_size);
+    }
+    memset(artifacts->per_os, 0, sizeof artifacts->per_os);
+    artifacts->os_selected = true;
+    return ok;
 }

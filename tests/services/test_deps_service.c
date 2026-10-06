@@ -72,6 +72,61 @@ static const char *const RECIPE = "schema = 1\n"
                                   "link = [\"m\"]\n"
                                   "defines = [\"YYJSON_STATIC=1\"]\n";
 
+/* Each OS's table reaches the link line on that OS and nowhere else, and a
+   Windows-only source is compiled only there. */
+static const char *const PER_OS_RECIPE = "schema = 4\n"
+                                         "form = \"source\"\n"
+                                         "kind = \"package\"\n"
+                                         "name = \"yyjson\"\n"
+                                         "version = \"0.10.0\"\n"
+                                         "target = \"any\"\n"
+                                         "[artifacts]\n"
+                                         "type = \"source\"\n"
+                                         "exclude = [\"tool.c\"]\n"
+                                         "[artifacts.linux]\n"
+                                         "link = [\"on_linux\"]\n"
+                                         "exclude = [\"win32.c\"]\n"
+                                         "[artifacts.macos]\n"
+                                         "link = [\"on_macos\"]\n"
+                                         "exclude = [\"win32.c\"]\n"
+                                         "[artifacts.windows]\n"
+                                         "link = [\"on_windows\"]\n";
+
+DESCRIBE(deps_prepare_takes_the_table_for_this_os) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    ASSERT_TRUE(make_dependency(&at, PER_OS_RECIPE));
+    char file[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(file, sizeof file, "%s/yyjson/win32.c", at.root));
+    ASSERT_TRUE(fs_write_file(file, "int win32_answer(void) { return 2; }\n"));
+
+    project_ctx ctx;
+    char err[512] = "";
+    ASSERT_TRUE(parse_with_dep(&at, &ctx, err, sizeof err));
+
+    prepared_deps deps;
+    prepared_deps_init(&deps);
+    ASSERT_TRUE(deps_prepare(&ctx, &deps, err, sizeof err));
+    ASSERT_EQ(1u, deps.unit_count);
+
+#if defined(_WIN32)
+    const char *expected = "on_windows";
+    const size_t sources = 2;
+#elif defined(__APPLE__)
+    const char *expected = "on_macos";
+    const size_t sources = 1;
+#else
+    const char *expected = "on_linux";
+    const size_t sources = 1;
+#endif
+    ASSERT_EQ(1u, deps.links.count);
+    EXPECT_STREQ(expected, deps.links.items[0]);
+    EXPECT_EQ(sources, deps.units[0].sources.count);
+
+    prepared_deps_free(&deps);
+    sandbox_close(&at);
+}
+
 DESCRIBE(deps_prepare_reduces_a_dependency_to_what_a_build_needs) {
     sandbox at;
     ASSERT_TRUE(sandbox_open(&at));
