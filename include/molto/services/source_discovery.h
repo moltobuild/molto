@@ -15,6 +15,10 @@
    translation unit — and a header nobody includes still has to be formatted. */
 [[nodiscard]] bool source_discovery_collect_styleable(const char *root, str_list *out);
 
+/* Every regular file under `root`, sorted, whatever its name: what a recipe's
+   overlay directory carries. */
+[[nodiscard]] bool source_discovery_collect_all(const char *root, str_list *out);
+
 /* Collect what the tests are built from: everything under `<root>/tests`, plus
    the extra entries `[test].sources` lists. A listed directory is walked; a
    listed file is taken as it is; a relative entry anchors at `root` and an

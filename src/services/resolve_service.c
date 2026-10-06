@@ -1,6 +1,7 @@
 #include <molto/services/resolve_service.h>
 
 #include <molto/services/fs_service.h>
+#include <molto/services/paths_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/util/json.h>
 #include <molto/util/semver.h>
@@ -163,6 +164,19 @@ static bool read_artifact(json_value artifact, const char *name, const char *ver
     if(!recipe_read_build(recipe, &out->build, err, err_size))
         return false;
     if(!recipe_read_provide(recipe, &out->provide, err, err_size))
+        return false;
+    /* The files a published recipe carries, written once into the cache under
+       its coordinate, which never changes. */
+    char cache[RECIPE_OVERLAY_DIR_MAX];
+    char overlay_dir[RECIPE_OVERLAY_DIR_MAX];
+    if(doc_has_table(recipe, "overlay") &&
+       (!paths_molto_cache_dir(cache, sizeof cache) ||
+        !fs_format_path(overlay_dir, sizeof overlay_dir, "%s/overlays/%s/%s", cache, name,
+                        version)))
+        return set_error(err, err_size, "no room in molto's cache for the files of %s %s", name,
+                         version);
+    if(!recipe_read_overlay(recipe, NULL, doc_has_table(recipe, "overlay") ? overlay_dir : NULL,
+                            &out->overlay, err, err_size))
         return false;
     /* Read here, while the answer is still parsed: this is what a transitive
        walk follows, and asking the registry again for a table it already sent

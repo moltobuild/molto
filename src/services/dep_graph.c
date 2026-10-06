@@ -272,7 +272,8 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    what it depends on in turn. Read through the same doc_view the registry's
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
-                                recipe_build *build, recipe_provide *provide, project_deps *deps,
+                                recipe_build *build, recipe_provide *provide,
+                                recipe_overlay *overlay, source_spec *declared, project_deps *deps,
                                 manifest_about *about, char *version, size_t version_size,
                                 platform_recipe **platform, char *err, size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
@@ -298,8 +299,16 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
     bool ok = recipe_read_artifacts(view, artifacts, err, err_size) &&
               recipe_read_build(view, build, err, err_size) &&
               recipe_read_provide(view, provide, err, err_size) &&
+              recipe_read_overlay(view, root, NULL, overlay, err, err_size) &&
               project_deps_read_doc(view, deps, err, err_size) &&
               manifest_read_about(view, "about", about, err, err_size);
+
+    /* Where the recipe says its bytes are. Only a recipe in development says
+       anything worth acting on: one that names a tarball while being tried as
+       `{ path = "…/libxml2" }` means "fetch that, and lay my overlay on it". */
+    memset(declared, 0, sizeof *declared);
+    if(ok && doc_has_table(view, "source"))
+        ok = source_read(view, declared, err, err_size);
 
     /* A carried recipe may be a platform one: the way a recipe in development
        is tried before it is published, as `{ path = "…/gtk" }`. Only then is
@@ -342,6 +351,7 @@ typedef struct {
        both a recipe a registry served and one a fetched source brought. */
     recipe_build build;
     recipe_provide provide;
+    recipe_overlay overlay;
     project_deps deps;
     manifest_about about;
     /* Set for a registry dependency, whose bytes are not fetched during the
@@ -391,6 +401,7 @@ static bool visit_registry(const project_ctx *ctx, const project_dep *dep, const
         out->artifacts = resolved->artifacts;
         out->build = resolved->build;
         out->provide = resolved->provide;
+        out->overlay = resolved->overlay;
         out->deps = resolved->deps;
         out->about = resolved->about;
         out->spec = resolved->source;
@@ -467,10 +478,26 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
     }
 
     char version[DEP_VERSION_MAX] = "";
+    source_spec declared;
     if(!read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->provide,
-                            &out->deps, &out->about, version, sizeof version, &out->platform, err,
-                            err_size))
+                            &out->overlay, &declared, &out->deps, &out->about, version,
+                            sizeof version, &out->platform, err, err_size))
         return false;
+
+    /* A recipe directory rather than a source: its recipe names a tarball or
+       a commit, and the directory holds only what is the recipe's own. The
+       bytes come from where the recipe says, as they will once it is
+       published, and the overlay — already resolved against this directory —
+       is laid over them. */
+    if(spec.origin == source_origin_path &&
+       (declared.origin == source_origin_archive || declared.origin == source_origin_git)) {
+        char key[SOURCE_DIGEST_MAX];
+        if(!source_cache_key(&declared, key, sizeof key, err, err_size) ||
+           !source_fetch(&declared, dep->name, key, CARRIED_TARGET, out->root, sizeof out->root,
+                         err, err_size))
+            return false;
+        snprintf(out->checksum, sizeof out->checksum, "%s", declared.sha256);
+    }
     if(out->platform != NULL) {
         snprintf(out->version, sizeof out->version, "%s", version);
         platform_recipe_digest(out->platform, out->checksum);
@@ -686,7 +713,10 @@ static bool provide_all(dep_graph *graph, char *err, size_t err_size) {
     for(size_t i = 0; i < graph->count; i++) {
         dep_node *node = graph->nodes[i];
         char reason[512] = "";
-        if(!source_provide(node->root, &node->provide, reason, sizeof reason))
+        /* The overlay first: `[[provide]]` moves files the drop contains, and
+           after the overlay the drop contains the recipe's files too. */
+        if(!source_overlay(node->root, &node->overlay, reason, sizeof reason) ||
+           !source_provide(node->root, &node->provide, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
     }
     return true;
@@ -786,6 +816,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     node->scope = entry->scope;
     node->artifacts = found->artifacts;
     node->provide = found->provide;
+    node->overlay = found->overlay;
     node->about = found->about;
     node->platform = found->platform;
     found->platform = NULL;

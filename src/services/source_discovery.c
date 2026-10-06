@@ -74,6 +74,15 @@ bool source_discovery_collect_styleable(const char *root, str_list *out) {
     return collect_sorted(root, is_styleable, out);
 }
 
+static bool is_any(const char *path) {
+    (void)path;
+    return true;
+}
+
+bool source_discovery_collect_all(const char *root, str_list *out) {
+    return collect_sorted(root, is_any, out);
+}
+
 /* Where an entry of `[test].sources` is on disk: as written when absolute, and
    anchored at the project root when not — the same rule every relative path in
    a manifest obeys (RFC-0003). */

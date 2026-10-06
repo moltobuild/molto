@@ -191,6 +191,16 @@ typedef struct {
  *
  * `provide->count == 0` succeeds without touching the filesystem. */
 struct recipe_provide;
+struct recipe_overlay;
+
+/* Lay a recipe's overlay over the source at `root` (RFC-0009, `[overlay]`):
+   every file under the overlay's directory, at the same path. Runs before
+   `[[provide]]` and on every build, idempotent by the same rule: a file the
+   source already holds with the same bytes is left alone, and one it holds
+   with other bytes is refused, naming it. An overlay that is not present
+   succeeds without touching anything. */
+[[nodiscard]] bool source_overlay(const char *root, const struct recipe_overlay *overlay, char *err,
+                                  size_t err_size);
 
 [[nodiscard]] bool source_provide(const char *root, const struct recipe_provide *provide, char *err,
                                   size_t err_size);

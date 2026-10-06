@@ -1,7 +1,10 @@
 #include <molto/services/recipe_service.h>
 
+#include <molto/services/fs_service.h>
+
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ARTIFACTS_SECTION "artifacts"
@@ -214,9 +217,9 @@ static bool read_os_table(doc_view doc, const char *os, recipe_os_artifacts *out
     char private_table[64];
     snprintf(table, sizeof table, ARTIFACTS_SECTION ".%s", os);
     snprintf(private_table, sizeof private_table, ARTIFACTS_PRIVATE_SECTION ".%s", os);
-    return doc_read_strings(doc, table, "sources", out->sources[0], RECIPE_MAX_SOURCES,
+    return doc_read_strings(doc, table, "sources", out->sources[0], RECIPE_OS_MAX_SOURCES,
                             RECIPE_SOURCE_MAX, &out->source_count, err, err_size) &&
-           doc_read_strings(doc, table, "exclude", out->exclude[0], RECIPE_MAX_SOURCES,
+           doc_read_strings(doc, table, "exclude", out->exclude[0], RECIPE_OS_MAX_SOURCES,
                             RECIPE_SOURCE_MAX, &out->exclude_count, err, err_size) &&
            doc_read_strings(doc, table, "link", out->link[0], PROJECT_MAX_LINK,
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
@@ -537,4 +540,144 @@ bool recipe_artifacts_select_os(recipe_artifacts *artifacts, recipe_os os, char 
     memset(artifacts->per_os, 0, sizeof artifacts->per_os);
     artifacts->os_selected = true;
     return ok;
+}
+
+/* --- [overlay] --- */
+
+#define OVERLAY_SECTION "overlay"
+#define OVERLAY_FILES OVERLAY_SECTION ".files"
+
+bool recipe_overlay_path_ok(const char *path) {
+    if(path[0] == '\0' || path[0] == '/' || strchr(path, '\\') != NULL || strchr(path, ':') != NULL)
+        return false;
+    /* Component by component, so `a..b` is a name and `a/../b` is not. */
+    for(const char *part = path; *part != '\0';) {
+        const char *end = strchr(part, '/');
+        const size_t length = end != NULL ? (size_t)(end - part) : strlen(part);
+        if(length == 0 || (length == 1 && part[0] == '.') ||
+           (length == 2 && part[0] == '.' && part[1] == '.'))
+            return false;
+        part += length + (end != NULL ? 1 : 0);
+    }
+    return true;
+}
+
+/* One published file, written where the overlay's directory says. Written
+   once: a coordinate's bytes never change, so a file already there with the
+   same content is what an earlier build left, and one with other content is
+   a cache someone edited — reported rather than trusted or overwritten. */
+static bool materialize_file(const char *dir, const char *path, const char *content, char *err,
+                             size_t err_size) {
+    char file[RECIPE_OVERLAY_DIR_MAX + RECIPE_PROVIDE_PATH_MAX];
+    if(!fs_format_path(file, sizeof file, "%s/%s", dir, path))
+        return set_error(err, err_size, "[overlay] file '%s' makes a path that is too long", path);
+    if(fs_path_exists(file)) {
+        char *existing = fs_read_file(file);
+        const bool same = existing != NULL && strcmp(existing, content) == 0;
+        free(existing);
+        if(same)
+            return true;
+        return set_error(err, err_size,
+                         "[overlay] file '%s' is already in molto's cache at %s with other bytes",
+                         path, file);
+    }
+    char parent[sizeof file];
+    snprintf(parent, sizeof parent, "%s", file);
+    char *slash = strrchr(parent, '/');
+    if(slash != NULL)
+        *slash = '\0';
+    if(!fs_make_dirs(parent) || !fs_write_file(file, content))
+        return set_error(err, err_size, "could not write [overlay] file '%s' to %s", path, file);
+    return true;
+}
+
+static bool read_overlay_files(doc_view doc, const char *materialize_dir, recipe_overlay *out,
+                               char *err, size_t err_size) {
+    if(materialize_dir == NULL)
+        return set_error(err, err_size,
+                         "[overlay].files belongs to a published recipe; one on disk names its "
+                         "directory with [overlay].path");
+    const size_t count = doc_array_len(doc, OVERLAY_FILES);
+    if(count == 0)
+        return set_error(err, err_size, "[overlay].files lists no file");
+    if(count > RECIPE_OVERLAY_MAX_FILES)
+        return set_error(err, err_size, "[overlay].files has %zu files and at most %d may be",
+                         count, RECIPE_OVERLAY_MAX_FILES);
+
+    char *content = malloc(RECIPE_OVERLAY_MAX_BYTES + 1);
+    if(content == NULL)
+        return set_error(err, err_size, "out of memory reading [overlay]");
+    size_t total = 0;
+    bool ok = true;
+    for(size_t i = 0; ok && i < count; i++) {
+        doc_view item;
+        char path[RECIPE_PROVIDE_PATH_MAX];
+        if(!doc_array_at(doc, OVERLAY_FILES, i, &item) ||
+           !doc_get_string(item, "", "path", path, sizeof path) ||
+           !doc_get_string(item, "", "content", content, RECIPE_OVERLAY_MAX_BYTES + 1)) {
+            ok = set_error(err, err_size, "[overlay].files #%zu needs a 'path' and a 'content'",
+                           i + 1);
+            break;
+        }
+        total += strlen(content);
+        if(!recipe_overlay_path_ok(path))
+            ok = set_error(err, err_size,
+                           "[overlay].files #%zu names '%s', which is not a relative path inside "
+                           "the source",
+                           i + 1, path);
+        else if(total > RECIPE_OVERLAY_MAX_BYTES)
+            ok = set_error(err, err_size, "[overlay].files hold more than %d bytes",
+                           RECIPE_OVERLAY_MAX_BYTES);
+        else
+            ok = materialize_file(materialize_dir, path, content, err, err_size);
+    }
+    free(content);
+    if(ok)
+        snprintf(out->dir, sizeof out->dir, "%s", materialize_dir);
+    return ok;
+}
+
+static bool read_overlay_path(doc_view doc, const char *recipe_dir, recipe_overlay *out, char *err,
+                              size_t err_size) {
+    char path[RECIPE_PROVIDE_PATH_MAX];
+    if(!doc_get_string(doc, OVERLAY_SECTION, "path", path, sizeof path))
+        return set_error(err, err_size, "[overlay].path must be a string");
+    if(!recipe_overlay_path_ok(path))
+        return set_error(err, err_size, "[overlay].path '%s' is not a directory beside the recipe",
+                         path);
+    if(recipe_dir == NULL)
+        return set_error(err, err_size,
+                         "[overlay].path names a directory beside the recipe, and this recipe was "
+                         "not read from one");
+    if(!fs_format_path(out->dir, sizeof out->dir, "%s/%s", recipe_dir, path) ||
+       !fs_is_dir(out->dir))
+        return set_error(err, err_size, "[overlay].path '%s' is not a directory beside the recipe",
+                         path);
+    return true;
+}
+
+bool recipe_read_overlay(doc_view doc, const char *recipe_dir, const char *materialize_dir,
+                         recipe_overlay *out, char *err, size_t err_size) {
+    memset(out, 0, sizeof *out);
+    if(!doc_has_table(doc, OVERLAY_SECTION))
+        return true;
+
+    long schema = 1;
+    if(!read_schema(doc, &schema, err, err_size))
+        return false;
+    if(schema < RECIPE_SCHEMA_OVERLAY)
+        return set_error(err, err_size,
+                         "[overlay] needs schema %d or later, so a molto that does not know the "
+                         "table refuses the recipe rather than compiling without its files",
+                         RECIPE_SCHEMA_OVERLAY);
+
+    const bool has_path = doc_has_key(doc, OVERLAY_SECTION, "path");
+    const bool has_files = doc_has_key(doc, OVERLAY_SECTION, "files");
+    if(has_path == has_files)
+        return set_error(err, err_size,
+                         "[overlay] takes either 'path' (a recipe on disk) or 'files' (a "
+                         "published one)");
+    out->present = true;
+    return has_path ? read_overlay_path(doc, recipe_dir, out, err, err_size)
+                    : read_overlay_files(doc, materialize_dir, out, err, err_size);
 }

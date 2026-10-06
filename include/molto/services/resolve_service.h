@@ -40,6 +40,8 @@ typedef struct {
     recipe_build build;
     /* And what its own sources need copied into place before they compile. */
     recipe_provide provide;
+    /* The files a published recipe carries, written into molto's cache. */
+    recipe_overlay overlay;
     /* What this package depends on in turn, read from the same recipe. It is
        here because it is only readable while the registry's answer is alive,
        and because a second request to learn it would ask the registry the

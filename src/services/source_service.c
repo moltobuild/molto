@@ -4,6 +4,7 @@
 #include <molto/services/paths_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/recipe_service.h>
+#include <molto/services/source_discovery.h>
 #include <molto/util/semver.h>
 
 #include <stdarg.h>
@@ -823,6 +824,49 @@ bool source_provide(const char *root, const struct recipe_provide *provide, char
             return false;
     }
     return true;
+}
+
+bool source_overlay(const char *root, const struct recipe_overlay *overlay, char *err,
+                    size_t err_size) {
+    if(overlay == NULL || !overlay->present)
+        return true;
+
+    str_list files;
+    str_list_init(&files);
+    if(!source_discovery_collect_all(overlay->dir, &files)) {
+        str_list_free(&files);
+        return fail_about(err, err_size, "could not read the recipe's overlay", overlay->dir);
+    }
+
+    bool ok = true;
+    const size_t prefix = strlen(overlay->dir) + 1;
+    for(size_t i = 0; ok && i < str_list_count(&files); i++) {
+        const char *from = str_list_get(&files, i);
+        const char *relative = from + prefix;
+        char file[SOURCE_PATH_MAX];
+        if(!fs_format_path(file, sizeof file, "%s/%s", root, relative)) {
+            ok = fail_fmt(err, err_size, "[overlay] '%s' makes a path that is too long", relative);
+            break;
+        }
+        if(fs_path_exists(file)) {
+            if(!same_bytes(file, from))
+                ok = fail_fmt(err, err_size,
+                              "[overlay] would write '%s', which the source already contains "
+                              "with different bytes; an overlay completes a configuration and "
+                              "does not patch one",
+                              relative);
+            continue;
+        }
+        char parent[SOURCE_PATH_MAX];
+        snprintf(parent, sizeof parent, "%s", file);
+        char *slash = strrchr(parent, '/');
+        if(slash != NULL)
+            *slash = '\0';
+        if(!fs_make_dirs(parent) || !copy_bytes(from, file))
+            ok = fail_fmt(err, err_size, "[overlay] could not write '%s'", relative);
+    }
+    str_list_free(&files);
+    return ok;
 }
 
 /* The tag `line` of an ls-remote listing names, or NULL: "<sha>\trefs/tags/<tag>". */

@@ -34,8 +34,12 @@
 
    Schema 4 is `[artifacts.<os>]` and `[artifacts.private.<os>]`. A reader that
    predates them would build without the Windows-only `-lbcrypt` and fail at
-   the link with a message naming nobody's mistake, so it must refuse. */
-#define RECIPE_SCHEMA_MAX 4
+   the link with a message naming nobody's mistake, so it must refuse.
+
+   Schema 5 is `[overlay]`: files the recipe carries and lays over the source.
+   A reader that predates it would compile a tarball without the config.h the
+   overlay supplies. */
+#define RECIPE_SCHEMA_MAX 5
 
 /* The schema that introduced `[plugin]`, and the least a recipe carrying that
    table may declare.
@@ -55,8 +59,17 @@
    carrying one may declare. */
 #define RECIPE_SCHEMA_PER_OS 4
 
+/* The schema that introduced `[overlay]`, and the least a recipe carrying it
+   may declare. */
+#define RECIPE_SCHEMA_OVERLAY 5
+
 #define RECIPE_COORDINATE_MAX 128
-#define RECIPE_MAX_SOURCES 32
+/* An upstream tarball holds far more than its library, so a recipe on one
+   names its sources rather than excluding the rest: libxml2 is 37 files, libpq
+   and what it links from src/common and src/port 38. */
+#define RECIPE_MAX_SOURCES 128
+/* What one OS adds is a handful of port files, never a library. */
+#define RECIPE_OS_MAX_SOURCES 32
 #define RECIPE_SOURCE_MAX 128
 
 /* Room for a language standard. The same size as the manifest's, because that
@@ -143,9 +156,9 @@ typedef enum {
  * a graph that differed by platform would give each platform its own lock.
  */
 typedef struct {
-    char sources[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    char sources[RECIPE_OS_MAX_SOURCES][RECIPE_SOURCE_MAX];
     size_t source_count;
-    char exclude[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    char exclude[RECIPE_OS_MAX_SOURCES][RECIPE_SOURCE_MAX];
     size_t exclude_count;
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
     size_t link_count;
@@ -309,6 +322,45 @@ typedef struct {
    when `platform` is NULL or empty. recipe_os_none for a triple naming none of
    the three, which then gets `[artifacts]` alone. */
 [[nodiscard]] recipe_os recipe_os_for_platform(const char *platform);
+
+/*
+ * `[overlay]`: files a source recipe carries and lays over its source.
+ *
+ * What a library's configure writes — config.h, a version header filled in
+ * from a template — is not in its release tarball, and `[[provide]]` can only
+ * move what is. The overlay is where those files travel: beside the recipe as
+ * `[overlay] path = "files"` while it is developed, and inside the published
+ * recipe as `[overlay] files = [{ path, content }]`, so the registry serves
+ * them with the rest of it and the tarball still comes from upstream.
+ *
+ * Laid over the source with `[[provide]]`'s rule: a file may be added, never
+ * replaced, so an overlay completes a configuration and cannot patch one.
+ */
+#define RECIPE_OVERLAY_MAX_FILES 64
+#define RECIPE_OVERLAY_MAX_BYTES (512 * 1024)
+#define RECIPE_OVERLAY_DIR_MAX 1024
+
+typedef struct recipe_overlay {
+    bool present;
+    /* Where the files are: the recipe's own directory for a recipe on disk,
+       or the directory a published recipe's files were written to. Paths
+       under it are the paths they take in the source. */
+    char dir[RECIPE_OVERLAY_DIR_MAX];
+} recipe_overlay;
+
+/* Read `[overlay]`. `path` needs `recipe_dir`, the directory the recipe file
+   is in; `files` needs `materialize_dir`, where they are written once — a
+   published coordinate never changes, so neither does that directory. A NULL
+   for the one the document uses is an error naming it. Refused below schema
+   5, with both keys or neither, with a path that is absolute or climbs out,
+   and past RECIPE_OVERLAY_MAX_FILES or RECIPE_OVERLAY_MAX_BYTES. */
+[[nodiscard]] bool recipe_read_overlay(doc_view doc, const char *recipe_dir,
+                                       const char *materialize_dir, recipe_overlay *out, char *err,
+                                       size_t err_size);
+
+/* True when `path` may name a file inside a source: relative, not empty, no
+   `..` component and no backslash. */
+[[nodiscard]] bool recipe_overlay_path_ok(const char *path);
 
 /* Fold the table for `os` into `[artifacts]` and `[artifacts.private]`, and
    forget the others. Done once per package and per build, after which the
