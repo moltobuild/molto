@@ -567,7 +567,7 @@ static bool xz_program(char *out, size_t size, char *err, size_t err_size) {
     char archive[SOURCE_PATH_MAX];
     if(!fs_make_dirs(directory) ||
        !fs_format_path(archive, sizeof archive, "%s/xz-windows.zip", directory))
-        return fail(err, err_size, "could not create %s", directory);
+        return fail_about(err, err_size, "could not create", directory);
     if(!download(XZ_WINDOWS_URL, archive, err, err_size) ||
        !verify(archive, XZ_WINDOWS_SHA256, err, err_size))
         return false;
