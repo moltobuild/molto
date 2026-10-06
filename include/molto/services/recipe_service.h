@@ -30,8 +30,12 @@
 
    Schema 3 is `form = "platform"` (RFC-0022), for the same reason: a reader
    that predates the form must refuse it rather than take a recipe with no
-   [source] for a binary whose archive went missing. */
-#define RECIPE_SCHEMA_MAX 3
+   [source] for a binary whose archive went missing.
+
+   Schema 4 is `[artifacts.<os>]` and `[artifacts.private.<os>]`. A reader that
+   predates them would build without the Windows-only `-lbcrypt` and fail at
+   the link with a message naming nobody's mistake, so it must refuse. */
+#define RECIPE_SCHEMA_MAX 4
 
 /* The schema that introduced `[plugin]`, and the least a recipe carrying that
    table may declare.
@@ -46,6 +50,10 @@
 /* The schema that introduced `form = "platform"`, and the least such a recipe
    may declare. */
 #define RECIPE_SCHEMA_PLATFORM 3
+
+/* The schema that introduced the per-OS tables, and the least a recipe
+   carrying one may declare. */
+#define RECIPE_SCHEMA_PER_OS 4
 
 #define RECIPE_COORDINATE_MAX 128
 #define RECIPE_MAX_SOURCES 32
@@ -114,6 +122,37 @@ typedef enum {
  * is applied after `sources` so a recipe can narrow a list rather than restate
  * it.
  */
+/* The operating systems a per-OS table can name, keyed on the OS and not the
+   triple, as RFC-0003's `[target.<os>]` is: what differs between x86_64 and
+   aarch64 Windows is almost never a library. */
+typedef enum {
+    recipe_os_linux,
+    recipe_os_macos,
+    recipe_os_windows,
+    RECIPE_OS_COUNT,
+    recipe_os_none = RECIPE_OS_COUNT, /* an OS no table names: nothing is added */
+} recipe_os;
+
+/*
+ * What `[artifacts.<os>]` and `[artifacts.private.<os>]` add on that OS.
+ *
+ * Lists only, and only appended (RFC-0003's merge rules): `-lbcrypt` on
+ * Windows, a port file only on Windows, a define only on macOS. There is no
+ * way to remove what `[artifacts]` said; an entry that does not apply to one
+ * OS belongs in the tables of the ones it does apply to. No `[deps]`, because
+ * a graph that differed by platform would give each platform its own lock.
+ */
+typedef struct {
+    char sources[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    size_t source_count;
+    char exclude[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    size_t exclude_count;
+    char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
+    size_t link_count;
+    project_options options;
+    project_options private_options;
+} recipe_os_artifacts;
+
 typedef struct {
     recipe_artifact_type type;    /* default: static (RFC-0009) */
     char std[RECIPE_STD_MAX];     /* C standard for its own sources; "" = the consumer's */
@@ -124,8 +163,10 @@ typedef struct {
     size_t exclude_count;
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
     size_t link_count;
-    project_options options;         /* defines -> -D, include -> -I, flags verbatim */
-    project_options private_options; /* the same three, and only for its own sources */
+    project_options options;                     /* defines -> -D, include -> -I, flags verbatim */
+    project_options private_options;             /* the same three, and only for its own sources */
+    recipe_os_artifacts per_os[RECIPE_OS_COUNT]; /* empty once recipe_artifacts_select_os ran */
+    bool os_selected;
 } recipe_artifacts;
 
 /* Read the top-level coordinate. Refuses a schema newer than this reader
@@ -263,5 +304,17 @@ typedef struct {
    empty, meaning all of them) and not excluded. The one place that rule is
    spelled out, so the build and any report of it agree. */
 [[nodiscard]] bool recipe_artifacts_wants(const recipe_artifacts *artifacts, const char *name);
+
+/* The OS a build is for: the one a `--target` triple names, or this machine's
+   when `platform` is NULL or empty. recipe_os_none for a triple naming none of
+   the three, which then gets `[artifacts]` alone. */
+[[nodiscard]] recipe_os recipe_os_for_platform(const char *platform);
+
+/* Fold the table for `os` into `[artifacts]` and `[artifacts.private]`, and
+   forget the others. Done once per package and per build, after which the
+   rest of molto reads one flat table and never asks which OS it is for. A
+   second call is a no-op. False, naming the key, when a list overflows. */
+[[nodiscard]] bool recipe_artifacts_select_os(recipe_artifacts *artifacts, recipe_os os, char *err,
+                                              size_t err_size);
 
 #endif /* MOLTO_RECIPE_SERVICE_H */

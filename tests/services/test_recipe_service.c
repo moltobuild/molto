@@ -369,6 +369,124 @@ DESCRIBE(a_recipe_without_the_private_table_keeps_nothing_back) {
     EXPECT_EQ(0u, artifacts.private_options.flag_count);
 }
 
+/* --- what differs by operating system --- */
+
+/* libxml2's whole platform difference: `-lm` where there is a libm, and
+   BCryptGenRandom's import library on Windows. */
+static const char *const PER_OS_TOML = "schema = 4\n"
+                                       "form = \"source\"\n" MINIMUM "[artifacts]\n"
+                                       "type = \"source\"\n"
+                                       "sources = [\"dict.c\"]\n"
+                                       "defines = [\"LIBXML_STATIC\"]\n"
+                                       "[artifacts.linux]\n"
+                                       "link = [\"m\"]\n"
+                                       "[artifacts.macos]\n"
+                                       "link = [\"m\"]\n"
+                                       "[artifacts.windows]\n"
+                                       "link = [\"bcrypt\"]\n"
+                                       "sources = [\"win32.c\"]\n"
+                                       "defines = [\"WIN32_LEAN_AND_MEAN\"]\n"
+                                       "[artifacts.private.windows]\n"
+                                       "defines = [\"_CRT_SECURE_NO_WARNINGS\"]\n";
+
+static const char *const PER_OS_JSON =
+    "{\"schema\":4,\"form\":\"source\",\"kind\":\"package\",\"name\":\"x\","
+    "\"version\":\"1.0.0\",\"target\":\"any\","
+    "\"artifacts\":{\"type\":\"source\",\"sources\":[\"dict.c\"],\"defines\":[\"LIBXML_STATIC\"],"
+    "\"linux\":{\"link\":[\"m\"]},\"macos\":{\"link\":[\"m\"]},"
+    "\"windows\":{\"link\":[\"bcrypt\"],\"sources\":[\"win32.c\"],"
+    "\"defines\":[\"WIN32_LEAN_AND_MEAN\"]},"
+    "\"private\":{\"windows\":{\"defines\":[\"_CRT_SECURE_NO_WARNINGS\"]}}}}";
+
+static void check_per_os_on_windows(doc_view doc) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(recipe_read_artifacts(doc, &artifacts, err, sizeof err));
+    ASSERT_TRUE(recipe_artifacts_select_os(&artifacts, recipe_os_windows, err, sizeof err));
+
+    /* Appended after what every platform gets, never in its place. */
+    ASSERT_EQ(1u, artifacts.link_count);
+    EXPECT_STREQ("bcrypt", artifacts.link[0]);
+    ASSERT_EQ(2u, artifacts.source_count);
+    EXPECT_STREQ("dict.c", artifacts.sources[0]);
+    EXPECT_STREQ("win32.c", artifacts.sources[1]);
+    ASSERT_EQ(2u, artifacts.options.define_count);
+    EXPECT_STREQ("LIBXML_STATIC", artifacts.options.defines[0]);
+    EXPECT_STREQ("WIN32_LEAN_AND_MEAN", artifacts.options.defines[1]);
+    ASSERT_EQ(1u, artifacts.private_options.define_count);
+    EXPECT_STREQ("_CRT_SECURE_NO_WARNINGS", artifacts.private_options.defines[0]);
+}
+
+DESCRIBE(a_per_os_table_adds_to_artifacts_on_its_own_os) {
+    for_both(PER_OS_TOML, PER_OS_JSON, check_per_os_on_windows);
+}
+
+static void check_per_os_on_linux(doc_view doc) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(recipe_read_artifacts(doc, &artifacts, err, sizeof err));
+    ASSERT_TRUE(recipe_artifacts_select_os(&artifacts, recipe_os_linux, err, sizeof err));
+
+    ASSERT_EQ(1u, artifacts.link_count);
+    EXPECT_STREQ("m", artifacts.link[0]);
+    EXPECT_EQ(1u, artifacts.source_count);
+    EXPECT_EQ(1u, artifacts.options.define_count);
+    EXPECT_EQ(0u, artifacts.private_options.define_count);
+}
+
+DESCRIBE(a_per_os_table_adds_nothing_on_another_os) {
+    for_both(PER_OS_TOML, PER_OS_JSON, check_per_os_on_linux);
+}
+
+/* An OS no table names gets `[artifacts]` alone, and selecting twice does not
+   append twice. */
+DESCRIBE(selecting_an_os_is_done_once) {
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    ASSERT_TRUE(read_artifacts_of(PER_OS_TOML, &artifacts, err, sizeof err));
+    ASSERT_TRUE(recipe_artifacts_select_os(&artifacts, recipe_os_none, err, sizeof err));
+    EXPECT_EQ(0u, artifacts.link_count);
+    ASSERT_TRUE(recipe_artifacts_select_os(&artifacts, recipe_os_windows, err, sizeof err));
+    EXPECT_EQ(0u, artifacts.link_count);
+}
+
+/* A molto that predates the tables ignores them, so a recipe using one must
+   declare the schema that makes such a molto refuse it instead. */
+DESCRIBE(a_per_os_table_below_its_schema_is_refused) {
+    static const char *const old = "schema = 3\nform = \"source\"\n" MINIMUM
+                                   "[artifacts.windows]\nlink = [\"bcrypt\"]\n";
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    EXPECT_FALSE(read_artifacts_of(old, &artifacts, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[artifacts.windows] needs schema 4"));
+}
+
+/* With no `sources`, every file is compiled; adding one on Windows would mean
+   only that one there. */
+DESCRIBE(per_os_sources_need_a_sources_list_to_add_to) {
+    static const char *const all = "schema = 4\nform = \"source\"\n" MINIMUM
+                                   "[artifacts.windows]\nsources = [\"win32.c\"]\n";
+    recipe_artifacts artifacts;
+    char err[256] = "";
+    EXPECT_FALSE(read_artifacts_of(all, &artifacts, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[artifacts.windows].sources"));
+}
+
+DESCRIBE(the_os_a_triple_names) {
+    EXPECT_EQ(recipe_os_windows, recipe_os_for_platform("x86_64-w64-mingw32"));
+    EXPECT_EQ(recipe_os_windows, recipe_os_for_platform("x86_64-pc-windows-msvc"));
+    EXPECT_EQ(recipe_os_macos, recipe_os_for_platform("aarch64-apple-darwin"));
+    EXPECT_EQ(recipe_os_linux, recipe_os_for_platform("x86_64-unknown-linux-gnu"));
+    EXPECT_EQ(recipe_os_none, recipe_os_for_platform("x86_64-unknown-freebsd"));
+#if defined(_WIN32)
+    EXPECT_EQ(recipe_os_windows, recipe_os_for_platform(NULL));
+#elif defined(__APPLE__)
+    EXPECT_EQ(recipe_os_macos, recipe_os_for_platform(""));
+#else
+    EXPECT_EQ(recipe_os_linux, recipe_os_for_platform(""));
+#endif
+}
+
 /* --- the standard a package's own sources compile with --- */
 
 static const char *const STD_TOML = "schema = 1\n"

@@ -168,6 +168,16 @@ bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out) 
     return true;
 }
 
+bool dep_graph_select_os(dep_graph *graph, recipe_os os, char *err, size_t err_size) {
+    for(size_t i = 0; graph != NULL && i < graph->count; i++) {
+        dep_node *node = graph->nodes[i];
+        char reason[512] = "";
+        if(!recipe_artifacts_select_os(&node->artifacts, os, reason, sizeof reason))
+            return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
+    }
+    return true;
+}
+
 void dep_graph_free(dep_graph *graph) {
     if(graph == NULL)
         return;

@@ -154,8 +154,9 @@ static void watch_registry(size_t frame, void *context) {
     return true;
 }
 
-[[nodiscard]] bool build_prepare_and_lock(const char *root, project_ctx *ctx, prepared_deps *out,
-                                          prepared_deps *dev_out, char *err, size_t err_size) {
+[[nodiscard]] bool build_prepare_and_lock(const char *root, const char *platform, project_ctx *ctx,
+                                          prepared_deps *out, prepared_deps *dev_out, char *err,
+                                          size_t err_size) {
     if(ctx->deps.count == 0 && ctx->dev_deps.count == 0 && ctx->target.host_count == 0)
         return true;
 
@@ -214,7 +215,10 @@ static void watch_registry(size_t frame, void *context) {
         return false;
     }
 
-    ok = deps_prepare_graph(graph, out, err, err_size) &&
+    /* For the OS this build is for, which is the target's and not this
+       machine's: a Windows build made on Linux still links -lbcrypt. */
+    ok = dep_graph_select_os(graph, recipe_os_for_platform(platform), err, err_size) &&
+         deps_prepare_graph(graph, out, err, err_size) &&
          deps_prepare_dev(graph, dev_out, err, err_size);
     /* Failing to record a resolution that succeeded must not fail the build:
        the objects are correct either way, and the cost is that the next build

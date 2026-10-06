@@ -218,6 +218,12 @@ typedef struct {
  * allocation failed. */
 [[nodiscard]] bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out);
 
+/* Settle every package's per-OS tables for a build on `os` (RFC-0009,
+   `[artifacts.<os>]`). Called once the graph is resolved and before anything
+   reads `artifacts`, so the build that follows sees one table per package.
+   False, naming the package, when a merged list overflows. */
+[[nodiscard]] bool dep_graph_select_os(dep_graph *graph, recipe_os os, char *err, size_t err_size);
+
 void dep_graph_free(dep_graph *graph);
 
 #endif /* MOLTO_DEP_GRAPH_H */

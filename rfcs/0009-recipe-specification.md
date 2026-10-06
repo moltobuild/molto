@@ -390,6 +390,68 @@ own build rather than linking a prebuilt library. It is the only type that
 travels between platforms unchanged, and it is why `target = "any"` and
 `type = "source"` usually appear together.
 
+### Per-OS tables: `[artifacts.<os>]` and `[artifacts.private.<os>]`
+
+A source drop is the same bytes on every platform, and what it needs from each
+platform is usually a line or two: libxml2 seeds its hash table from
+`BCryptGenRandom`, so Windows links `bcrypt`; libpq talks to sockets through
+`ws2_32`; Unix links `m`. Without somewhere to say so, a recipe could either
+link `bcrypt` everywhere, which fails on Linux, or nowhere, which fails on
+Windows.
+
+`linux`, `macos` and `windows` name a table beside `[artifacts]` and one beside
+`[artifacts.private]`:
+
+```toml
+[artifacts]
+type = "source"
+defines = ["LIBXML_STATIC"]
+
+[artifacts.linux]
+link = ["m"]
+
+[artifacts.macos]
+link = ["m"]
+
+[artifacts.windows]
+link = ["bcrypt"]
+
+[artifacts.private.windows]
+defines = ["_CRT_SECURE_NO_WARNINGS"]
+```
+
+| Table | Keys |
+|---|---|
+| `[artifacts.<os>]` | `sources`, `exclude`, `link`, `include`, `defines`, `flags` |
+| `[artifacts.private.<os>]` | `include`, `defines`, `flags` |
+
+The rules are RFC-0003's for `[target.<os>]`, for the same reasons:
+
+- **Per OS, not per triple.** What differs between x86_64 and aarch64 Windows
+  is almost never a library.
+- **Lists append.** An OS table adds to what `[artifacts]` said and never
+  replaces it, so an entry added there later reaches every platform.
+- **Nothing is removed.** An entry that does not apply to one OS belongs in the
+  tables of the OSes it does apply to. `link = ["m"]` under both `linux` and
+  `macos` is the honest spelling of "every Unix".
+- **No scalars and no `[deps]`.** `type` and `std` are one value each, and a
+  dependency list that varied by platform would give each platform its own
+  `Molto.lock`.
+- **`sources` adds to a list.** With `[artifacts].sources` absent, every file
+  is already compiled, so an OS table may not name sources there: it would turn
+  "everything" into "only these" on one platform. Such a recipe excludes on the
+  other platforms instead, and is refused otherwise.
+
+The OS is the one the build is **for**: the target of `--target`, or this
+machine without one, so a Windows build made elsewhere still links `bcrypt`.
+Molto folds the matching table into `[artifacts]` once the graph is resolved,
+and nothing after that point knows there were others.
+
+A recipe carrying any of these tables must declare **schema 4** or later. A
+reader that predates them ignores unknown tables, so it would build without
+`bcrypt` and fail at the link with a message naming no one's mistake; at
+schema 4 it refuses the recipe and says to upgrade.
+
 ## Kind-specific tables
 
 ### `[toolchain]`
@@ -800,8 +862,6 @@ package should be one, and should publish as `kind = "package"` with a real
   `[[provide]]` answers that case without reading a byte of what it moves. A
   request that `[[provide]]` cannot serve is a request to change what upstream
   shipped, which is a fork rather than a recipe.
-- **Per-target overrides**, so one recipe can describe a build that differs on
-  Windows without becoming three recipes.
 - **Feature selection**, once RFC-0003's `[features]` is un-reserved.
 - **Signing.** A recipe's integrity currently rests on the registry's checksum;
   a signature would let it rest on the publisher instead.
