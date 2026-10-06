@@ -337,7 +337,7 @@ typedef struct {
  * replaced, so an overlay completes a configuration and cannot patch one.
  */
 #define RECIPE_OVERLAY_MAX_FILES 64
-#define RECIPE_OVERLAY_MAX_BYTES (512 * 1024)
+#define RECIPE_OVERLAY_MAX_BYTES ((size_t)512 * 1024)
 #define RECIPE_OVERLAY_DIR_MAX 1024
 
 typedef struct recipe_overlay {

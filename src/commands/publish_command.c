@@ -4,9 +4,11 @@
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/pack_service.h>
+#include <molto/services/paths_service.h>
 #include <molto/services/platform_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/services/registry_service.h>
+#include <molto/services/source_discovery.h>
 #include <molto/services/source_service.h>
 #include <molto/util/doc.h>
 #include <molto/util/progress.h>
@@ -602,6 +604,209 @@ static bool record(const credentials *creds, const coordinate *at, const char *r
     return true;
 }
 
+/*
+ * `[overlay]`, inlined.
+ *
+ * On disk a recipe names its overlay as a directory beside it; published, the
+ * registry holds only the recipe, so the files travel inside it. The recipe is
+ * sent with its `[overlay]` table rewritten from `path = "files"` to
+ * `files = [{ path, content }]`, and everything else exactly as written --
+ * which is also what a reader of the catalogue sees before downloading a byte.
+ */
+
+typedef struct {
+    char *text;
+    size_t length;
+    size_t capacity;
+} text_buffer;
+
+static bool buffer_append(text_buffer *buffer, const char *bytes, size_t count) {
+    if(buffer->length + count + 1 > buffer->capacity) {
+        size_t grown = buffer->capacity == 0 ? 4096 : buffer->capacity;
+        while(buffer->length + count + 1 > grown)
+            grown *= 2;
+        char *text = realloc(buffer->text, grown);
+        if(text == NULL)
+            return false;
+        buffer->text = text;
+        buffer->capacity = grown;
+    }
+    memcpy(buffer->text + buffer->length, bytes, count);
+    buffer->length += count;
+    buffer->text[buffer->length] = '\0';
+    return true;
+}
+
+static bool buffer_puts(text_buffer *buffer, const char *text) {
+    return buffer_append(buffer, text, strlen(text));
+}
+
+/* A TOML basic string: quotes and backslashes escaped, control characters
+   spelled out, everything else -- UTF-8 included -- as it is. */
+static bool buffer_toml_string(text_buffer *buffer, const char *text) {
+    bool ok = buffer_puts(buffer, "\"");
+    for(const unsigned char *c = (const unsigned char *)text; ok && *c != '\0'; c++) {
+        char escaped[8];
+        switch(*c) {
+        case '"':
+            ok = buffer_puts(buffer, "\\\"");
+            break;
+        case '\\':
+            ok = buffer_puts(buffer, "\\\\");
+            break;
+        case '\n':
+            ok = buffer_puts(buffer, "\\n");
+            break;
+        case '\t':
+            ok = buffer_puts(buffer, "\\t");
+            break;
+        case '\r':
+            ok = buffer_puts(buffer, "\\r");
+            break;
+        default:
+            if(*c < 0x20 || *c == 0x7f) {
+                snprintf(escaped, sizeof escaped, "\\u%04x", *c);
+                ok = buffer_puts(buffer, escaped);
+            } else {
+                ok = buffer_append(buffer, (const char *)c, 1);
+            }
+        }
+    }
+    return ok && buffer_puts(buffer, "\"");
+}
+
+/* The `[overlay]` table, with every file under `dir`. Refused past the limits
+   a reader enforces, so a recipe no consumer could read is never sent. */
+static bool overlay_table(const char *dir, text_buffer *out, size_t *files, size_t *bytes) {
+    str_list found;
+    str_list_init(&found);
+    if(!source_discovery_collect_all(dir, &found)) {
+        str_list_free(&found);
+        fprintf(stderr, "molto: cannot read the overlay directory %s\n", dir);
+        return false;
+    }
+    bool ok = buffer_puts(out, "[overlay]\nfiles = [\n");
+    const size_t prefix = strlen(dir) + 1;
+    *files = str_list_count(&found);
+    *bytes = 0;
+    if(*files == 0 || *files > RECIPE_OVERLAY_MAX_FILES) {
+        fprintf(stderr, "molto: [overlay] holds %zu files; between 1 and %d may be published\n",
+                *files, RECIPE_OVERLAY_MAX_FILES);
+        ok = false;
+    }
+    for(size_t i = 0; ok && i < *files; i++) {
+        const char *path = str_list_get(&found, i);
+        const char *relative = path + prefix;
+        int64_t mtime = 0;
+        uint64_t size = 0;
+        char *content = fs_read_file(path);
+        if(content == NULL || !fs_stamp(path, &mtime, &size)) {
+            fprintf(stderr, "molto: cannot read %s\n", path);
+            ok = false;
+        } else if(strlen(content) != size) {
+            fprintf(stderr,
+                    "molto: [overlay] file %s is not text; an overlay carries "
+                    "configuration, not binaries\n",
+                    relative);
+            ok = false;
+        } else if(!recipe_overlay_path_ok(relative)) {
+            fprintf(stderr, "molto: [overlay] file %s has a name a source cannot hold\n", relative);
+            ok = false;
+        } else if(*bytes + size > RECIPE_OVERLAY_MAX_BYTES) {
+            fprintf(stderr, "molto: [overlay] holds more than %zu bytes\n",
+                    RECIPE_OVERLAY_MAX_BYTES);
+            ok = false;
+        } else {
+            *bytes += size;
+            ok = buffer_puts(out, "  { path = ") && buffer_toml_string(out, relative) &&
+                 buffer_puts(out, ", content = ") && buffer_toml_string(out, content) &&
+                 buffer_puts(out, " },\n");
+        }
+        free(content);
+    }
+    str_list_free(&found);
+    return ok && buffer_puts(out, "]\n");
+}
+
+/* The line is a table header, and which. */
+static bool is_header(const char *line, size_t length, const char *name) {
+    while(length > 0 && (*line == ' ' || *line == '\t')) {
+        line++;
+        length--;
+    }
+    while(length > 0 &&
+          (line[length - 1] == ' ' || line[length - 1] == '\t' || line[length - 1] == '\r'))
+        length--;
+    if(name == NULL)
+        return length > 0 && line[0] == '[';
+    return length == strlen(name) && strncmp(line, name, length) == 0;
+}
+
+/* Writes the recipe to send into `out`: the recipe itself when it has no
+   overlay directory, or a copy in molto's cache with the table inlined. */
+static bool recipe_to_send(const coordinate *at, const char *recipe_path, char *out,
+                           size_t out_size, size_t *files, size_t *bytes) {
+    *files = 0;
+    *bytes = 0;
+    snprintf(out, out_size, "%s", recipe_path);
+    char *text = fs_read_file(recipe_path);
+    if(text == NULL) {
+        fprintf(stderr, "molto: cannot read %s\n", recipe_path);
+        return false;
+    }
+    char err[256] = "";
+    toml_document *doc = toml_parse(text, err, sizeof err);
+    char overlay_path[RECIPE_PROVIDE_PATH_MAX] = "";
+    const bool has_dir =
+        doc != NULL && toml_get_string(doc, "overlay", "path", overlay_path, sizeof overlay_path);
+    toml_free(doc);
+    if(!has_dir) {
+        free(text);
+        return true;
+    }
+
+    char recipe_dir[PATH_MAX_LEN];
+    char dir[PATH_MAX_LEN];
+    directory_of(recipe_path, recipe_dir, sizeof recipe_dir);
+    if(!recipe_overlay_path_ok(overlay_path) ||
+       !fs_format_path(dir, sizeof dir, "%s/%s", recipe_dir, overlay_path) || !fs_is_dir(dir)) {
+        fprintf(stderr, "molto: [overlay].path '%s' is not a directory beside the recipe\n",
+                overlay_path);
+        free(text);
+        return false;
+    }
+
+    text_buffer sent = {0};
+    bool ok = true;
+    bool skipping = false;
+    for(const char *line = text; ok && *line != '\0';) {
+        const char *end = strchr(line, '\n');
+        const size_t length = end != NULL ? (size_t)(end - line) : strlen(line);
+        if(is_header(line, length, "[overlay]")) {
+            ok = overlay_table(dir, &sent, files, bytes);
+            skipping = true;
+        } else if(skipping && is_header(line, length, NULL)) {
+            skipping = false;
+        }
+        if(ok && !skipping)
+            ok = buffer_append(&sent, line, length) && buffer_puts(&sent, "\n");
+        line = end != NULL ? end + 1 : line + length;
+    }
+    free(text);
+
+    char cache[PATH_MAX_LEN];
+    char publish_dir[PATH_MAX_LEN];
+    ok = ok && paths_molto_cache_dir(cache, sizeof cache) &&
+         fs_format_path(publish_dir, sizeof publish_dir, "%s/publish", cache) &&
+         fs_make_dirs(publish_dir) &&
+         fs_format_path(out, out_size, "%s/%s-%s.toml", publish_dir, at->name, at->version) &&
+         fs_write_file(out, sent.text);
+    if(!ok)
+        fprintf(stderr, "molto: could not prepare the recipe with its overlay inlined\n");
+    free(sent.text);
+    return ok;
+}
+
 /* A source recipe: one request and no bytes anywhere. The recipe is the whole
    artifact, so there is nothing to find, nothing to hash and nothing to
    upload -- which is also why naming an archive for one is a mistake worth
@@ -624,14 +829,23 @@ static int publish_source(const coordinate *at, const char *recipe_path, const c
         return exit_dependency_failure;
     }
 
+    char sent[PATH_MAX_LEN];
+    size_t overlay_files = 0;
+    size_t overlay_bytes = 0;
+    if(!recipe_to_send(at, recipe_path, sent, sizeof sent, &overlay_files, &overlay_bytes))
+        return exit_invalid_manifest;
+
     describe(at, creds.registry);
     fprintf(stderr, "  %s recipe only, no archive\n", at->from_platform ? "platform" : "source  ");
+    if(overlay_files > 0)
+        fprintf(stderr, "  overlay  %zu files, %zu bytes, inlined in the recipe\n", overlay_files,
+                overlay_bytes);
     if(dry_run) {
         fprintf(stderr, "  dry run: nothing was sent\n");
         return exit_ok;
     }
 
-    if(!record(&creds, at, recipe_path))
+    if(!record(&creds, at, sent))
         return exit_dependency_failure;
     return exit_ok;
 }

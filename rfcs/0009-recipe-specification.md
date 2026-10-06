@@ -222,6 +222,64 @@ Entries do not see each other. A `file` written by one is not the `from` of
 another, whatever order they appear in — chaining is a program, and this is a
 list.
 
+## `[overlay]`
+
+Source recipes only. Files the recipe carries and lays over its source,
+for the libraries `[[provide]]` cannot complete: their tarball ships
+`config.h.in` or `xmlversion.h.in`, a template configure fills in, and no file
+a recipe could move into place. libiconv needs five constants substituted into
+`iconv.h`; libpq needs the 700-line `pg_config.h` configure writes, different on
+each platform. Without somewhere for those files, the only way to package such a
+library was a fork of its source with the answers committed beside it.
+
+On disk the recipe names a directory beside itself:
+
+```toml
+[source]
+archive = "https://ftp.postgresql.org/pub/source/v18.6/postgresql-18.6.tar.bz2"
+sha256 = "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f"
+strip_prefix = "postgresql-18.6"
+
+[overlay]
+path = "files"     # files/molto/private/pg_config.h lands at molto/private/pg_config.h
+```
+
+`molto publish` sends the recipe with the table inlined, every file under the
+directory as a string, so the registry serves the recipe and its files as one
+document and the bytes of the library still come from upstream:
+
+```toml
+[overlay]
+files = [
+  { path = "molto/private/pg_config.h", content = "/* ... */" },
+]
+```
+
+### Rules
+
+- **Schema 5 or later.** A reader that predates the table would compile the
+  tarball without the files and fail on a missing `config.h`.
+- **`path` or `files`, never both.** `path` is a recipe on disk, `files` a
+  published one.
+- **A file is added, never replaced.** The overlay is laid over the source
+  before `[[provide]]`, and a path the source already holds with other bytes is
+  refused, as `[[provide]]` refuses one: completing a configuration is not
+  patching one. Identical bytes are what an earlier build left.
+- **Paths stay inside the source**: relative, no `..`, no backslash, no drive.
+- **Text, and bounded:** at most 64 files and 512 KiB, no NUL byte. An overlay
+  carries configuration; a binary, or anything that size, is a fork.
+- **Visible.** The files are part of the recipe the catalogue shows, so what a
+  recipe adds can be read before a byte is downloaded.
+
+A path dependency on a recipe directory whose `[source]` names an archive or a
+git commit fetches that source, as the published recipe will, and lays the
+directory's overlay on it: `{ path = "../recipes/libpq" }` is how a recipe is
+tried before it is published.
+
+The same revision raised `[artifacts].sources` to 128 entries: a recipe on an
+upstream tarball names its sources rather than excluding the rest of the tree,
+and libpq with what it links from `src/common` and `src/port` is 38 files.
+
 ## `[build]`
 
 Source recipes only. How the thing is built — by naming a build system, never by
@@ -857,7 +915,7 @@ package should be one, and should publish as `kind = "package"` with a real
 
 - **Patches.** A `[[patch]]` list applied between `[source]` and `[build]`
   remains the obvious way to reintroduce arbitrary behaviour, and remains
-  reserved. What made it look necessary was configuration, not modification —
+  reserved. `[overlay]` adds files and never changes one, which is the line. What made it look necessary was configuration, not modification —
   the library that needs `configure` to write one header and nothing else — and
   `[[provide]]` answers that case without reading a byte of what it moves. A
   request that `[[provide]]` cannot serve is a request to change what upstream

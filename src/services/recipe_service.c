@@ -626,7 +626,7 @@ static bool read_overlay_files(doc_view doc, const char *materialize_dir, recipe
                            "the source",
                            i + 1, path);
         else if(total > RECIPE_OVERLAY_MAX_BYTES)
-            ok = set_error(err, err_size, "[overlay].files hold more than %d bytes",
+            ok = set_error(err, err_size, "[overlay].files hold more than %zu bytes",
                            RECIPE_OVERLAY_MAX_BYTES);
         else
             ok = materialize_file(materialize_dir, path, content, err, err_size);

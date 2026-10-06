@@ -1,10 +1,12 @@
 #include <moltest.h>
 
+#include <molto/services/fs_service.h>
 #include <molto/services/recipe_service.h>
 #include <molto/util/json.h>
 #include <molto/util/toml.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The real sqlite recipe, in both encodings, so what is asserted is what the
@@ -233,10 +235,12 @@ DESCRIBE(recipe_refuses_a_sources_list_that_is_not_a_list) {
 }
 
 DESCRIBE(recipe_refuses_more_sources_than_it_can_hold) {
-    char text[8192] = "[artifacts]\nsources = [";
+    /* One per line, as a recipe that long is written: one physical line holds
+       a few dozen at most. */
+    char text[8192] = "[artifacts]\nsources = [\n";
     for (int i = 0; i < RECIPE_MAX_SOURCES + 1; i++) {
         char entry[32];
-        snprintf(entry, sizeof entry, "%s\"f%d.c\"", i > 0 ? ", " : "", i);
+        snprintf(entry, sizeof entry, "  \"f%d.c\",\n", i);
         strcat(text, entry);
     }
     strcat(text, "]\n");
@@ -485,6 +489,84 @@ DESCRIBE(the_os_a_triple_names) {
 #else
     EXPECT_EQ(recipe_os_linux, recipe_os_for_platform(""));
 #endif
+}
+
+/* --- [overlay] --- */
+
+DESCRIBE(an_overlay_path_stays_inside_the_source) {
+    EXPECT_TRUE(recipe_overlay_path_ok("molto/private/config.h"));
+    EXPECT_TRUE(recipe_overlay_path_ok("a..b/c.h"));
+    EXPECT_FALSE(recipe_overlay_path_ok(""));
+    EXPECT_FALSE(recipe_overlay_path_ok("/etc/passwd"));
+    EXPECT_FALSE(recipe_overlay_path_ok("../outside.h"));
+    EXPECT_FALSE(recipe_overlay_path_ok("a/../../b.h"));
+    EXPECT_FALSE(recipe_overlay_path_ok("a/./b.h"));
+    EXPECT_FALSE(recipe_overlay_path_ok("a\\b.h"));
+    EXPECT_FALSE(recipe_overlay_path_ok("C:/b.h"));
+}
+
+static bool read_overlay_json(const char *text, const char *dir, recipe_overlay *out, char *err,
+                              size_t err_size) {
+    json_document *doc = json_parse(text);
+    if (doc == NULL)
+        return false;
+    const bool ok = recipe_read_overlay(doc_from_json(json_root(doc)), NULL, dir, out, err,
+                                        err_size);
+    json_free(doc);
+    return ok;
+}
+
+/* A published recipe carries its files inline, and they are written where
+   the caller asks — once, since a coordinate never changes. */
+DESCRIBE(a_published_overlay_is_written_where_asked) {
+    char dir[64];
+    ASSERT_TRUE(moltest_temp_dir("molto_overlay", dir, sizeof dir));
+    static const char *const published =
+        "{\"schema\":5,\"overlay\":{\"files\":[{\"path\":\"molto/private/config.h\","
+        "\"content\":\"#define X 1\\n\"}]}}";
+    recipe_overlay overlay;
+    char err[256] = "";
+    ASSERT_TRUE(read_overlay_json(published, dir, &overlay, err, sizeof err));
+    EXPECT_TRUE(overlay.present);
+    EXPECT_STREQ(dir, overlay.dir);
+
+    char file[256];
+    snprintf(file, sizeof file, "%s/molto/private/config.h", dir);
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    EXPECT_STREQ("#define X 1\n", text);
+    free(text);
+    /* Read again, as every build reads the remembered recipe. */
+    EXPECT_TRUE(read_overlay_json(published, dir, &overlay, err, sizeof err));
+    (void)fs_remove_tree(dir);
+}
+
+DESCRIBE(a_published_overlay_may_not_climb_out) {
+    char dir[64];
+    ASSERT_TRUE(moltest_temp_dir("molto_overlay", dir, sizeof dir));
+    recipe_overlay overlay;
+    char err[256] = "";
+    EXPECT_FALSE(read_overlay_json("{\"schema\":5,\"overlay\":{\"files\":[{\"path\":\"../x.h\","
+                                   "\"content\":\"\"}]}}",
+                                   dir, &overlay, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "../x.h"));
+    (void)fs_remove_tree(dir);
+}
+
+DESCRIBE(an_overlay_below_its_schema_is_refused) {
+    recipe_overlay overlay;
+    char err[256] = "";
+    EXPECT_FALSE(read_overlay_json("{\"schema\":4,\"overlay\":{\"files\":[]}}", "/tmp", &overlay,
+                                   err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "schema 5"));
+}
+
+DESCRIBE(an_overlay_takes_a_path_or_files_and_not_both) {
+    recipe_overlay overlay;
+    char err[256] = "";
+    EXPECT_FALSE(read_overlay_json("{\"schema\":5,\"overlay\":{\"path\":\"files\",\"files\":[]}}",
+                                   "/tmp", &overlay, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "either"));
 }
 
 /* --- the standard a package's own sources compile with --- */

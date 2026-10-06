@@ -40,6 +40,10 @@
 #define TOML_MAX_TABLE_ARRAYS 64
 #define TOML_VALUE_MAX 256
 #define TOML_LINE_MAX 1024
+/* Room for an array written across many lines once its lines are joined: a
+   recipe naming a hundred sources of a long upstream tree is several
+   kilobytes, and one physical line is never allowed to be. */
+#define TOML_GATHERED_MAX ((size_t)64 * 1024)
 
 /* Scratch buffer size for the digits of one integer value. */
 #define TOML_DIGITS_MAX 64
@@ -753,12 +757,21 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
            before anything else looks at the value: a continuation line starts
            with a string or a ']' and would otherwise be read as a key without
            an '=', or worse, as a section header. */
+        char *gathered = NULL;
         if(open_bracket_count(trimmed) > 0) {
-            if(!gather_array_lines(line, sizeof line, &cursor, &line_no, err, err_size)) {
+            gathered = malloc(TOML_GATHERED_MAX);
+            if(gathered == NULL) {
+                set_err(err, err_size, line_no, "out of memory", NULL);
                 toml_free(doc);
                 return NULL;
             }
-            trimmed = trim(line);
+            snprintf(gathered, TOML_GATHERED_MAX, "%s", trimmed);
+            if(!gather_array_lines(gathered, TOML_GATHERED_MAX, &cursor, &line_no, err, err_size)) {
+                free(gathered);
+                toml_free(doc);
+                return NULL;
+            }
+            trimmed = trim(gathered);
         }
 
         if(trimmed[0] == '[') {
@@ -767,13 +780,16 @@ toml_document *toml_parse(const char *text, char *err, size_t err_size) {
                                                      sizeof section, err, err_size, line_no)
                           : parse_header(trimmed, counters, counter_count, section, sizeof section,
                                          err, err_size, line_no);
+            free(gathered);
             if(!ok) {
                 toml_free(doc);
                 return NULL;
             }
             continue;
         }
-        if(!parse_key_value(doc, section, trimmed, err, err_size, line_no, 0)) {
+        const bool parsed = parse_key_value(doc, section, trimmed, err, err_size, line_no, 0);
+        free(gathered);
+        if(!parsed) {
             toml_free(doc);
             return NULL;
         }

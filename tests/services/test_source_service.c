@@ -774,6 +774,67 @@ static bool make_drop(const sandbox *at, char *out, size_t size) {
     return fs_write_file(file, "int upstream(void) { return 1; }\n");
 }
 
+/* --- [overlay] --- */
+
+/* A recipe directory carrying what configure would have written: one file
+   the drop lacks, and one it already holds with the same bytes. */
+static bool make_overlay(const sandbox *at, const char *upstream_copy, recipe_overlay *out) {
+    snprintf(out->dir, sizeof out->dir, "%s/files", at->root);
+    out->present = true;
+    char dir[PATH_MAX_LEN];
+    char file[PATH_MAX_LEN];
+    snprintf(dir, sizeof dir, "%s/molto/private", out->dir);
+    if (!fs_make_dirs(dir))
+        return false;
+    snprintf(file, sizeof file, "%s/config.h", dir);
+    if (!fs_write_file(file, "#define HAVE_THINGS 1\n"))
+        return false;
+    snprintf(file, sizeof file, "%s/upstream.c", out->dir);
+    return fs_write_file(file, upstream_copy);
+}
+
+DESCRIBE(an_overlay_adds_its_files_at_their_paths) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+    recipe_overlay overlay = {0};
+    ASSERT_TRUE(make_overlay(&at, "int upstream(void) { return 1; }\n", &overlay));
+
+    char err[256] = "";
+    EXPECT_TRUE(source_overlay(drop, &overlay, err, sizeof err));
+    char written[PATH_MAX_LEN];
+    snprintf(written, sizeof written, "%s/molto/private/config.h", drop);
+    char *text = fs_read_file(written);
+    ASSERT_NOT_NULL(text);
+    EXPECT_STREQ("#define HAVE_THINGS 1\n", text);
+    free(text);
+
+    /* And again, as every build does: what is already there is left alone. */
+    EXPECT_TRUE(source_overlay(drop, &overlay, err, sizeof err));
+    sandbox_close(&at);
+}
+
+DESCRIBE(an_overlay_refuses_to_replace_what_upstream_shipped) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+    recipe_overlay overlay = {0};
+    ASSERT_TRUE(make_overlay(&at, "int upstream(void) { return 2; }\n", &overlay));
+
+    char err[256] = "";
+    EXPECT_FALSE(source_overlay(drop, &overlay, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "upstream.c"));
+    sandbox_close(&at);
+}
+
+DESCRIBE(no_overlay_touches_nothing) {
+    const recipe_overlay overlay = {0};
+    char err[256] = "";
+    EXPECT_TRUE(source_overlay("/nonexistent", &overlay, err, sizeof err));
+}
+
 static recipe_provide one_provision(const char *file, const char *from) {
     recipe_provide provide = {0};
     snprintf(provide.items[0].file, sizeof provide.items[0].file, "%s", file);

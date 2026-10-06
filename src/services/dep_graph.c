@@ -307,6 +307,7 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
        anything worth acting on: one that names a tarball while being tried as
        `{ path = "…/libxml2" }` means "fetch that, and lay my overlay on it". */
     memset(declared, 0, sizeof *declared);
+    declared->origin = source_origin_path; /* says nothing beyond "here" */
     if(ok && doc_has_table(view, "source"))
         ok = source_read(view, declared, err, err_size);
 
