@@ -721,9 +721,25 @@ static bool provided_path(const char *root, const char *root_real, const char *r
             return fail_fmt(err, err_size,
                             "[[provide]] #%zu takes '%s' from the source, which has no such file",
                             index + 1, relative);
-        return fail_fmt(err, err_size,
-                        "[[provide]] #%zu writes '%s' into a directory the source does not have",
-                        index + 1, relative);
+        /* A directory of its own for what it arranges — libpq's three public
+           headers side by side — is made, once the nearest directory that
+           does exist is known to be inside: a symlink along the way would
+           otherwise carry the new directories outside the source. */
+        char ancestor[SOURCE_PATH_MAX];
+        snprintf(ancestor, sizeof ancestor, "%s", probe);
+        while(!fs_path_exists(ancestor)) {
+            char up[SOURCE_PATH_MAX];
+            parent_of(ancestor, up, sizeof up);
+            if(strcmp(up, ancestor) == 0)
+                break;
+            snprintf(ancestor, sizeof ancestor, "%s", up);
+        }
+        if(!resolve_inside(root_real, ancestor))
+            return fail_fmt(err, err_size, "[[provide]] #%zu resolves its '%s' outside the source",
+                            index + 1, which);
+        if(!fs_make_dirs(probe))
+            return fail_fmt(err, err_size, "[[provide]] #%zu could not make the directory for '%s'",
+                            index + 1, relative);
     }
     if(!resolve_inside(root_real, probe))
         return fail_fmt(err, err_size, "[[provide]] #%zu resolves its '%s' outside the source",

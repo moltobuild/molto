@@ -802,6 +802,24 @@ DESCRIBE(a_provision_writes_the_file_a_configure_step_would_have) {
     sandbox_close(&at);
 }
 
+/* A provision may gather files into a directory of their own — libpq's public
+   headers, so a consumer's include path holds nothing else of PostgreSQL's. */
+DESCRIBE(a_provision_makes_the_directory_it_writes_into) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char drop[PATH_MAX_LEN];
+    ASSERT_TRUE(make_drop(&at, drop, sizeof drop));
+
+    const recipe_provide provide = one_provision("molto/include/config.h", "scripts/prebuilt.h");
+    char err[256] = "";
+    EXPECT_TRUE(source_provide(drop, &provide, err, sizeof err));
+    char written[PATH_MAX_LEN];
+    snprintf(written, sizeof written, "%s/molto/include/config.h", drop);
+    EXPECT_TRUE(fs_path_exists(written));
+
+    sandbox_close(&at);
+}
+
 /* A path origin is used where it lies and carries no stamp, so this runs again
    on every build. Identical bytes mean the copy already happened. */
 DESCRIBE(a_provision_already_applied_is_not_an_error) {

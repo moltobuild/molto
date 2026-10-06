@@ -192,6 +192,8 @@ show the whole of it before a byte is downloaded (RFC-0010).
 - **Both paths are relative to the root of the source.** An absolute path, a
   `..` component, or a symlink whose target leaves the root is a rejected
   recipe. The drop is the boundary, the same one `[artifacts].sources` observes.
+- **Directories it writes into are made**, once the nearest one that exists
+  resolves inside the source: a provision may gather files beside each other.
 - **The file it comes from must exist and be a regular file.** A recipe naming
   one the source does not contain is refused rather than skipped: it believed
   something about the source that is not true, and a build that continued would
