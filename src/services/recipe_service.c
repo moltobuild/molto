@@ -214,9 +214,9 @@ static bool read_os_table(doc_view doc, const char *os, recipe_os_artifacts *out
     char private_table[64];
     snprintf(table, sizeof table, ARTIFACTS_SECTION ".%s", os);
     snprintf(private_table, sizeof private_table, ARTIFACTS_PRIVATE_SECTION ".%s", os);
-    return doc_read_strings(doc, table, "sources", out->sources[0], RECIPE_MAX_SOURCES,
+    return doc_read_strings(doc, table, "sources", out->sources[0], RECIPE_OS_MAX_SOURCES,
                             RECIPE_SOURCE_MAX, &out->source_count, err, err_size) &&
-           doc_read_strings(doc, table, "exclude", out->exclude[0], RECIPE_MAX_SOURCES,
+           doc_read_strings(doc, table, "exclude", out->exclude[0], RECIPE_OS_MAX_SOURCES,
                             RECIPE_SOURCE_MAX, &out->exclude_count, err, err_size) &&
            doc_read_strings(doc, table, "link", out->link[0], PROJECT_MAX_LINK,
                             PROJECT_LINK_NAME_MAX, &out->link_count, err, err_size) &&
@@ -366,6 +366,98 @@ const char *recipe_build_system_name(recipe_build_system system) {
     return "none";
 }
 
+bool recipe_build_configures(const recipe_build *build) {
+    return build->system == recipe_build_autotools && build->via == recipe_via_delegate;
+}
+
+/* `env` is a table of strings; each becomes `NAME=value`. A name is what a
+   shell accepts, so nothing in it can be read as anything but a variable. */
+static bool read_build_env(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    char table[64];
+    snprintf(table, sizeof table, BUILD_SECTION ".env");
+    /* An inline table and a `[build.env]` header read back the same way: as a
+       table of that name. */
+    if(!doc_has_table(doc, table)) {
+        if(doc_has_key(doc, BUILD_SECTION, "env"))
+            return set_error(err, err_size, "[build].env must be a table of strings");
+        return true;
+    }
+    str_list names;
+    str_list_init(&names);
+    if(!doc_table_members(doc, table, &names)) {
+        str_list_free(&names);
+        return set_error(err, err_size, "[build].env must be a table of strings");
+    }
+    bool ok = true;
+    if(str_list_count(&names) > RECIPE_BUILD_MAX_ENV)
+        ok = set_error(err, err_size, "[build].env has more than %d variables",
+                       RECIPE_BUILD_MAX_ENV);
+    for(size_t i = 0; ok && i < str_list_count(&names); i++) {
+        const char *name = str_list_get(&names, i);
+        bool plain = name[0] != '\0' && !(name[0] >= '0' && name[0] <= '9');
+        for(const char *c = name; plain && *c != '\0'; c++)
+            plain = (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') ||
+                    (*c >= '0' && *c <= '9') || *c == '_';
+        char value[RECIPE_BUILD_ARG_MAX];
+        if(!plain)
+            ok = set_error(err, err_size, "[build].env names '%s', which is not a variable", name);
+        else if(!doc_get_string(doc, table, name, value, sizeof value))
+            ok = set_error(err, err_size, "[build].env.%s must be a string", name);
+        else if((size_t)snprintf(out->env[out->env_count], RECIPE_BUILD_ARG_MAX, "%s=%s", name,
+                                 value) >= RECIPE_BUILD_ARG_MAX)
+            ok = set_error(err, err_size, "[build].env.%s is too long", name);
+        else
+            out->env_count++;
+    }
+    str_list_free(&names);
+    return ok;
+}
+
+static bool read_delegation(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    char via[32];
+    if(doc_get_string(doc, BUILD_SECTION, "via", via, sizeof via)) {
+        if(strcmp(via, "delegate") == 0)
+            out->via = recipe_via_delegate;
+        else if(strcmp(via, "frontend") == 0)
+            out->via = recipe_via_frontend;
+        else
+            return set_error(err, err_size, "[build].via '%s' is not frontend or delegate", via);
+    } else if(doc_has_key(doc, BUILD_SECTION, "via")) {
+        return set_error(err, err_size, "[build].via must be a string");
+    }
+
+    const bool delegating_keys =
+        doc_has_key(doc, BUILD_SECTION, "args") || doc_has_key(doc, BUILD_SECTION, "env") ||
+        doc_has_table(doc, BUILD_SECTION ".env") || doc_has_key(doc, BUILD_SECTION, "targets");
+    /* RFC-0009: under a frontend there is no process to hand them to, and a
+       recipe that sets them believes something about what will run. */
+    if(delegating_keys && out->via != recipe_via_delegate)
+        return set_error(err, err_size,
+                         "[build].args, env and targets mean something only with via = "
+                         "\"delegate\"");
+    if(out->via == recipe_via_delegate && out->system == recipe_build_none)
+        return set_error(err, err_size, "[build].via = \"delegate\" needs a system to delegate to");
+
+    if(!doc_read_strings(doc, BUILD_SECTION, "args", out->args[0], RECIPE_BUILD_MAX_ARGS,
+                         RECIPE_BUILD_ARG_MAX, &out->arg_count, err, err_size) ||
+       !doc_read_strings(doc, BUILD_SECTION, "targets", out->targets[0], RECIPE_BUILD_MAX_TARGETS,
+                         RECIPE_BUILD_ARG_MAX, &out->target_count, err, err_size) ||
+       !read_build_env(doc, out, err, err_size))
+        return false;
+
+    /* A target is a file a Makefile rule writes inside the source, so it is
+       spelled as one: relative, and never climbing out. */
+    for(size_t i = 0; i < out->target_count; i++) {
+        const char *target = out->targets[i];
+        if(target[0] == '\0' || target[0] == '/' || target[0] == '-' ||
+           strstr(target, "..") != NULL || strchr(target, '\\') != NULL)
+            return set_error(err, err_size,
+                             "[build].targets names '%s', which is not a file inside the source",
+                             target);
+    }
+    return true;
+}
+
 bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size) {
     /* `recipe_build_none` is zero, so this is also the absent answer. */
     memset(out, 0, sizeof *out);
@@ -374,13 +466,13 @@ bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_si
     if(!doc_get_string(doc, BUILD_SECTION, "system", name, sizeof name)) {
         if(doc_has_key(doc, BUILD_SECTION, "system"))
             return set_error(err, err_size, "[build].system must be a string");
-        return true;
+        return read_delegation(doc, out, err, err_size);
     }
 
     for(size_t i = 0; i < sizeof BUILD_SYSTEMS / sizeof BUILD_SYSTEMS[0]; i++) {
         if(strcmp(BUILD_SYSTEMS[i].name, name) == 0) {
             out->system = BUILD_SYSTEMS[i].system;
-            return true;
+            return read_delegation(doc, out, err, err_size);
         }
     }
     /* Never a fallback to running it anyway, and never a fallback to `none`:

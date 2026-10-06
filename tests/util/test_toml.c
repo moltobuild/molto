@@ -548,6 +548,31 @@ DESCRIBE(toml_does_not_gather_lines_for_a_bracket_inside_a_string) {
     toml_free(doc);
 }
 
+/* A recipe on an upstream tarball names its sources one per line, and the
+   joined array is kilobytes long although no line is. */
+DESCRIBE(toml_reads_an_array_longer_than_a_line_once_joined) {
+    char text[16384];
+    int used = snprintf(text, sizeof text, "sources = [\n");
+    for (int i = 0; i < 100; i++)
+        used += snprintf(text + used, sizeof text - (size_t)used,
+                         "  \"src/interfaces/libpq/a_long_source_name_%03d.c\",\n", i);
+    snprintf(text + used, sizeof text - (size_t)used, "]\nname = \"libpq\"\n");
+
+    char err[256] = "";
+    toml_document *doc = toml_parse(text, err, sizeof err);
+    ASSERT_NOT_NULL(doc);
+    str_list values;
+    str_list_init(&values);
+    ASSERT_TRUE(toml_get_array(doc, "", "sources", &values));
+    EXPECT_EQ(100, (int)str_list_count(&values));
+    EXPECT_STREQ("src/interfaces/libpq/a_long_source_name_099.c", str_list_get(&values, 99));
+    str_list_free(&values);
+    char name[32] = "";
+    EXPECT_TRUE(toml_get_string(doc, "", "name", name, sizeof name));
+    EXPECT_STREQ("libpq", name);
+    toml_free(doc);
+}
+
 DESCRIBE(toml_reports_an_array_that_is_never_closed) {
     char err[256] = "";
     EXPECT_NULL(toml_parse("provides = [\n  \"constexpr\",\n", err, sizeof err));

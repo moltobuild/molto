@@ -83,6 +83,9 @@ typedef struct {
        is not. */
     char std[RECIPE_STD_MAX];
     char cpp_std[RECIPE_STD_MAX];
+    /* Upstream's configure to run in `root` before anything of it compiles,
+       once the compiler is known (RFC-0009, `via = "delegate"`). */
+    recipe_build build;
     /* What this package exports, as opposed to the lists above, which are what
        it is compiled with. Filled from the same recipe table and in the same
        pass as the sum on `prepared_deps`, so the two cannot disagree. */

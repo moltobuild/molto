@@ -7,6 +7,7 @@
 #include <molto/build/profile.h>
 #include <molto/build/report.h>
 #include <molto/exit_code.h>
+#include <molto/services/configure_service.h>
 #include <molto/services/deps_service.h>
 #include <molto/services/frontend_service.h>
 #include <molto/services/fs_service.h>
@@ -430,6 +431,22 @@ static int frontend_exit_code(frontend_result answer) {
     result = resolve_the_toolchain(plan, ctx_out, platform, db, refresh_toolchain, chain_out);
     if(result != exit_ok)
         return result;
+
+    /* A dependency configured by upstream's configure needs to know which
+       compiler it is being configured for, so this is the first moment it
+       can run — and it has to run before anything of it compiles. */
+    const prepared_deps *sets[] = {&plan->deps, &plan->dev};
+    for(size_t s = 0; s < sizeof sets / sizeof sets[0]; s++) {
+        for(size_t i = 0; i < sets[s]->unit_count; i++) {
+            const prepared_unit *unit = &sets[s]->units[i];
+            char configure_err[1024] = "";
+            if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
+                                     configure_err, sizeof configure_err)) {
+                fprintf(stderr, "molto: %s\n", configure_err);
+                return exit_dependency_failure;
+            }
+        }
+    }
 
     /* Before anything compiles: a coverage build that went ahead without its
        instrumentation would report "no data" for a reason nobody could find. */

@@ -233,10 +233,12 @@ DESCRIBE(recipe_refuses_a_sources_list_that_is_not_a_list) {
 }
 
 DESCRIBE(recipe_refuses_more_sources_than_it_can_hold) {
-    char text[8192] = "[artifacts]\nsources = [";
+    /* One per line, as a recipe that long is written: one physical line holds
+       a few dozen at most. */
+    char text[8192] = "[artifacts]\nsources = [\n";
     for (int i = 0; i < RECIPE_MAX_SOURCES + 1; i++) {
         char entry[32];
-        snprintf(entry, sizeof entry, "%s\"f%d.c\"", i > 0 ? ", " : "", i);
+        snprintf(entry, sizeof entry, "  \"f%d.c\",\n", i);
         strcat(text, entry);
     }
     strcat(text, "]\n");
@@ -601,6 +603,62 @@ DESCRIBE(a_recipe_reads_every_build_system_the_format_names) {
 /* Neither `sh -c` on a stranger's word nor a quiet fall back to `none`: one
    would run what the recipe named and the other would compile sources that were
    told they need configuring first (RFC-0009). */
+/* --- a delegated configure --- */
+
+/* libpq's: upstream's configure with its arguments, a variable for it, and a
+   header a Makefile rule writes. */
+DESCRIBE(a_delegated_autotools_build_reads_what_configure_is_given) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                              "args = [\"--without-icu\", \"--without-zlib\"]\n"
+                              "env = { PKG_CONFIG = \"true\" }\n"
+                              "targets = [\"src/port/pg_config_paths.h\"]\n",
+                              &build, err, sizeof err));
+    EXPECT_TRUE(recipe_build_configures(&build));
+    ASSERT_EQ(2u, build.arg_count);
+    EXPECT_STREQ("--without-zlib", build.args[1]);
+    ASSERT_EQ(1u, build.env_count);
+    EXPECT_STREQ("PKG_CONFIG=true", build.env[0]);
+    ASSERT_EQ(1u, build.target_count);
+    EXPECT_STREQ("src/port/pg_config_paths.h", build.targets[0]);
+}
+
+/* Only autotools, delegated, is a build molto runs; the system alone is not. */
+DESCRIBE(an_autotools_build_that_does_not_delegate_is_not_run) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("[build]\nsystem = \"autotools\"\n", &build, err, sizeof err));
+    EXPECT_FALSE(recipe_build_configures(&build));
+}
+
+DESCRIBE(configure_arguments_need_a_delegated_build) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nargs = [\"--x\"]\n", &build, err,
+                               sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "delegate"));
+}
+
+DESCRIBE(a_configure_target_stays_inside_the_source) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "targets = [\"../outside.h\"]\n",
+                               &build, err, sizeof err));
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "targets = [\"-f evil\"]\n",
+                               &build, err, sizeof err));
+}
+
+DESCRIBE(a_configure_variable_is_a_variable) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "env = { \"A B\" = \"x\" }\n",
+                               &build, err, sizeof err));
+}
+
 DESCRIBE(a_recipe_rejects_a_build_system_molto_does_not_know) {
     recipe_build build;
     char err[256] = "";

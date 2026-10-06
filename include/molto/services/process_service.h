@@ -27,7 +27,8 @@ typedef struct {
     size_t env_count;
     process_stream stdout_to;
     process_stream stderr_to;
-    char *capture; /* where captured output goes; NULL if nothing is */
+    char *capture;   /* where captured output goes; NULL if nothing is */
+    const char *cwd; /* the directory the child starts in; NULL is Molto's own */
     size_t capture_size;
     bool truncated; /* out: the output did not fit in `capture` */
 } process_spec;

@@ -272,9 +272,10 @@ static const char *registry_for(const project_ctx *ctx, const project_dep *dep,
    what it depends on in turn. Read through the same doc_view the registry's
    answer goes through, so the two cannot come to disagree. */
 static bool read_carried_recipe(const char *root, const char *name, recipe_artifacts *artifacts,
-                                recipe_build *build, recipe_provide *provide, project_deps *deps,
-                                manifest_about *about, char *version, size_t version_size,
-                                platform_recipe **platform, char *err, size_t err_size) {
+                                recipe_build *build, recipe_provide *provide, source_spec *declared,
+                                project_deps *deps, manifest_about *about, char *version,
+                                size_t version_size, platform_recipe **platform, char *err,
+                                size_t err_size) {
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
@@ -300,6 +301,14 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
               recipe_read_provide(view, provide, err, err_size) &&
               project_deps_read_doc(view, deps, err, err_size) &&
               manifest_read_about(view, "about", about, err, err_size);
+
+    /* Where the recipe says its bytes are. Only a recipe in development says
+       anything worth acting on: one that names a tarball while being tried as
+       `{ path = "…/libxml2" }` means "fetch that". */
+    memset(declared, 0, sizeof *declared);
+    declared->origin = source_origin_path; /* says nothing beyond "here" */
+    if(ok && doc_has_table(view, "source"))
+        ok = source_read(view, declared, err, err_size);
 
     /* A carried recipe may be a platform one: the way a recipe in development
        is tried before it is published, as `{ path = "…/gtk" }`. Only then is
@@ -467,10 +476,25 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
     }
 
     char version[DEP_VERSION_MAX] = "";
+    source_spec declared;
     if(!read_carried_recipe(out->root, dep->name, &out->artifacts, &out->build, &out->provide,
-                            &out->deps, &out->about, version, sizeof version, &out->platform, err,
-                            err_size))
+                            &declared, &out->deps, &out->about, version, sizeof version,
+                            &out->platform, err, err_size))
         return false;
+
+    /* A recipe directory rather than a source: its recipe names a tarball or
+       a commit, and the directory holds the recipe alone. The bytes come from
+       where the recipe says, as they will once it is published, so a recipe
+       is tried exactly as its consumers will get it. */
+    if(spec.origin == source_origin_path &&
+       (declared.origin == source_origin_archive || declared.origin == source_origin_git)) {
+        char key[SOURCE_DIGEST_MAX];
+        if(!source_cache_key(&declared, key, sizeof key, err, err_size) ||
+           !source_fetch(&declared, dep->name, key, CARRIED_TARGET, out->root, sizeof out->root,
+                         err, err_size))
+            return false;
+        snprintf(out->checksum, sizeof out->checksum, "%s", declared.sha256);
+    }
     if(out->platform != NULL) {
         snprintf(out->version, sizeof out->version, "%s", version);
         platform_recipe_digest(out->platform, out->checksum);
@@ -756,10 +780,12 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
        version of doing what it asked: it is a green build of something the
        recipe said would not work. That is what happened while nothing read
        this table. */
-    if(ok && found->build.system != recipe_build_none) {
+    if(ok && found->build.system != recipe_build_none && !recipe_build_configures(&found->build)) {
         ok = set_error(reason, sizeof reason,
-                       "its recipe builds with %s, and molto runs no build system yet — only "
-                       "[build] system = \"none\", a source drop the consumer compiles as its own",
+                       "its recipe builds with %s, and molto runs no build system of that kind — "
+                       "only [build] system = \"none\", or \"autotools\" with via = "
+                       "\"delegate\", whose configure molto runs before compiling the sources "
+                       "itself",
                        recipe_build_system_name(found->build.system));
     }
 
@@ -786,6 +812,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     node->scope = entry->scope;
     node->artifacts = found->artifacts;
     node->provide = found->provide;
+    node->build = found->build;
     node->about = found->about;
     node->platform = found->platform;
     found->platform = NULL;

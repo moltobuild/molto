@@ -151,6 +151,8 @@ typedef struct {
        fd 0", which is the one mistake this field could make. */
     pipe_end stdin_read_end;
     pipe_end stdin_write_end;
+    /* The directory the child starts in; NULL is the parent's. */
+    const char *cwd;
 } child_pipe;
 
 #ifdef _WIN32
@@ -360,8 +362,8 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
         wiring->stderr_captured ? wiring->write_end : GetStdHandle(STD_ERROR_HANDLE);
 
     PROCESS_INFORMATION started = {0};
-    const BOOL ok =
-        CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, environment, NULL, &startup, &started);
+    const BOOL ok = CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, environment, wiring->cwd,
+                                   &startup, &started);
     free(environment);
     if(nothing != INVALID_HANDLE_VALUE)
         CloseHandle(nothing); /* the child holds its own copy from here */
@@ -539,6 +541,8 @@ static child_handle spawn_child(const char *const argv[], const process_env_var 
         if(setenv(env[i].name, env[i].value, 1) != 0)
             _exit(EXIT_COMMAND_NOT_RUNNABLE);
     }
+    if(wiring->cwd != NULL && chdir(wiring->cwd) != 0)
+        _exit(EXIT_COMMAND_NOT_RUNNABLE);
     /* If execvp fails (e.g. command not found), exit like a shell would. */
     execvp(argv[0], (char *const *)argv);
     _exit(EXIT_COMMAND_NOT_RUNNABLE);
@@ -627,6 +631,7 @@ int process_execute(const char *const argv[], process_spec *spec) {
         .stderr_captured = spec->stderr_to == process_stream_capture,
         .stdin_read_end = PIPE_NONE,
         .stdin_write_end = PIPE_NONE,
+        .cwd = spec->cwd,
     };
     child_handle child = spawn_child(argv, spec->env, spec->env_count, &wiring);
     if(!child_started(child)) {
