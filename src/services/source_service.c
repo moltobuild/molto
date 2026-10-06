@@ -568,18 +568,12 @@ static bool xz_program(char *out, size_t size, char *err, size_t err_size) {
        !verify(archive, XZ_WINDOWS_SHA256, err, err_size))
         return false;
     /* The release keeps the 64-bit build under bin_x86-64/; tar reads a zip. */
-    const char *argv[] = {"tar",
-                          "-xf",
-                          archive,
-                          "-C",
-                          directory,
-                          "--strip-components=1",
+    const char *argv[] = {"tar", "-xf", archive, "-C", directory, "--strip-components=1",
                           /* The whole directory, never a library by name: the
                              release job reads every DLL name the binary holds
                              as an import, and xz.exe needs nothing beside it
                              that the directory does not carry. */
-                          "bin_x86-64",
-                          NULL};
+                          "bin_x86-64", NULL};
     const bool ok = run(argv, err, err_size, "tar");
     (void)remove(archive);
     return (ok && fs_path_exists(out)) || fail(err, err_size, "the xz release holds no xz.exe");
