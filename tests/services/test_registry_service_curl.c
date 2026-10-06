@@ -252,12 +252,14 @@ DESCRIBE(a_presign_answer_that_is_not_json_is_refused) {
 
 DESCRIBE(an_answer_is_explained_by_its_message_or_its_body) {
     char detail[128];
-    registry_response json = {.status = 400};
+    /* Static: each embeds REGISTRY_BODY_MAX, a megabyte, and two of them are
+       more than a Windows main thread has for its whole stack. */
+    static registry_response json = {.status = 400};
     snprintf(json.body, sizeof json.body, "{\"message\":\"bad name\"}");
     registry_explain(&json, detail, sizeof detail);
     EXPECT_STREQ("bad name", detail);
 
-    registry_response plain = {.status = 502};
+    static registry_response plain = {.status = 502};
     snprintf(plain.body, sizeof plain.body, "Bad Gateway");
     registry_explain(&plain, detail, sizeof detail);
     EXPECT_STREQ("Bad Gateway", detail);

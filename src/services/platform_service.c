@@ -497,7 +497,8 @@ bool platform_choose(const platform_recipe *recipe, const platform_host *host, s
             break;
         used += (size_t)written;
     }
-    char here[256];
+    /* Four fields and their separators: sized so the description is never cut. */
+    char here[4 * PLATFORM_FIELD_MAX + 8];
     describe_host(host, here, sizeof here);
     return fail(err, err_size, "no platform it pins matches this machine, %s; it serves %s", here,
                 served);
