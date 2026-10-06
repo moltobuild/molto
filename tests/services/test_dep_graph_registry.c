@@ -34,6 +34,9 @@ MOCK_VOID_FUNC(resolved_dep_release, resolved_dep *);
 MOCK_VALUE_FUNC(bool, source_fetch, const source_spec *, const char *, const char *, const char *,
                 char *, size_t, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_provide, const char *, const struct recipe_provide *, char *, size_t);
+/* Read only from a recipe a path or git source carries, which nothing here
+   is; the linker takes dep_graph.c whole. */
+MOCK_VALUE_FUNC(bool, source_read, doc_view, source_spec *, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_cache_key, const source_spec *, char *, size_t, char *, size_t);
 /* Reached only through platform_service, which nothing here resolves to. */
 MOCK_VALUE_FUNC(bool, source_cache_root, char *, size_t);

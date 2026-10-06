@@ -89,6 +89,9 @@ typedef struct {
        (RFC-0009). Applied after the fetch, because a recipe a fetched source
        carries is unreadable until those bytes are there. */
     recipe_provide provide;
+    /* How its sources are configured before they compile: autotools,
+       delegated, is the one molto runs (RFC-0009). */
+    recipe_build build;
     /* What its recipe says about itself: the licence above all (RFC-0009
        `[about]`). Carried here because the walk already parses that recipe to
        learn what to compile, so a report that has to name the licence of every

@@ -205,10 +205,14 @@ show the whole of it before a byte is downloaded (RFC-0010).
   and carries no stamp, so it is provided again on every build.
 - **At most 8 entries.** A recipe reaching for a ninth is restructuring a source
   tree rather than completing its configuration, and that is a fork.
-- **Only with `system = "none"`.** Every other build system does its own
-  configuration, and a recipe that both names one and supplies its output is
-  saying two contradictory things about who is in charge. Refused rather than
-  ignored.
+- **Only with `system = "none"`, or a delegated `autotools`.** A build system
+  molto hands the whole build to does its own configuration, and a recipe that
+  both names one and supplies its output is saying two contradictory things
+  about who is in charge. Refused rather than ignored. A delegated configure
+  (below) is not that: molto still compiles the sources, and a provision may
+  still arrange what they are compiled against — libpq's three public headers
+  copied beside each other, so a consumer's include path holds nothing else of
+  PostgreSQL's.
 
 ### Ordering
 
@@ -287,6 +291,52 @@ work itself once it is in the graph (RFC-0015) — nothing to hand a parallelism
 flag to. Setting any of the three alongside `via = "frontend"` is a rejected
 recipe, not a key quietly ignored: a recipe that sets them believes something
 about what the consumer will do.
+
+### A delegated configure: `system = "autotools"`, `via = "delegate"`
+
+The one delegation molto honours, and only half of one. A library whose release
+tarball ships `pg_config.h.in` rather than `pg_config.h` cannot be compiled
+until its own `configure` has asked this machine its questions, and nothing
+else can ask them as well: it is twenty thousand lines of shell written for
+exactly that. So molto runs it, and then does what it always does.
+
+```toml
+[build]
+system = "autotools"
+via = "delegate"
+args = ["--without-icu", "--without-readline", "--without-zlib"]
+env = { PKG_CONFIG = "true" }
+targets = ["src/port/pg_config_paths.h"]
+```
+
+- **`configure`, then `make` for each target, then molto.** `sh ./configure
+  <args>` runs in the unpacked source, in molto's cache, with `CC` set to the
+  compiler molto resolved and `env` added. Each of `targets` is a file a
+  Makefile rule writes (`make -C src/port pg_config_paths.h`). Then molto
+  compiles `[artifacts].sources` itself, as for any recipe: `make` never builds
+  the library, so the objects, the flags and the link are molto's.
+- **Once per compiler.** A stamp in the source records a digest of the
+  arguments, the environment, the targets, the compiler and the `--target`; a
+  build with the same digest runs nothing. Another compiler is another machine
+  as far as configure is concerned, and is asked again. A cross build passes
+  its triple as `--host`.
+- **`env` may not set `CC`.** What molto compiles with and what configure
+  tested have to be the same program.
+- **A target stays inside the source**: relative, no `..`, not an option.
+- **`sh` and `make` come from the PATH.** On Linux and macOS they are the
+  system's; on Windows, MSYS2's, which is what upstream's own instructions use.
+- **Dependencies are compiled, not found.** configure runs before any
+  dependency is compiled, so a feature that needs one (`--with-zlib`,
+  `--with-ssl`) cannot be probed; the recipe turns it off for configure and
+  states it with defines instead — libxml2's `LIBXML_ZLIB_ENABLED`, libpq's
+  `USE_OPENSSL` — which the version of the dependency the recipe names
+  guarantees.
+
+This is code the dependency wrote, running on the consumer's machine, and the
+recipe says so where the catalogue shows it: `via = "delegate"` is the
+declaration. What it buys is that nothing derived from upstream is hosted
+anywhere: the recipe names the tarball and the questions, and every machine
+computes its own answers.
 
 ## `[artifacts]`
 
@@ -819,11 +869,9 @@ What is specified here and consumed nowhere:
   knows and does not enumerate the rest, so a recipe carrying this one is stored
   and served verbatim today — which means it round-trips before it is checked,
   and a malformed one would reach a consumer rather than its publisher.
-- **`via`, `args`, `env` and `jobs` in `[build]`.** Every `system` that could
-  use them is refused, so reading them today would be code no build can reach.
-  They arrive with the first mechanism that honours a build system —
-  `via = "frontend"`, which needs RFC-0014's frontend capability to reach a
-  build at all.
+- **`jobs` in `[build]`, and every delegation but autotools.** A delegated
+  configure has nothing parallel left to hand over, and `make`, `cmake` and
+  `meson` are still refused until a frontend or a delegation reaches them.
 - **`[deps]` inside a package recipe, registry-side.** Molto reads it fully — it
   is what a transitive walk follows — but the registry checks only that it is a
   table. Since a registry cannot resolve versions (RFC-0010) it cannot check

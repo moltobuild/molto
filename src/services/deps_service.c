@@ -83,6 +83,7 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
        named or did not, and an empty one means the consumer's applies. */
     snprintf(unit->std, sizeof unit->std, "%s", node->artifacts.std);
     snprintf(unit->cpp_std, sizeof unit->cpp_std, "%s", node->artifacts.cpp_std);
+    unit->build = node->build;
     str_list_init(&unit->sources);
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);

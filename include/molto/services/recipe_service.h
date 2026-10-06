@@ -56,7 +56,12 @@
 #define RECIPE_SCHEMA_PER_OS 4
 
 #define RECIPE_COORDINATE_MAX 128
-#define RECIPE_MAX_SOURCES 32
+/* An upstream tarball holds far more than its library, so a recipe on one
+   names its sources rather than excluding the rest: libxml2 is 37 files, libpq
+   and what it links from src/common and src/port 38. */
+#define RECIPE_MAX_SOURCES 128
+/* What one OS adds is a handful of port files, never a library. */
+#define RECIPE_OS_MAX_SOURCES 32
 #define RECIPE_SOURCE_MAX 128
 
 /* Room for a language standard. The same size as the manifest's, because that
@@ -143,9 +148,9 @@ typedef enum {
  * a graph that differed by platform would give each platform its own lock.
  */
 typedef struct {
-    char sources[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    char sources[RECIPE_OS_MAX_SOURCES][RECIPE_SOURCE_MAX];
     size_t source_count;
-    char exclude[RECIPE_MAX_SOURCES][RECIPE_SOURCE_MAX];
+    char exclude[RECIPE_OS_MAX_SOURCES][RECIPE_SOURCE_MAX];
     size_t exclude_count;
     char link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
     size_t link_count;
@@ -241,10 +246,12 @@ typedef struct recipe_provide {
  * also what every source recipe published so far means, so reading them stays
  * correct.
  *
- * `via`, `args`, `env` and `jobs` are deliberately not here. Each of them only
- * means something for a system that is refused, so reading one today would be
- * code no build can reach — and a field nothing consumes is a field that drifts
- * from what it claims.
+ * `via = "delegate"` with `system = "autotools"` is the one delegation molto
+ * honours: it runs upstream's `configure` in the unpacked source, with `args`
+ * and `env`, then `make` for each of `targets` (headers a Makefile rule writes,
+ * like libpq's `src/port/pg_config_paths.h`), and compiles `[artifacts]`
+ * itself. It never runs `make` to build the library. `jobs` is not read: there
+ * is nothing parallel left to hand over.
  */
 typedef enum {
     recipe_build_none,
@@ -254,9 +261,31 @@ typedef enum {
     recipe_build_meson,
 } recipe_build_system;
 
+typedef enum {
+    recipe_via_unset, /* the recipe did not say */
+    recipe_via_frontend,
+    recipe_via_delegate,
+} recipe_build_via;
+
+#define RECIPE_BUILD_MAX_ARGS 32
+#define RECIPE_BUILD_ARG_MAX 160
+#define RECIPE_BUILD_MAX_ENV 16
+#define RECIPE_BUILD_MAX_TARGETS 8
+
 typedef struct {
     recipe_build_system system;
+    recipe_build_via via;
+    char args[RECIPE_BUILD_MAX_ARGS][RECIPE_BUILD_ARG_MAX];
+    size_t arg_count;
+    /* `NAME=value`, in the order the recipe wrote them. */
+    char env[RECIPE_BUILD_MAX_ENV][RECIPE_BUILD_ARG_MAX];
+    size_t env_count;
+    char targets[RECIPE_BUILD_MAX_TARGETS][RECIPE_BUILD_ARG_MAX];
+    size_t target_count;
 } recipe_build;
+
+/* True for the one build molto runs itself: autotools, delegated. */
+[[nodiscard]] bool recipe_build_configures(const recipe_build *build);
 
 [[nodiscard]] bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size);
 

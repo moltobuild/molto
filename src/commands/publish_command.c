@@ -226,10 +226,12 @@ static bool check_content(const toml_document *doc, const coordinate *at) {
         report(err);
         return false;
     }
-    /* Every other build system does its own configuration, so a recipe that
-       both names one and supplies its output is saying two contradictory things
-       about who is in charge (RFC-0009). */
-    if(provide.count > 0 && build.system != recipe_build_none) {
+    /* A build system molto hands the whole build to does its own
+       configuration, so a recipe that both names one and supplies its output
+       is saying two contradictory things about who is in charge (RFC-0009).
+       A delegated configure is not that: molto still compiles the sources,
+       and a provision may still arrange what they are compiled against. */
+    if(provide.count > 0 && build.system != recipe_build_none && !recipe_build_configures(&build)) {
         fprintf(stderr,
                 "molto: the recipe provides %zu file%s and builds with %s, which does its own "
                 "configuring; [[provide]] belongs to system = \"none\"\n",
