@@ -504,6 +504,110 @@ static source_compression infer_compression(const char *archive) {
     return ends_with(archive, ".zip") ? source_compression_zip : source_compression_tar;
 }
 
+/*
+ * xz on Windows.
+ *
+ * Windows' own tar is bsdtar built without liblzma: handed a .tar.xz it does
+ * not fail, it hangs, extracting nothing — measured on a GitHub runner, where
+ * a native program finds C:\Windows\System32\tar.exe before anything on the
+ * PATH. So on Windows molto takes the xz off itself, with `xz` — $MOLTO_XZ, the
+ * one on the PATH, or the tukaani project's own Windows build, downloaded once
+ * and verified — and hands tar a plain tar. Everywhere else tar reads xz.
+ */
+#ifdef _WIN32
+#define XZ_ENV "MOLTO_XZ"
+#define XZ_TOOL_DIR "tools/xz-5.8.4"
+#define XZ_WINDOWS_URL                                                                             \
+    "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4-windows.zip"
+#define XZ_WINDOWS_SHA256 "f31af7638391ecf286d48bc8555ce6e131691a1c52a9e44303bce57069e9de56"
+
+static const unsigned char XZ_MAGIC[] = {0xfd, '7', 'z', 'X', 'Z', 0x00};
+
+static bool starts_with_xz(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if(file == NULL)
+        return false;
+    unsigned char magic[sizeof XZ_MAGIC] = {0};
+    const bool read = fread(magic, 1, sizeof magic, file) == sizeof magic;
+    (void)fclose(file);
+    return read && memcmp(magic, XZ_MAGIC, sizeof XZ_MAGIC) == 0;
+}
+
+static bool download(const char *url, const char *into, char *err, size_t err_size);
+static bool verify(const char *file, const char *expected, char *err, size_t err_size);
+
+static bool xz_answers(const char *program) {
+    const char *argv[] = {program, "--version", NULL};
+    char ignored[256] = "";
+    return process_capture(argv, ignored, sizeof ignored) == 0;
+}
+
+static bool xz_program(char *out, size_t size, char *err, size_t err_size) {
+    const char *chosen = getenv(XZ_ENV);
+    if(chosen != NULL && chosen[0] != '\0') {
+        snprintf(out, size, "%s", chosen);
+        return true;
+    }
+    if(xz_answers("xz")) {
+        snprintf(out, size, "xz");
+        return true;
+    }
+    char cache[SOURCE_PATH_MAX];
+    char directory[SOURCE_PATH_MAX];
+    if(!cache_root(cache, sizeof cache) ||
+       !fs_format_path(directory, sizeof directory, "%s/" XZ_TOOL_DIR, cache) ||
+       !fs_format_path(out, size, "%s/xz.exe", directory))
+        return fail(err, err_size, "there is no room in molto's cache for xz");
+    if(fs_path_exists(out))
+        return true;
+    char archive[SOURCE_PATH_MAX];
+    if(!fs_make_dirs(directory) ||
+       !fs_format_path(archive, sizeof archive, "%s/xz-windows.zip", directory))
+        return fail_about(err, err_size, "could not create", directory);
+    if(!download(XZ_WINDOWS_URL, archive, err, err_size) ||
+       !verify(archive, XZ_WINDOWS_SHA256, err, err_size))
+        return false;
+    /* The release keeps the 64-bit build under bin_x86-64/; tar reads a zip. */
+    const char *argv[] = {"tar",
+                          "-xf",
+                          archive,
+                          "-C",
+                          directory,
+                          "--strip-components=1",
+                          "bin_x86-64/xz.exe",
+                          "bin_x86-64/liblzma.dll",
+                          NULL};
+    const bool ok = run(argv, err, err_size, "tar");
+    (void)remove(archive);
+    return (ok && fs_path_exists(out)) || fail(err, err_size, "the xz release holds no xz.exe");
+}
+
+/* `<archive>.unxz.tar.xz`, decompressed in place to `<archive>.unxz.tar`:
+   xz writes beside its input and has no option to write anywhere else. */
+static bool unpack_xz(const char *archive, const char *into, char *err, size_t err_size) {
+    char xz[SOURCE_PATH_MAX];
+    char packed[SOURCE_PATH_MAX];
+    char plain[SOURCE_PATH_MAX];
+    if(!xz_program(xz, sizeof xz, err, err_size))
+        return false;
+    if(!fs_format_path(packed, sizeof packed, "%s.unxz.tar.xz", archive) ||
+       !fs_format_path(plain, sizeof plain, "%s.unxz.tar", archive))
+        return fail(err, err_size, "the archive path is too long");
+    (void)remove(plain);
+    if(!fs_copy_file(archive, packed))
+        return fail_about(err, err_size, "could not copy the archive to decompress it", archive);
+    const char *decompress[] = {xz, "-d", "-f", "-q", packed, NULL};
+    bool ok = run(decompress, err, err_size, "xz");
+    if(ok) {
+        const char *argv[] = {"tar", "-xf", plain, "-C", into, NULL};
+        ok = run(argv, err, err_size, "tar");
+    }
+    (void)remove(packed);
+    (void)remove(plain);
+    return ok;
+}
+#endif
+
 /* `-xf` lets tar detect gzip, bzip2, xz and zstd from the bytes rather than
    from the name, so every tar packing runs the same command. Naming them in
    the recipe is still worth it: an unpackable format is then a rejected recipe
@@ -518,6 +622,10 @@ static bool unpack(const source_spec *spec, const char *archive, const char *int
         const char *argv[] = {"unzip", "-q", archive, "-d", into, NULL};
         return run(argv, err, err_size, "unzip");
     }
+#ifdef _WIN32
+    if(starts_with_xz(archive))
+        return unpack_xz(archive, into, err, err_size);
+#endif
     const char *argv[] = {"tar", "-xf", archive, "-C", into, NULL};
     return run(argv, err, err_size, "tar");
 }
@@ -721,9 +829,25 @@ static bool provided_path(const char *root, const char *root_real, const char *r
             return fail_fmt(err, err_size,
                             "[[provide]] #%zu takes '%s' from the source, which has no such file",
                             index + 1, relative);
-        return fail_fmt(err, err_size,
-                        "[[provide]] #%zu writes '%s' into a directory the source does not have",
-                        index + 1, relative);
+        /* A directory of its own for what it arranges — libpq's three public
+           headers side by side — is made, once the nearest directory that
+           does exist is known to be inside: a symlink along the way would
+           otherwise carry the new directories outside the source. */
+        char ancestor[SOURCE_PATH_MAX];
+        snprintf(ancestor, sizeof ancestor, "%s", probe);
+        while(!fs_path_exists(ancestor)) {
+            char up[SOURCE_PATH_MAX];
+            parent_of(ancestor, up, sizeof up);
+            if(strcmp(up, ancestor) == 0)
+                break;
+            snprintf(ancestor, sizeof ancestor, "%s", up);
+        }
+        if(!resolve_inside(root_real, ancestor))
+            return fail_fmt(err, err_size, "[[provide]] #%zu resolves its '%s' outside the source",
+                            index + 1, which);
+        if(!fs_make_dirs(probe))
+            return fail_fmt(err, err_size, "[[provide]] #%zu could not make the directory for '%s'",
+                            index + 1, relative);
     }
     if(!resolve_inside(root_real, probe))
         return fail_fmt(err, err_size, "[[provide]] #%zu resolves its '%s' outside the source",
