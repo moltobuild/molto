@@ -1069,14 +1069,16 @@ static bool point_links_at_host(const platform_entry *entry, const char *root, c
         }
         /* `libssl.so.3` is linked to by `libssl.so`: the name up to `.so`. */
         const char *so = strstr(library + 1, ".so");
-        const size_t stem = so != NULL ? (size_t)(so - library - 1) + 3 : strlen(library + 1);
+        char dev[PLATFORM_FIELD_MAX];
+        snprintf(dev, sizeof dev, "%.*s",
+                 so != NULL ? (int)(so - library - 1) + 3 : (int)strlen(library + 1), library + 1);
         for(size_t j = 0; j < str_list_count(&files); j++) {
             const char *path = str_list_get(&files, j);
             const char *slash = strrchr(path, '/');
             const char *base = slash != NULL ? slash + 1 : path;
             char target[PLATFORM_PATH_MAX];
-            if(strlen(base) != stem || strncmp(base, library + 1, stem) != 0 ||
-               !fs_link_target(path, target, sizeof target) || strcmp(target, host) == 0)
+            if(strcmp(base, dev) != 0 || !fs_link_target(path, target, sizeof target) ||
+               strcmp(target, host) == 0)
                 continue;
             if(remove(path) != 0 || !fs_link(host, path)) {
                 str_list_free(&files);
