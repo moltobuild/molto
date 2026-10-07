@@ -63,9 +63,8 @@ static bool push_defines(ir_option **array, size_t *count, const str_list *value
    composing one never has to tell a library from a `-flto`. */
 static bool push_links(ir_option **array, size_t *count, const str_list *values) {
     for(size_t i = 0; i < str_list_count(values); i++) {
-        char flag[PROJECT_OPT_LEN + 4];
-        const int written = snprintf(flag, sizeof flag, "-l%s", str_list_get(values, i));
-        if(written < 0 || (size_t)written >= sizeof flag)
+        char flag[PROJECT_OPT_LEN + 16];
+        if(!project_link_flag(str_list_get(values, i), flag, sizeof flag))
             return false;
         if(!ir_add_option(array, count, flag, ir_scope_target))
             return false;

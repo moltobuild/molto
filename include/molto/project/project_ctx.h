@@ -182,6 +182,12 @@ typedef struct {
    and writes a line-tagged reason into `err`. */
 [[nodiscard]] bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size);
 
+/* The link-line flag for one entry of a `link` list: `-lm` for `m`, and for a
+   macOS framework, written `VideoToolbox.framework`, `-Wl,-framework,VideoToolbox`
+   — one word, as a link line in a list of words needs it. False when it does
+   not fit. */
+[[nodiscard]] bool project_link_flag(const char *name, char *out, size_t size);
+
 /* Read the file at `path` and delegate to project_parse. */
 [[nodiscard]] bool project_load(const char *path, project_ctx *out, char *err, size_t err_size);
 

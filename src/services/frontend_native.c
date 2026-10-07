@@ -188,9 +188,8 @@ static bool push_link_scope(ir_target *target, const project_ctx *ctx, build_pro
             return false;
     }
     for(size_t i = 0; i < ctx->target.link_count; i++) {
-        char flag[PROJECT_LINK_NAME_MAX + 4];
-        const int written = snprintf(flag, sizeof flag, "-l%s", ctx->target.link[i]);
-        if(written < 0 || (size_t)written >= sizeof flag)
+        char flag[PROJECT_LINK_NAME_MAX + 16];
+        if(!project_link_flag(ctx->target.link[i], flag, sizeof flag))
             return false;
         if(!ir_add_option(&target->links, &target->link_count, flag, ir_scope_target))
             return false;
