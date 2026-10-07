@@ -54,6 +54,11 @@ typedef struct {
        are pinned in the platforms' own repositories. Implies `from_source`'s
        "no bytes to upload" without its tables. */
     bool from_platform;
+    /* A binary recipe naming the archive its upstream publishes (RFC-0023):
+       the registry is sent the recipe and nothing else, and hands clients the
+       upstream URL. */
+    bool from_upstream;
+    char upstream_url[PATH_MAX_LEN];
     /* How the blob is packed, as the recipe declares it. Empty when it says
        nothing, which is every recipe written before a toolchain had to run on
        Windows and is read as the default for the target. */
@@ -142,6 +147,52 @@ static bool check_tables(const toml_document *doc, const coordinate *at) {
         return false;
     }
     return has_table(doc, at->kind, table);
+}
+
+/* `[archive]`, checked before anything is sent: a coordinate is immutable,
+   and every client downloads from `url` and verifies against `sha256`. The
+   registry checks the same rules; refusing here says so without a request. */
+static const char *const ARCHIVE_FORMATS[] = {"tar.gz", "tar.xz", "tar.zst", "zip"};
+
+static bool check_upstream_archive(const toml_document *doc, coordinate *at) {
+    char sha256[80] = "";
+    char format[COORDINATE_MAX] = "";
+    char prefix[PATH_MAX_LEN] = "";
+    long size = 0;
+    if(!toml_get_string(doc, "archive", "url", at->upstream_url, sizeof at->upstream_url) ||
+       strncmp(at->upstream_url, "https://", 8) != 0) {
+        fprintf(stderr, "molto: [archive].url must be an https URL\n");
+        return false;
+    }
+    bool hex =
+        toml_get_string(doc, "archive", "sha256", sha256, sizeof sha256) && strlen(sha256) == 64;
+    for(size_t i = 0; hex && i < 64; i++)
+        hex = (sha256[i] >= '0' && sha256[i] <= '9') || (sha256[i] >= 'a' && sha256[i] <= 'f');
+    if(!hex) {
+        fprintf(stderr, "molto: [archive].sha256 must be a lowercase hex sha256\n");
+        return false;
+    }
+    if(!toml_get_int(doc, "archive", "size", &size) || size <= 0) {
+        fprintf(stderr, "molto: [archive].size must be the archive's size in bytes\n");
+        return false;
+    }
+    bool known = false;
+    if(toml_get_string(doc, "archive", "format", format, sizeof format)) {
+        for(size_t i = 0; !known && i < sizeof ARCHIVE_FORMATS / sizeof ARCHIVE_FORMATS[0]; i++)
+            known = strcmp(format, ARCHIVE_FORMATS[i]) == 0;
+    }
+    if(!known) {
+        fprintf(stderr, "molto: [archive].format must be tar.gz, tar.xz, tar.zst or zip\n");
+        return false;
+    }
+    if(toml_get_string(doc, "archive", "strip_prefix", prefix, sizeof prefix) &&
+       (prefix[0] == '\0' || prefix[0] == '/' || strstr(prefix, "..") != NULL ||
+        strchr(prefix, '\\') != NULL)) {
+        fprintf(stderr, "molto: [archive].strip_prefix must be a relative path in the archive\n");
+        return false;
+    }
+    at->from_upstream = true;
+    return true;
 }
 
 /* A package's version has to be one a manifest can name.
@@ -278,6 +329,8 @@ static bool read_coordinate(const char *path, coordinate *out) {
        will be held to. Absent means the default for the target. */
     if(!toml_get_string(doc, "", "format", out->format, sizeof out->format))
         out->format[0] = '\0';
+    if(ok && !out->from_source && !out->from_platform && toml_has_section(doc, "archive"))
+        ok = check_upstream_archive(doc, out);
 
     toml_free(doc);
     return ok;
@@ -627,7 +680,11 @@ static int publish_source(const coordinate *at, const char *recipe_path, const c
     }
 
     describe(at, creds.registry);
-    fprintf(stderr, "  %s recipe only, no archive\n", at->from_platform ? "platform" : "source  ");
+    if(at->from_upstream)
+        fprintf(stderr, "  upstream recipe only, the bytes stay at %s\n", at->upstream_url);
+    else
+        fprintf(stderr, "  %s recipe only, no archive\n",
+                at->from_platform ? "platform" : "source  ");
     if(dry_run) {
         fprintf(stderr, "  dry run: nothing was sent\n");
         return exit_ok;
@@ -742,7 +799,7 @@ int publish_command_run(const char *recipe, const char *file, const char *pack, 
     if(!read_coordinate(recipe_path, &at))
         return exit_invalid_manifest;
 
-    const int code = at.from_source || at.from_platform
+    const int code = at.from_source || at.from_platform || at.from_upstream
                          ? publish_source(&at, recipe_path, file, pack, dry_run)
                          : publish_binary(&at, recipe_path, file, pack, dry_run);
     if(code != exit_ok || dry_run)

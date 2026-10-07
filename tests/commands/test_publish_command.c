@@ -124,6 +124,49 @@ DESCRIBE(publish_refuses_an_archive_for_a_recipe_that_has_none) {
     discard(&at);
 }
 
+/* CMake as Kitware publishes it (RFC-0023): a binary recipe naming the
+   archive upstream publishes, which molto sends without an upload. */
+static const char *const UPSTREAM_RECIPE =
+    "kind = \"tool\"\n"
+    "name = \"cmake\"\n"
+    "version = \"4.4.4\"\n"
+    "target = \"linux-x86_64\"\n"
+    "\n"
+    "[archive]\n"
+    "url = \"https://github.com/Kitware/CMake/releases/download/v4.4.4/c.tar.gz\"\n"
+    "sha256 = \"e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb\"\n"
+    "size = 64865570\n"
+    "format = \"tar.gz\"\n"
+    "strip_prefix = \"cmake-4.4.4-linux-x86_64\"\n"
+    "\n"
+    "[tool]\n"
+    "kind = \"build\"\n"
+    "binary = \"bin/cmake\"\n";
+
+static void upstream_with(const char *what, const char *into, char *out, size_t out_size) {
+    const char *at = strstr(UPSTREAM_RECIPE, what);
+    const size_t head = at == NULL ? strlen(UPSTREAM_RECIPE) : (size_t)(at - UPSTREAM_RECIPE);
+    snprintf(out, out_size, "%.*s%s%s", (int)head, UPSTREAM_RECIPE, at == NULL ? "" : into,
+             at == NULL ? "" : at + strlen(what));
+}
+
+/* Every client downloads from the URL and checks the digest, so a recipe that
+   gets either wrong is refused before a coordinate is spent on it. */
+DESCRIBE(publish_refuses_an_upstream_archive_a_client_could_not_trust) {
+    const char *const broken[][2] = {
+        {"https://github.com", "http://github.com"},
+        {"e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb", "nope"},
+        {"size = 64865570", "size = 0"},
+        {"format = \"tar.gz\"", "format = \"rar\""},
+        {"cmake-4.4.4-linux-x86_64", "../escape"},
+    };
+    for (size_t i = 0; i < sizeof broken / sizeof broken[0]; i++) {
+        char text[RECIPE_MAX];
+        upstream_with(broken[i][0], broken[i][1], text, sizeof text);
+        EXPECT_EQ(exit_invalid_manifest, publish(text));
+    }
+}
+
 DESCRIBE(publish_still_requires_the_table_a_binary_recipe_carries) {
     /* The binary form is untouched: it is what every toolchain and tool in the
        registry was published as. */
