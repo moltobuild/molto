@@ -737,7 +737,9 @@ static void describe_origin(const source_spec *spec, char *out, size_t size) {
    source, so a CI log shows where the time went. Said only when bytes move: a
    source already in the cache is not news. */
 static loader *announce_fetch(const char *name, const source_spec *spec) {
-    char origin[256];
+    /* Room for the longest location and " at " and ten characters of commit,
+       so nothing is cut here; the label below decides what it shows. */
+    char origin[SOURCE_URL_MAX + 16];
     describe_origin(spec, origin, sizeof origin);
     if(!progress_is_interactive(stderr)) {
         fprintf(stderr, "molto: fetching %s (%s)\n", name, origin);
