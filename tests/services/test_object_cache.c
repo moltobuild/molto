@@ -90,6 +90,39 @@ DESCRIBE(object_cache_separates_two_ways_of_compiling_the_same_file) {
     sandbox_close(&at);
 }
 
+/* A tree molto configured is the same coordinate with other headers in it: a
+   reconfiguration with other options must not hand back the old objects. */
+DESCRIBE(object_cache_separates_two_configurations_of_one_tree) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+
+    char source[PATH_MAX_LEN];
+    ASSERT_TRUE(dep_source(&at, source, sizeof source));
+    char tree[PATH_MAX_LEN];
+    char stamp[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(tree, sizeof tree, "%s/sources/sqlite/3.53.4/any", at.cache));
+    ASSERT_TRUE(fs_format_path(stamp, sizeof stamp, "%s/.molto-configured", tree));
+    ASSERT_TRUE(fs_make_dirs(tree));
+
+    const char *command = "clang -c s.c -O0 -o /a/x.o";
+    char unconfigured[PATH_MAX_LEN] = "";
+    char first[PATH_MAX_LEN] = "";
+    char again[PATH_MAX_LEN] = "";
+    char second[PATH_MAX_LEN] = "";
+    ASSERT_TRUE(object_cache_path(source, command, unconfigured, sizeof unconfigured));
+    ASSERT_TRUE(fs_write_file(stamp, "aaaa"));
+    ASSERT_TRUE(object_cache_path(source, command, first, sizeof first));
+    ASSERT_TRUE(object_cache_path(source, command, again, sizeof again));
+    ASSERT_TRUE(fs_write_file(stamp, "bbbb"));
+    ASSERT_TRUE(object_cache_path(source, command, second, sizeof second));
+
+    EXPECT_STRNE(unconfigured, first);
+    EXPECT_STREQ(first, again);
+    EXPECT_STRNE(first, second);
+
+    sandbox_close(&at);
+}
+
 DESCRIBE(object_cache_names_the_coordinate_it_holds) {
     /* So a cache directory can be read by a person, and so two dependencies
        cannot collide on one entry. */

@@ -74,6 +74,40 @@ static uint64_t hash_command(const char *command) {
     return hash;
 }
 
+/* The stamp molto's delegated configuration leaves at the root of a tree it
+   configured (configure_service). */
+#define CONFIGURED_STAMP ".molto-configured"
+
+/*
+ * Fold how the tree was configured into the key.
+ *
+ * A fetched tree is immutable until molto runs its configure or its CMake,
+ * which rewrites headers the sources include (lws_config.h) without the
+ * coordinate changing. Reconfigured with other options, the same source and
+ * the same command make another object; the stamp's digest is what says so.
+ * `coordinate` is "<name>/<key>/<target>/<path>": its first three parts are
+ * the tree.
+ */
+static void configured_by(const char *cache_root, const char *coordinate, uint64_t *hash) {
+    const char *at = coordinate;
+    for(int part = 0; part < 3 && at != NULL; part++) {
+        at = strchr(at, '/');
+        if(at != NULL)
+            at++;
+    }
+    if(at == NULL)
+        return;
+    char stamp[OBJECT_CACHE_PATH_MAX];
+    if(!fs_format_path(stamp, sizeof stamp, "%s" SOURCES_DIR "%.*s" CONFIGURED_STAMP, cache_root,
+                       (int)(at - coordinate), coordinate))
+        return;
+    char *digest = fs_read_file(stamp);
+    if(digest == NULL)
+        return;
+    hash_text(digest, strlen(digest), hash);
+    free(digest);
+}
+
 bool object_cache_covers(const char *source) {
     char sources_root[OBJECT_CACHE_PATH_MAX];
     /* Composed through the source cache itself, so the two cannot disagree
@@ -105,8 +139,10 @@ bool object_cache_path(const char *source, const char *command, char *out, size_
        it is being compiled. Both are needed: the same file at two optimisation
        levels is two objects. */
     const char *coordinate = source + strlen(sources_root) + strlen(SOURCES_DIR);
+    uint64_t hash = hash_command(command);
+    configured_by(sources_root, coordinate, &hash);
     return fs_format_path(out, size, "%s/" OBJECTS_DIR "/%s-%016llx.o", sources_root, coordinate,
-                          (unsigned long long)hash_command(command));
+                          (unsigned long long)hash);
 }
 
 /* A byte copy rather than a hard link: the compiler writes an object by

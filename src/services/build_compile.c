@@ -415,7 +415,8 @@ static void compile_task_run(void *arg) {
     /* Without a depfile there are no headers to watch, so the source stands in
        for them. That is sound here and nowhere else: the tree a dependency was
        fetched into is immutable, so its headers cannot change without the
-       coordinate changing with them. */
+       coordinate changing with them — or its configuration, which the cache
+       key carries (object_cache_path). */
     str_list prereqs;
     str_list_init(&prereqs);
     const bool recorded =
