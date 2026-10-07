@@ -178,6 +178,69 @@ int tool_resolve(tool_kind kind, wsdb *db, bool refresh, resolved_tool *out) {
     return code;
 }
 
+/* --- build tools --- */
+
+/* The entry of pickup's answer whose kind is "build" and whose name is
+   `name`: pickup reports cmake and ninja under one kind. */
+static bool parse_build_answer(const char *toml, const char *name, resolved_tool *out) {
+    char err[256] = "";
+    toml_document *doc = toml_parse(toml, err, sizeof err);
+    if(doc == NULL)
+        return false;
+    bool found = false;
+    const size_t count = toml_table_array_count(doc, ANSWER_ARRAY);
+    for(size_t i = 0; !found && i < count; i++) {
+        char section[TOML_SECTION_MAX];
+        char kind[TOOL_NAME_MAX] = "";
+        char reported[TOOL_NAME_MAX] = "";
+        if(!toml_table_array_section(ANSWER_ARRAY, i, section, sizeof section) ||
+           !toml_get_string(doc, section, ANSWER_KIND, kind, sizeof kind) ||
+           strcmp(kind, "build") != 0 ||
+           !toml_get_string(doc, section, ANSWER_NAME, reported, sizeof reported) ||
+           strcmp(reported, name) != 0)
+            continue;
+        memset(out, 0, sizeof *out);
+        snprintf(out->name, sizeof out->name, "%s", name);
+        found = toml_get_string(doc, section, ANSWER_PATH, out->path, sizeof out->path);
+        (void)toml_get_string(doc, section, ANSWER_VERSION, out->version, sizeof out->version);
+    }
+    toml_free(doc);
+    return found && out->path[0] != '\0';
+}
+
+static bool answers_version(const char *program) {
+    const char *const argv[] = {program, "--version", NULL};
+    char ignored[512] = "";
+    return process_capture(argv, ignored, sizeof ignored) == 0;
+}
+
+bool tool_resolve_build(const char *name, resolved_tool *out, char *err, size_t err_size) {
+    memset(out, 0, sizeof *out);
+    snprintf(out->name, sizeof out->name, "%s", name);
+
+    char variable[64];
+    snprintf(variable, sizeof variable, "MOLTO_%s", strcmp(name, "ninja") == 0 ? "NINJA" : "CMAKE");
+    const char *chosen = getenv(variable);
+    if(chosen != NULL && chosen[0] != '\0') {
+        snprintf(out->path, sizeof out->path, "%s", chosen);
+        return true;
+    }
+
+    const char *const argv[] = {pickup_program(), ARG_TOOLS, ARG_FORMAT, FORMAT_TOML, NULL};
+    char answer[ANSWER_SIZE];
+    if(process_capture(argv, answer, sizeof answer) == 0 && parse_build_answer(answer, name, out))
+        return true;
+
+    if(answers_version(name)) {
+        snprintf(out->path, sizeof out->path, "%s", name);
+        return true;
+    }
+    snprintf(err, err_size,
+             "no %s here: `pickup install %s` fetches upstream's release, or set %s to one", name,
+             name, variable);
+    return false;
+}
+
 /* --- the macOS SDK --- */
 
 #ifdef __APPLE__

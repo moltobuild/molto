@@ -2,6 +2,8 @@
 
 #include <molto/services/configure_service.h>
 #include <molto/services/fs_service.h>
+#include <molto/services/process_service.h>
+#include <molto/services/tool_service.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,7 +64,7 @@ DESCRIBE(configure_writes_what_upstream_configure_writes) {
     ASSERT_TRUE(make_source(&at));
     const recipe_build build = delegated();
     char err[512] = "";
-    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, err, sizeof err));
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, NULL, err, sizeof err));
 
     char file[PATH_MAX_LEN];
     snprintf(file, sizeof file, "%s/config.h", at.root);
@@ -83,12 +85,12 @@ DESCRIBE(configure_runs_once_per_compiler) {
     ASSERT_TRUE(make_source(&at));
     const recipe_build build = delegated();
     char err[512] = "";
-    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, err, sizeof err));
-    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, err, sizeof err));
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, NULL, err, sizeof err));
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, NULL, err, sizeof err));
     EXPECT_EQ(1, runs(&at));
 
     /* Another compiler is another machine as far as configure is concerned. */
-    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "gcc", NULL, err, sizeof err));
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "gcc", NULL, NULL, err, sizeof err));
     EXPECT_EQ(2, runs(&at));
     (void)fs_remove_tree(at.root);
 }
@@ -101,7 +103,7 @@ DESCRIBE(a_failing_configure_is_reported_with_its_log) {
     ASSERT_TRUE(fs_write_file(file, "echo 'configure: error: no compiler' >&2\nexit 1\n"));
     const recipe_build build = delegated();
     char err[512] = "";
-    EXPECT_FALSE(configure_dependency("fake", at.root, &build, "cc", NULL, err, sizeof err));
+    EXPECT_FALSE(configure_dependency("fake", at.root, &build, "cc", NULL, NULL, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "fake"));
     EXPECT_NOT_NULL(strstr(err, "config.log"));
     (void)fs_remove_tree(at.root);
@@ -111,18 +113,94 @@ DESCRIBE(the_fingerprint_changes_with_what_shapes_the_answer) {
     recipe_build build = delegated();
     char first[65];
     char second[65];
-    configure_fingerprint(&build, "cc", NULL, first);
-    configure_fingerprint(&build, "cc", NULL, second);
+    configure_fingerprint(&build, "cc", NULL, NULL, first);
+    configure_fingerprint(&build, "cc", NULL, NULL, second);
     EXPECT_STREQ(first, second);
     snprintf(build.args[0], RECIPE_BUILD_ARG_MAX, "--with-icu");
-    configure_fingerprint(&build, "cc", NULL, second);
+    configure_fingerprint(&build, "cc", NULL, NULL, second);
     EXPECT_TRUE(strcmp(first, second) != 0);
-    configure_fingerprint(&build, "cc", "x86_64-w64-mingw32", first);
+    configure_fingerprint(&build, "cc", "x86_64-w64-mingw32", NULL, first);
     EXPECT_TRUE(strcmp(first, second) != 0);
 }
 
 DESCRIBE(a_build_molto_does_not_configure_runs_nothing) {
     const recipe_build none = {0};
     char err[512] = "";
-    EXPECT_TRUE(configure_dependency("fake", "/nonexistent", &none, "cc", NULL, err, sizeof err));
+    EXPECT_TRUE(configure_dependency("fake", "/nonexistent", &none, "cc", NULL, NULL, err, sizeof err));
+}
+
+/* --- a delegated CMake --- */
+
+#ifndef _WIN32
+/* A cmake that writes down how it was asked, and a ninja that answers. */
+static bool make_fake_cmake(const sandbox *at, char *cmake, size_t size) {
+    char ninja[PATH_MAX_LEN];
+    snprintf(cmake, size, "%s/fake-cmake", at->root);
+    snprintf(ninja, sizeof ninja, "%s/fake-ninja", at->root);
+    if (!fs_write_file(cmake, "#!/bin/sh\n"
+                              "if [ \"$1\" = --build ]; then echo built > \"$2/$4.txt\"; exit 0; fi\n"
+                              "mkdir -p .molto-cmake\n"
+                              "printf '%s\\n' \"$@\" > .molto-cmake/args.txt\n") ||
+        !fs_write_file(ninja, "#!/bin/sh\necho 1.13.2\n"))
+        return false;
+    const char *chmod_argv[] = {"chmod", "+x", cmake, ninja, NULL};
+    char ignored[64];
+    if (process_capture(chmod_argv, ignored, sizeof ignored) != 0)
+        return false;
+    return setenv("MOLTO_CMAKE", cmake, 1) == 0 && setenv("MOLTO_NINJA", ninja, 1) == 0;
+}
+
+DESCRIBE(cmake_configures_with_molto_s_compiler_and_what_it_resolved) {
+    sandbox at;
+    ASSERT_TRUE(moltest_temp_dir("molto_cmake", at.root, sizeof at.root));
+    char cmake[PATH_MAX_LEN];
+    ASSERT_TRUE(make_fake_cmake(&at, cmake, sizeof cmake));
+
+    recipe_build build = {0};
+    build.system = recipe_build_cmake;
+    build.via = recipe_via_delegate;
+    snprintf(build.args[build.arg_count++], RECIPE_BUILD_ARG_MAX, "-DLWS_WITH_SSL=ON");
+    snprintf(build.targets[build.target_count++], RECIPE_BUILD_ARG_MAX, "gen_headers");
+
+    str_list includes;
+    str_list_init(&includes);
+    ASSERT_TRUE(str_list_push(&includes, "/deps/openssl/include"));
+    str_list links;
+    str_list_init(&links);
+    ASSERT_TRUE(str_list_push(&links, "-L/deps/openssl/lib"));
+    ASSERT_TRUE(str_list_push(&links, "-lssl"));
+    const configure_view view = {.includes = &includes, .link_flags = &links};
+
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("lws", at.root, &build, "cc", NULL, &view, err, sizeof err));
+
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/.molto-cmake/args.txt", at.root);
+    char *args = fs_read_file(file);
+    ASSERT_NOT_NULL(args);
+    EXPECT_NOT_NULL(strstr(args, "-G\nNinja\n"));
+    EXPECT_NOT_NULL(strstr(args, "-DCMAKE_C_COMPILER=cc\n"));
+    EXPECT_NOT_NULL(strstr(args, "-DLWS_WITH_SSL=ON\n"));
+    /* OpenSSL's find module searches <prefix>/include and <prefix>/lib. */
+    EXPECT_NOT_NULL(strstr(args, "-DCMAKE_PREFIX_PATH=/deps/openssl\n"));
+    EXPECT_NOT_NULL(strstr(args, "-DCMAKE_LIBRARY_PATH=/deps/openssl/lib\n"));
+    free(args);
+    snprintf(file, sizeof file, "%s/.molto-cmake/gen_headers.txt", at.root);
+    EXPECT_TRUE(fs_path_exists(file));
+
+    str_list_free(&includes);
+    str_list_free(&links);
+    (void)unsetenv("MOLTO_CMAKE");
+    (void)unsetenv("MOLTO_NINJA");
+    (void)fs_remove_tree(at.root);
+}
+#endif
+
+DESCRIBE(a_build_tool_named_outright_is_taken_as_named) {
+    ASSERT_EQ(0, setenv("MOLTO_NINJA", "/opt/ninja/ninja", 1));
+    resolved_tool ninja;
+    char err[256] = "";
+    ASSERT_TRUE(tool_resolve_build("ninja", &ninja, err, sizeof err));
+    EXPECT_STREQ("/opt/ninja/ninja", ninja.path);
+    (void)unsetenv("MOLTO_NINJA");
 }

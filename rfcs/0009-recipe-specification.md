@@ -334,6 +334,37 @@ targets = ["src/port/pg_config_paths.h"]
   `USE_OPENSSL` — which the version of the dependency the recipe names
   guarantees.
 
+### A delegated CMake: `system = "cmake"`, `via = "delegate"`
+
+The same half-delegation for a library that configures with CMake only —
+libwebsockets, and most of what was written after 2015:
+
+```toml
+[build]
+system = "cmake"
+via = "delegate"
+args = ["-DLWS_WITH_SSL=ON", "-DLWS_WITHOUT_TESTAPPS=ON"]
+targets = []
+```
+
+molto runs `cmake -S . -B .molto-cmake -G Ninja -DCMAKE_C_COMPILER=<its
+compiler> -DCMAKE_BUILD_TYPE=Release <args>` in the unpacked source, then
+`cmake --build .molto-cmake --target <t>` for each of `targets` — headers a
+rule generates — and compiles `[artifacts].sources` itself. What the
+configuration writes lands under `.molto-cmake`, which is what the recipe's
+include paths name (`.molto-cmake/include`). `cmake` and `ninja` come from
+`$MOLTO_CMAKE` and `$MOLTO_NINJA`, then from pickup, which installs both from
+their upstream releases (RFC-0023), then from the PATH.
+
+**What a configuration sees of its dependencies.** Unlike a probe that has to
+be told what to assume, a configuration is shown what molto resolved: the
+include directories and `-L` directories of the package's dependencies reach
+autotools as `CPPFLAGS` and `LDFLAGS`, and CMake as `CMAKE_INCLUDE_PATH`,
+`CMAKE_LIBRARY_PATH` and a `CMAKE_PREFIX_PATH` of each include directory's
+parent — where CMake's find modules look. `find_package(OpenSSL)` finds the
+`openssl` platform package that way. They are part of the stamp's digest, so a
+different dependency configures again.
+
 This is code the dependency wrote, running on the consumer's machine, and the
 recipe says so where the catalogue shows it: `via = "delegate"` is the
 declaration. What it buys is that nothing derived from upstream is hosted
