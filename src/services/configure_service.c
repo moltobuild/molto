@@ -2,6 +2,8 @@
 
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
+#include <molto/util/loader.h>
+#include <molto/util/progress.h>
 #include <molto/util/sha256.h>
 
 #include <stdarg.h>
@@ -94,14 +96,17 @@ static bool run_step(const char *const argv[], const char *root, const process_e
                          "PATH (on Windows, MSYS2's)",
                          name, what, argv[0]);
     }
-    /* The end of what it said, where configure names the test that failed. */
+    /* The end of what it said, where configure names the test that failed —
+       in the message rather than printed here, so a loader still on the
+       screen is gone before it appears. */
     const size_t length = strlen(output);
-    const char *tail = length > 1500 ? output + length - 1500 : output;
-    fprintf(stderr, "%s", tail);
+    const char *tail = length > 600 ? output + length - 600 : output;
+    const bool configure = strcmp(what, "configure") == 0;
+    set_error(err, err_size, "dependency '%s': upstream's %s failed with exit code %d%s%s%s\n%s",
+              name, what, code, configure ? "; its log is " : "", configure ? root : "",
+              configure ? "/config.log" : "", tail);
     free(output);
-    return set_error(err, err_size,
-                     "dependency '%s': upstream's %s failed with exit code %d; its log is %s/%s",
-                     name, what, code, root, strcmp(what, "configure") == 0 ? "config.log" : "");
+    return false;
 }
 
 /* `src/port/pg_config_paths.h` is `make -C src/port pg_config_paths.h`. */
@@ -156,14 +161,24 @@ static bool configure_now(const char *name, const char *root, const recipe_build
     }
     argv[argc] = NULL;
 
-    fprintf(stderr, "molto: configuring %s with upstream's configure (once per compiler)\n", name);
-    if(!run_step(argv, root, env, env_count, name, "configure", err, err_size))
-        return false;
-    for(size_t i = 0; i < build->target_count; i++) {
-        if(!make_target(root, build->targets[i], env, env_count, name, err, err_size))
-            return false;
+    /* Minutes on Windows, where every one of configure's hundreds of test
+       programs is a process MSYS2 has to start: a loader on a terminal, one
+       line anywhere else. Its output is captured, so the loader is the only
+       writer while it runs. */
+    loader *spinner = NULL;
+    if(progress_is_interactive(stderr)) {
+        char label[LOADER_LABEL_MAX];
+        snprintf(label, sizeof label, "configuring %s with its own configure", name);
+        spinner = loader_start(stderr, label);
+    } else {
+        fprintf(stderr, "molto: configuring %s with upstream's configure (once per compiler)\n",
+                name);
     }
-    return true;
+    bool ok = run_step(argv, root, env, env_count, name, "configure", err, err_size);
+    for(size_t i = 0; ok && i < build->target_count; i++)
+        ok = make_target(root, build->targets[i], env, env_count, name, err, err_size);
+    loader_stop(spinner);
+    return ok;
 }
 
 bool configure_dependency(const char *name, const char *root, const recipe_build *build,

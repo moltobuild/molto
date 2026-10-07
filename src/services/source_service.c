@@ -4,6 +4,8 @@
 #include <molto/services/paths_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/recipe_service.h>
+#include <molto/util/loader.h>
+#include <molto/util/progress.h>
 #include <molto/util/semver.h>
 
 #include <stdarg.h>
@@ -718,6 +720,36 @@ static bool use_local_path(const source_spec *spec, char *out, size_t out_size, 
     return true;
 }
 
+/* Where the bytes come from, short enough for one line: the archive's file
+   name, or the repository and the first characters of the commit. */
+static void describe_origin(const source_spec *spec, char *out, size_t size) {
+    if(spec->origin == source_origin_git) {
+        snprintf(out, size, "%s at %.10s", spec->location, spec->reference);
+        return;
+    }
+    const char *slash = strrchr(spec->location, '/');
+    snprintf(out, size, "%s", slash != NULL && slash[1] != '\0' ? slash + 1 : spec->location);
+}
+
+/* A download can take minutes — PostgreSQL's tarball is six thousand files to
+   unpack — so it says so. On a terminal that is a loader animating its name;
+   elsewhere one line, the way a build without a terminal prints one line per
+   source, so a CI log shows where the time went. Said only when bytes move: a
+   source already in the cache is not news. */
+static loader *announce_fetch(const char *name, const source_spec *spec) {
+    /* Room for the longest location and " at " and ten characters of commit,
+       so nothing is cut here; the label below decides what it shows. */
+    char origin[SOURCE_URL_MAX + 16];
+    describe_origin(spec, origin, sizeof origin);
+    if(!progress_is_interactive(stderr)) {
+        fprintf(stderr, "molto: fetching %s (%s)\n", name, origin);
+        return NULL;
+    }
+    char label[LOADER_LABEL_MAX];
+    snprintf(label, sizeof label, "fetching %.40s (%.70s)", name, origin);
+    return loader_start(stderr, label);
+}
+
 bool source_fetch(const source_spec *spec, const char *name, const char *version,
                   const char *target, char *out, size_t out_size, char *err, size_t err_size) {
     if(spec->origin == source_origin_path)
@@ -741,8 +773,10 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
         return fail_about(err, err_size, "could not clear", work);
 
     char root[SOURCE_PATH_MAX];
+    loader *spinner = announce_fetch(name, spec);
     const bool ok = assemble(spec, work, root, sizeof root, err, err_size) &&
                     install(root, destination, err, err_size);
+    loader_stop(spinner);
 
     /* Whatever is left of the working tree goes, on success and on failure:
        remains that survive would be read as a source next time. */

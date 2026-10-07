@@ -439,7 +439,7 @@ static int frontend_exit_code(frontend_result answer) {
     for(size_t s = 0; s < sizeof sets / sizeof sets[0]; s++) {
         for(size_t i = 0; i < sets[s]->unit_count; i++) {
             const prepared_unit *unit = &sets[s]->units[i];
-            char configure_err[1024] = "";
+            char configure_err[2048] = "";
             if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
                                      configure_err, sizeof configure_err)) {
                 fprintf(stderr, "molto: %s\n", configure_err);
