@@ -104,15 +104,24 @@ static bool compose_features(const project_target *target, char *out, size_t out
     return true;
 }
 
+/* The standard the request names: C++'s when it asks for a C++ compiler. A
+   C++ driver is not asked whether it takes `-std=c17`, which none does, and a
+   project with C and C++ in it compiles each with its own standard anyway. */
+static const char *requested_std(const project_target *target, bool needs_cpp) {
+    return needs_cpp ? target->cpp_std : target->std;
+}
+
 /* Serialize the request. This string is both what pickup is asked and the
    fingerprint the answer is stored under, so the two can never disagree. */
 static bool compose_request(const project_target *target, const char *platform, bool needs_cpp,
                             const char *features, char *out, size_t out_size) {
     const char *vendor = vendor_of(target->compiler);
-    return fs_format_path(out, out_size, "lang=%s std=%s require=%s vendor=%s target=%s",
-                          needs_cpp ? LANG_CXX : LANG_C, target->std[0] != '\0' ? target->std : "-",
-                          features[0] != '\0' ? features : "-", vendor != NULL ? vendor : "-",
-                          platform != NULL ? platform : "-");
+    return fs_format_path(
+        out, out_size, "lang=%s std=%s require=%s vendor=%s target=%s",
+        needs_cpp ? LANG_CXX : LANG_C,
+        requested_std(target, needs_cpp)[0] != '\0' ? requested_std(target, needs_cpp) : "-",
+        features[0] != '\0' ? features : "-", vendor != NULL ? vendor : "-",
+        platform != NULL ? platform : "-");
 }
 
 /* Build the pickup command line for this request. */
@@ -121,8 +130,9 @@ static bool build_pickup_argv(const char *program, const project_target *target,
                               str_list *argv) {
     bool ok = str_list_push(argv, program) && str_list_push(argv, ARG_RESOLVE) &&
               str_list_push(argv, ARG_LANG) && str_list_push(argv, needs_cpp ? LANG_CXX : LANG_C);
-    if(ok && target->std[0] != '\0')
-        ok = str_list_push(argv, ARG_STD) && str_list_push(argv, target->std);
+    const char *std = requested_std(target, needs_cpp);
+    if(ok && std[0] != '\0')
+        ok = str_list_push(argv, ARG_STD) && str_list_push(argv, std);
     if(ok && features[0] != '\0')
         ok = str_list_push(argv, ARG_REQUIRE) && str_list_push(argv, features);
     const char *vendor = vendor_of(target->compiler);
