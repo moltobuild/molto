@@ -26,6 +26,11 @@ typedef enum {
 #define PROJECT_MAX_LINK 32
 #define PROJECT_LINK_NAME_MAX 64
 #define PROJECT_MAX_OPTS 16
+/* Include directories get more room than the other options: a library laid
+   out one subsystem per directory names one for each, and libwebsockets'
+   private headers live in 25 of them. A manifest still reads at most
+   PROJECT_MAX_OPTS; the rest is for recipes. */
+#define PROJECT_MAX_INCLUDES 48
 #define PROJECT_OPT_LEN 96
 
 /* Room for the directory a manifest was read from. */
@@ -58,7 +63,7 @@ typedef struct {
        [target] ever receives those, but the shape is shared with the profiles. */
     char defines[PROJECT_MAX_OPTS + PROJECT_PKG_DEFINES][PROJECT_OPT_LEN];
     size_t define_count;
-    char include[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    char include[PROJECT_MAX_INCLUDES][PROJECT_OPT_LEN];
     size_t include_count;
     char flags[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
     size_t flag_count;

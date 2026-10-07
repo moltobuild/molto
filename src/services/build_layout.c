@@ -156,6 +156,30 @@ manifest_profile build_profile_settings(const project_ctx *ctx, build_profile pr
     }
 }
 
+/*
+ * A source in molto's cache, `<cache>/sources/<name>/<key>/<target>/<rest>`,
+ * named `deps/<name>/<rest>` under obj/.
+ *
+ * Mirroring the whole absolute path put a 64-character digest and the user's
+ * home directory into every object path; libwebsockets' deepest source then
+ * needed more than Windows' 260 characters, and the build stopped creating a
+ * directory. A graph holds one version of each name, so the name is enough to
+ * keep two packages apart.
+ */
+static bool dependency_object_dir(const char *path, char *out, size_t size) {
+    const char *marker = strstr(path, "/sources/");
+    if(marker == NULL || !fs_path_is_absolute(path))
+        return false;
+    const char *name = marker + strlen("/sources/");
+    const char *key = strchr(name, '/');
+    const char *target = key != NULL ? strchr(key + 1, '/') : NULL;
+    const char *rest = target != NULL ? strchr(target + 1, '/') : NULL;
+    if(key == NULL || rest == NULL || rest[1] == '\0')
+        return false;
+    const int wrote = snprintf(out, size, "deps/%.*s/%s", (int)(key - name), name, rest + 1);
+    return wrote > 0 && (size_t)wrote < size;
+}
+
 /* Map a source path to its object path, mirroring the source tree under
    `root/build/<profile_dir>/obj`. */
 [[nodiscard]] bool build_object_path_for(const char *root, const char *profile_dir,
@@ -172,7 +196,8 @@ manifest_profile build_profile_settings(const project_ctx *ctx, build_profile pr
        directory like any other. On Windows the same join produces
        `obj/D:/tmp/greet`, and `D:` is not a name a directory can have. */
     char inside[PATH_BUFFER_SIZE];
-    if(!fs_path_without_root(relative, inside, sizeof inside))
+    if(!dependency_object_dir(relative, inside, sizeof inside) &&
+       !fs_path_without_root(relative, inside, sizeof inside))
         return fs_report_long_path(source);
 
     return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/" DIR_OBJ "/%s" OBJECT_SUFFIX, root,

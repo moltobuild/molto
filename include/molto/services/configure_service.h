@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <molto/services/recipe_service.h>
+#include <molto/util/str_list.h>
 
 /*
  * Running upstream's configure for a dependency (RFC-0009, `[build]
@@ -28,17 +29,34 @@
  * what upstream's own Windows instructions use.
  */
 
+/* What a configuration may see of the dependencies molto already resolved:
+   their include directories and their `-L` directories. autotools gets them as
+   CPPFLAGS and LDFLAGS; CMake as CMAKE_INCLUDE_PATH, CMAKE_LIBRARY_PATH and a
+   CMAKE_PREFIX_PATH of each include directory's parent, which is what its
+   find modules search (OpenSSL's, for libwebsockets). Either list may be
+   NULL. */
+typedef struct {
+    const str_list *includes;
+    const str_list *link_flags;
+} configure_view;
+
 /* Configure `name`'s source at `root` for the compiler `cc`, or do nothing if
    the stamp says it already is. `target` is the `--target` triple, or NULL for
-   this machine; a cross build passes it to configure as `--host`. False with
-   a message naming the dependency, the step and where its log is. */
+   this machine; a cross build passes it to configure as `--host`. `view` may
+   be NULL. False with a message naming the dependency, the step and where its
+   log is. */
 [[nodiscard]] bool configure_dependency(const char *name, const char *root,
                                         const recipe_build *build, const char *cc,
-                                        const char *target, char *err, size_t err_size);
+                                        const char *target, const configure_view *view, char *err,
+                                        size_t err_size);
 
-/* The digest the stamp holds, for `build` and `cc`. Split out so the rule for
-   when configure runs again is testable without running it. */
+/* The digest the stamp holds. Split out so the rule for when configure runs
+   again is testable without running it. */
 void configure_fingerprint(const recipe_build *build, const char *cc, const char *target,
-                           char hex_out[65]);
+                           const configure_view *view, char hex_out[65]);
+
+/* Where a delegated CMake configuration writes, relative to the source: what a
+   recipe's include paths name for the headers it generates. */
+#define CONFIGURE_CMAKE_DIR ".molto-cmake"
 
 #endif /* MOLTO_CONFIGURE_SERVICE_H */

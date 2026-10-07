@@ -284,7 +284,7 @@ typedef struct {
     size_t target_count;
 } recipe_build;
 
-/* True for the one build molto runs itself: autotools, delegated. */
+/* True for the builds molto configures itself: autotools or cmake, delegated. */
 [[nodiscard]] bool recipe_build_configures(const recipe_build *build);
 
 [[nodiscard]] bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size);

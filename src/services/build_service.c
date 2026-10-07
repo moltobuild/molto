@@ -440,8 +440,10 @@ static int frontend_exit_code(frontend_result answer) {
         for(size_t i = 0; i < sets[s]->unit_count; i++) {
             const prepared_unit *unit = &sets[s]->units[i];
             char configure_err[2048] = "";
+            const configure_view view = {.includes = &unit->includes,
+                                         .link_flags = &sets[s]->link_flags};
             if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
-                                     configure_err, sizeof configure_err)) {
+                                     &view, configure_err, sizeof configure_err)) {
                 fprintf(stderr, "molto: %s\n", configure_err);
                 return exit_dependency_failure;
             }

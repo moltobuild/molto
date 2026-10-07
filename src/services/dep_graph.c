@@ -783,9 +783,9 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     if(ok && found->build.system != recipe_build_none && !recipe_build_configures(&found->build)) {
         ok = set_error(reason, sizeof reason,
                        "its recipe builds with %s, and molto runs no build system of that kind — "
-                       "only [build] system = \"none\", or \"autotools\" with via = "
-                       "\"delegate\", whose configure molto runs before compiling the sources "
-                       "itself",
+                       "only [build] system = \"none\", or \"autotools\" or \"cmake\" with via = "
+                       "\"delegate\", whose configuration molto runs before compiling the "
+                       "sources itself",
                        recipe_build_system_name(found->build.system));
     }
 

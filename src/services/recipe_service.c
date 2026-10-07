@@ -196,7 +196,7 @@ static bool read_options(doc_view doc, const char *table, project_options *out, 
                          size_t err_size) {
     return doc_read_strings(doc, table, "defines", out->defines[0], PROJECT_MAX_OPTS,
                             PROJECT_OPT_LEN, &out->define_count, err, err_size) &&
-           doc_read_strings(doc, table, "include", out->include[0], PROJECT_MAX_OPTS,
+           doc_read_strings(doc, table, "include", out->include[0], PROJECT_MAX_INCLUDES,
                             PROJECT_OPT_LEN, &out->include_count, err, err_size) &&
            doc_read_strings(doc, table, "flags", out->flags[0], PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
                             &out->flag_count, err, err_size);
@@ -367,7 +367,8 @@ const char *recipe_build_system_name(recipe_build_system system) {
 }
 
 bool recipe_build_configures(const recipe_build *build) {
-    return build->system == recipe_build_autotools && build->via == recipe_via_delegate;
+    return (build->system == recipe_build_autotools || build->system == recipe_build_cmake) &&
+           build->via == recipe_via_delegate;
 }
 
 /* `env` is a table of strings; each becomes `NAME=value`. A name is what a
@@ -599,7 +600,7 @@ static bool append_options(project_options *to, const project_options *from, con
                            char *err, size_t err_size) {
     return append_strings(to->defines[0], &to->define_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
                           from->defines[0], from->define_count, os, "defines", err, err_size) &&
-           append_strings(to->include[0], &to->include_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
+           append_strings(to->include[0], &to->include_count, PROJECT_MAX_INCLUDES, PROJECT_OPT_LEN,
                           from->include[0], from->include_count, os, "include", err, err_size) &&
            append_strings(to->flags[0], &to->flag_count, PROJECT_MAX_OPTS, PROJECT_OPT_LEN,
                           from->flags[0], from->flag_count, os, "flags", err, err_size);

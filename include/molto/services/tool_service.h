@@ -46,6 +46,19 @@ typedef struct {
  */
 [[nodiscard]] int tool_resolve(tool_kind kind, wsdb *db, bool refresh, resolved_tool *out);
 
+/*
+ * A build tool a dependency's configuration runs: `cmake` or `ninja`
+ * (RFC-0023, `[tool].kind = "build"`; RFC-0009, `system = "cmake"`).
+ *
+ * MOLTO_CMAKE and MOLTO_NINJA name one outright. Otherwise pickup is asked
+ * which build tool of that name it has (`pickup install cmake` puts one
+ * there), and failing that the PATH is: a machine with its own CMake does not
+ * need pickup's. False, with a message saying how to get one, when none of the
+ * three answers. Not cached: a configuration runs once per compiler.
+ */
+[[nodiscard]] bool tool_resolve_build(const char *name, resolved_tool *out, char *err,
+                                      size_t err_size);
+
 /* The name of a kind, for messages: "formatter", "linter". Never NULL. */
 [[nodiscard]] const char *tool_kind_name(tool_kind kind);
 
