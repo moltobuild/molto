@@ -2,7 +2,7 @@
 
 - RFC Number: 0024
 - Title: Molto Packages as Dependencies
-- Status: Draft
+- Status: Accepted
 - Created: 2026-10-06
 
 ## Summary
@@ -73,7 +73,7 @@ A `path` dependency follows the same table. It is never pruned (see below).
 
 ```toml
 [interface]
-include = ["include"]           # -I for consumers, anchored at the package root
+include = ["generated"]         # -I for consumers besides include/, see below
 defines = ["_DEFAULT_SOURCE"]   # -D for consumers
 flags   = ["--coverage"]        # verbatim, compile and link line of consumers
 link    = ["m"]                 # -l for the final binary
@@ -82,6 +82,20 @@ entry   = "src/moltest_main.c"  # a main() offered to consumers, see below
 
 Every key is optional. An unknown key is an error, as in `[package]`: a
 misspelled interface key silently drops something every consumer needed.
+
+### `include/` is the interface by convention
+
+When the package has an `include/` directory at its root, consumers receive it
+as `-I` without the manifest saying so, as `src/` and `tests/` are discovered
+without being declared (RFC-0001). The package's own build still needs
+`[target].include = ["include"]`, which is where it already is in every Molto
+library; it is not repeated under `[interface]`, and an `[interface].include`
+naming it is an error rather than a second spelling of the same directory.
+
+`[interface].include` is only for what lies elsewhere: a generated header
+directory, a second public tree. A header that consumers must not see belongs
+in `src/`, which is never on their include path. `[target].include` entries
+are private, with `include/` the one exception the convention makes.
 
 ### What a consumer gets
 
@@ -92,9 +106,9 @@ The derived `[artifacts]` (RFC-0009) are:
 | `type`                     | `source` for `artifact = "static"` or `"shared"`             |
 | `std`, `cpp_std`           | `[target].std`, `[target].cpp_std`                           |
 | `sources`                  | every source under `src/`, except `src/main.c`               |
-| `include/defines/flags`    | `[interface]`, plus `include/` by convention (open question) |
+| `include/defines/flags`    | `include/` when it exists, plus `[interface]`                |
 | `link`                     | `[target].link` and `[interface].link`                       |
-| `private.include/defines/flags` | `[target].include/defines/flags`                        |
+| `private.include/defines/flags` | `[target].include/defines/flags`, without `include/`    |
 | `[deps]`                   | `[deps]`                                                     |
 | `[about]`                  | `[package]` (`manifest_read_about`, as both already share)   |
 | version                    | `[package].version`                                          |
@@ -153,8 +167,8 @@ is deleted from the working directory:
 
 - `Project.toml`;
 - `src/`, except `src/main.c`;
-- the directories named by `[target].include` and `[interface].include`, and
-  `include/` when it is exported by convention;
+- `include/`, and the directories named by `[target].include` and
+  `[interface].include`;
 - the `[interface].entry` file;
 - `LICENSE*`, `NOTICE*`, `COPYING*` at the root, which are never optional:
   Apache-2.0 requires NOTICE to travel with the code, and RFC-0003 requires a
@@ -232,7 +246,8 @@ does not qualify, so an author and a consumer read the same words.
 | no `recipe.toml` beside `Project.toml`                    | error   |
 | every `[package].files` pattern matches something         | error   |
 | `[package].license` is set and a licence file is present  | warning |
-| the interface exports at least one include directory      | warning |
+| `[interface].include` does not name `include/`            | error   |
+| `include/` exists, or `[interface].include` names a directory | warning |
 | `[package].repository` is set                             | warning |
 
 When `molto package` passes, it ends with what a consumer adds:
@@ -250,10 +265,10 @@ error listing every failed item and ending with: "its author can run
 ## Migration
 
 1. Release Molto with this RFC implemented.
-2. moltest: `[interface] include = ["include"]`, `defines = ["_DEFAULT_SOURCE"]`,
+2. moltest: `[interface] defines = ["_DEFAULT_SOURCE"]`,
    `entry = "src/moltest_main.c"`. moltest-coverage:
-   `[interface] flags = ["--coverage"]`. moltest-mock: `[interface]` with its
-   include directory.
+   `[interface] flags = ["--coverage"]`. moltest-mock needs no `[interface]`:
+   its `include/` is exported by convention.
 3. Each runs `molto package` in CI, deletes `recipe.toml`, and tags a release.
 4. Molto, moltest-coverage and moltest-mock move their `[dev-deps]` pins to
    those tags.
@@ -267,13 +282,6 @@ error listing every failed item and ending with: "its author can run
 - RFC-0009: a recipe is no longer required for a Molto package fetched by
   `git`, `archive` or `path`.
 - RFC-0002: `molto package`.
-
-## Open questions
-
-- **Is `include/` exported by convention?** Proposed: yes, when it exists, as
-  `src/` is discovered by convention; `[interface].include` adds to it. The
-  alternative is to export only what `[interface].include` names, which is more
-  explicit and costs every package one line.
 
 ## Non-goals
 
