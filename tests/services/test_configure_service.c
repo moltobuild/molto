@@ -140,7 +140,8 @@ static bool make_fake_cmake(const sandbox *at, char *cmake, size_t size) {
     if (!fs_write_file(cmake, "#!/bin/sh\n"
                               "if [ \"$1\" = --build ]; then echo built > \"$2/$4.txt\"; exit 0; fi\n"
                               "mkdir -p .molto-cmake\n"
-                              "printf '%s\\n' \"$@\" > .molto-cmake/args.txt\n") ||
+                              "printf '%s\\n' \"$@\" > .molto-cmake/args.txt\n"
+                              "echo \"CPATH=$CPATH\" >> .molto-cmake/args.txt\n") ||
         !fs_write_file(ninja, "#!/bin/sh\necho 1.13.2\n"))
         return false;
     const char *chmod_argv[] = {"chmod", "+x", cmake, ninja, NULL};
@@ -184,6 +185,8 @@ DESCRIBE(cmake_configures_with_molto_s_compiler_and_what_it_resolved) {
     /* OpenSSL's find module searches <prefix>/include and <prefix>/lib. */
     EXPECT_NOT_NULL(strstr(args, "-DCMAKE_PREFIX_PATH=/deps/openssl\n"));
     EXPECT_NOT_NULL(strstr(args, "-DCMAKE_LIBRARY_PATH=/deps/openssl/lib\n"));
+    /* And every include directory reaches every check it compiles. */
+    EXPECT_NOT_NULL(strstr(args, "CPATH=/deps/openssl/include\n"));
     free(args);
     snprintf(file, sizeof file, "%s/.molto-cmake/gen_headers.txt", at.root);
     EXPECT_TRUE(fs_path_exists(file));

@@ -250,10 +250,23 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     static char prefixes[VIEW_TEXT_MAX];
     static char includes[VIEW_TEXT_MAX];
     static char libraries[VIEW_TEXT_MAX];
+    static char cpath[VIEW_TEXT_MAX];
     join_view(view != NULL ? view->includes : NULL, "", ";", prefix_of, prefixes, sizeof prefixes);
     join_view(view != NULL ? view->includes : NULL, "", ";", as_is, includes, sizeof includes);
     join_view(view != NULL ? view->link_flags : NULL, "", ";", library_dir, libraries,
               sizeof libraries);
+    /* Every include directory, to every compile a check makes. A find module
+       hands its checks one directory (OPENSSL_INCLUDE_DIR) and a package may
+       need two: Debian keeps opensslconf.h under usr/include/<multiarch>,
+       which gcc searches only in the system's own /usr/include. CPATH is read
+       by gcc and clang alike, and a recipe's CMAKE_C_FLAGS stays its own. */
+#ifdef _WIN32
+    join_view(view != NULL ? view->includes : NULL, "", ";", as_is, cpath, sizeof cpath);
+#else
+    join_view(view != NULL ? view->includes : NULL, "", ":", as_is, cpath, sizeof cpath);
+#endif
+    if(cpath[0] != '\0')
+        env[env_count++] = (process_env_var){.name = "CPATH", .value = cpath};
 
     char cc_shell[CONFIGURE_PATH_MAX];
     char ninja_shell[CONFIGURE_PATH_MAX];
