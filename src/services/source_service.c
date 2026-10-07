@@ -744,7 +744,7 @@ static loader *announce_fetch(const char *name, const source_spec *spec) {
         return NULL;
     }
     char label[LOADER_LABEL_MAX];
-    snprintf(label, sizeof label, "fetching %s (%s)", name, origin);
+    snprintf(label, sizeof label, "fetching %.40s (%.70s)", name, origin);
     return loader_start(stderr, label);
 }
 
