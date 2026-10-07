@@ -152,6 +152,48 @@ static void report_link_diagnostics(const link_env *where, const char *output, b
     free(block);
 }
 
+/* Past this many bytes a link line goes through a response file. Windows
+   refuses a command line longer than 32767 characters, and FFmpeg's 2000-odd
+   objects are well past it; gcc and clang read `@file` everywhere. */
+#define LINK_LINE_MAX 30000
+
+/* `argv` as it is run: itself, or its driver and `@<binary>.rsp` holding the
+   rest, one argument per line, quoted as gcc reads a response file. */
+static bool link_line(const str_list *argv, const char *binary, str_list *out, char *rsp,
+                      size_t rsp_size) {
+    size_t length = 0;
+    for(size_t i = 0; i < str_list_count(argv); i++)
+        length += strlen(str_list_get(argv, i)) + 1;
+    rsp[0] = '\0';
+    if(length <= LINK_LINE_MAX) {
+        for(size_t i = 0; i < str_list_count(argv); i++) {
+            if(!str_list_push(out, str_list_get(argv, i)))
+                return false;
+        }
+        return true;
+    }
+    if(!fs_format_path(rsp, rsp_size, "%s.rsp", binary))
+        return false;
+    FILE *stream = fopen(rsp, "wb");
+    if(stream == NULL)
+        return false;
+    for(size_t i = 1; i < str_list_count(argv); i++) {
+        fputc('"', stream);
+        for(const char *c = str_list_get(argv, i); *c != '\0'; c++) {
+            if(*c == '"' || *c == '\\')
+                fputc('\\', stream);
+            fputc(*c, stream);
+        }
+        fputs("\"\n", stream);
+    }
+    const bool written = ferror(stream) == 0;
+    if(fclose(stream) != 0 || !written)
+        return false;
+    char at[PATH_BUFFER_SIZE + 2];
+    snprintf(at, sizeof at, "@%s", rsp);
+    return str_list_push(out, str_list_get(argv, 0)) && str_list_push(out, at);
+}
+
 /* Link `objects` into `binary` when needed — `force` (something recompiled),
    a stale/missing binary, or a changed link command (per the WSDB). Records the
    link command in the WSDB. Returns false only if a needed link failed. */
@@ -177,8 +219,17 @@ bool build_link_project(bool any_cpp, const str_list *objects, const char *binar
        link_needed(objects, binary)) {
         char *output = malloc(BUILD_OUTPUT_SIZE);
         bool truncated = false;
-        const int status = build_run_str_argv(&argv, env, output,
-                                              output != NULL ? BUILD_OUTPUT_SIZE : 0, &truncated);
+        str_list run;
+        str_list_init(&run);
+        char rsp[PATH_BUFFER_SIZE];
+        const int status =
+            link_line(&argv, binary, &run, rsp, sizeof rsp)
+                ? build_run_str_argv(&run, env, output, output != NULL ? BUILD_OUTPUT_SIZE : 0,
+                                     &truncated)
+                : -1;
+        str_list_free(&run);
+        if(rsp[0] != '\0')
+            (void)remove(rsp);
         ok = status == 0;
         if(output != NULL) {
             const link_env where = {.root = root,
