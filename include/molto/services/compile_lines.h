@@ -37,11 +37,12 @@ typedef struct {
 void compile_lines_init(compile_lines *out);
 void compile_lines_free(compile_lines *out);
 
-/* The programs whose lines are compile lines: the C compiler molto passed
-   and, when one was resolved, NASM. A line matches by the exact path or by
-   the same file name, `.exe` aside. Either may be NULL. */
+/* The programs whose lines are compile lines: the C and C++ compilers molto
+   passed and, when one was resolved, NASM. A line matches by the exact path,
+   slashes either way. Any may be NULL. */
 typedef struct {
     const char *cc;
+    const char *cxx;
     const char *nasm;
 } compile_drivers;
 

@@ -455,8 +455,8 @@ static int frontend_exit_code(frontend_result answer) {
         return true;
     compile_lines lines;
     compile_lines_init(&lines);
-    bool ok = configure_compile_lines(unit->name, unit->root, &unit->build, chain->cc, &lines, err,
-                                      err_size) &&
+    bool ok = configure_compile_lines(unit->name, unit->root, &unit->build, chain->cc, chain->cxx,
+                                      &lines, err, err_size) &&
               deps_take_compile_lines(unit, &lines, err, err_size);
     compile_lines_free(&lines);
     for(size_t i = 0; ok && chain->nasm[0] == '\0' && i < str_list_count(&unit->sources); i++) {
@@ -530,7 +530,8 @@ static int frontend_exit_code(frontend_result answer) {
             const configure_view view = {.includes = &unit->includes,
                                          .link_flags = &sets[s]->link_flags,
                                          .libraries = libraries,
-                                         .library_count = unit->build.library_count};
+                                         .library_count = unit->build.library_count,
+                                         .cxx = chain_out->cxx};
             if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
                                      &view, configure_err, sizeof configure_err) ||
                !take_what_it_compiles(unit, chain_out, configure_err, sizeof configure_err)) {

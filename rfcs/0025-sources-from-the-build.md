@@ -130,11 +130,14 @@ else stays `-l<name>`.
 
 ### Placeholders
 
-In `[build].args` and `[build].env` values, `{cc}` becomes the compiler molto
-resolved and `{nasm}` the NASM it resolved, written as a shell reads them. On
-a machine whose target is not x86, a missing NASM is not an error: `{nasm}`
-becomes `nasm`, which a configure for another architecture never runs. What
-they expand to is part of the stamp's digest.
+In `[build].args` and `[build].env` values, `{cc}` and `{cxx}` become the C and
+C++ compilers molto resolved and `{nasm}` the NASM it resolved, written as a
+shell reads them. `{cxx}` needs a C++ compiler in the build, which a recipe
+whose list comes from its build asks for by naming `[artifacts].cpp_std`
+(FFmpeg's WinRT screen capture is C++). On a machine whose target is not x86,
+a missing NASM is not an error: `{nasm}` becomes `nasm`, which a configure for
+another architecture never runs. What they expand to is part of the stamp's
+digest.
 
 ### A configuration that sees its dependencies built
 

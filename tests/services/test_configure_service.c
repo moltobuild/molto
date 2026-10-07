@@ -177,7 +177,7 @@ DESCRIBE(make_says_what_it_compiles_and_the_answer_is_kept) {
 
     compile_lines lines;
     compile_lines_init(&lines);
-    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", &lines, err, sizeof err));
+    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", NULL, &lines, err, sizeof err));
     ASSERT_EQ(1, (int)lines.count);
     EXPECT_STREQ("a.c", lines.lines[0].source);
     compile_lines_free(&lines);
@@ -188,7 +188,7 @@ DESCRIBE(make_says_what_it_compiles_and_the_answer_is_kept) {
     snprintf(file, sizeof file, "%s/Makefile", at.root);
     ASSERT_TRUE(fs_write_file(file, "liba.a:\n\tfalse\n"));
     compile_lines_init(&lines);
-    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", &lines, err, sizeof err));
+    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", NULL, &lines, err, sizeof err));
     EXPECT_EQ(1, (int)lines.count);
     compile_lines_free(&lines);
     (void)fs_remove_tree(at.root);
@@ -205,7 +205,7 @@ DESCRIBE(a_build_that_compiles_nothing_recognisable_is_an_error) {
                                      sizeof err));
     compile_lines lines;
     compile_lines_init(&lines);
-    EXPECT_FALSE(configure_compile_lines("fake", at.root, &build, "clang", &lines, err, sizeof err));
+    EXPECT_FALSE(configure_compile_lines("fake", at.root, &build, "clang", NULL, &lines, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "compiles nothing"));
     compile_lines_free(&lines);
     (void)fs_remove_tree(at.root);

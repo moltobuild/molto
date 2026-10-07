@@ -49,6 +49,24 @@ static void hash_field(sha256_state *state, const char *label, const char *value
     sha256_update(state, "\n", 1);
 }
 
+/* --- placeholders (RFC-0025) --- */
+
+#define PLACEHOLDER_CC "{cc}"
+#define PLACEHOLDER_CXX "{cxx}"
+#define PLACEHOLDER_NASM "{nasm}"
+
+static bool build_mentions(const recipe_build *build, const char *placeholder) {
+    for(size_t i = 0; i < build->arg_count; i++) {
+        if(strstr(build->args[i], placeholder) != NULL)
+            return true;
+    }
+    for(size_t i = 0; i < build->env_count; i++) {
+        if(strstr(build->env[i], placeholder) != NULL)
+            return true;
+    }
+    return false;
+}
+
 /* The digest, with the NASM `{nasm}` became: another assembler is another
    answer, as another compiler is. */
 static void fingerprint_with(const recipe_build *build, const char *cc, const char *target,
@@ -65,6 +83,8 @@ static void fingerprint_with(const recipe_build *build, const char *cc, const ch
     }
     if(nasm != NULL && nasm[0] != '\0')
         hash_field(&state, "nasm", nasm);
+    if(view != NULL && view->cxx != NULL && build_mentions(build, PLACEHOLDER_CXX))
+        hash_field(&state, "cxx", view->cxx);
     for(size_t i = 0; i < build->arg_count; i++)
         hash_field(&state, "arg", build->args[i]);
     for(size_t i = 0; i < build->env_count; i++)
@@ -108,23 +128,6 @@ static void shell_path(const char *path, char *out, size_t size) {
     }
 }
 
-/* --- placeholders (RFC-0025) --- */
-
-#define PLACEHOLDER_CC "{cc}"
-#define PLACEHOLDER_NASM "{nasm}"
-
-static bool build_mentions(const recipe_build *build, const char *placeholder) {
-    for(size_t i = 0; i < build->arg_count; i++) {
-        if(strstr(build->args[i], placeholder) != NULL)
-            return true;
-    }
-    for(size_t i = 0; i < build->env_count; i++) {
-        if(strstr(build->env[i], placeholder) != NULL)
-            return true;
-    }
-    return false;
-}
-
 /* Whether what is being configured for is x86, where an `.asm` file is
    assembled rather than skipped. */
 static bool targets_x86(const char *target) {
@@ -161,7 +164,8 @@ static bool resolve_nasm(const char *name, const recipe_build *build, const char
 
 /* `text` with every placeholder replaced, into `out`. False when the result
    does not fit. */
-static bool expand(const char *text, const char *cc, const char *nasm, char *out, size_t size) {
+static bool expand(const char *text, const char *cc, const char *cxx, const char *nasm, char *out,
+                   size_t size) {
     size_t used = 0;
     for(const char *c = text; *c != '\0';) {
         const char *value = NULL;
@@ -169,6 +173,9 @@ static bool expand(const char *text, const char *cc, const char *nasm, char *out
         if(strncmp(c, PLACEHOLDER_CC, strlen(PLACEHOLDER_CC)) == 0) {
             value = cc;
             skip = strlen(PLACEHOLDER_CC);
+        } else if(strncmp(c, PLACEHOLDER_CXX, strlen(PLACEHOLDER_CXX)) == 0) {
+            value = cxx;
+            skip = strlen(PLACEHOLDER_CXX);
         } else if(strncmp(c, PLACEHOLDER_NASM, strlen(PLACEHOLDER_NASM)) == 0) {
             value = nasm;
             skip = strlen(PLACEHOLDER_NASM);
@@ -192,16 +199,22 @@ static bool expand(const char *text, const char *cc, const char *nasm, char *out
 
 /* `build` with its arguments and environment expanded, into `out`. */
 static bool expand_build(const char *name, const recipe_build *build, const char *cc,
-                         const char *nasm, recipe_build *out, char *err, size_t err_size) {
+                         const char *cxx, const char *nasm, recipe_build *out, char *err,
+                         size_t err_size) {
+    if(cxx[0] == '\0' && build_mentions(build, PLACEHOLDER_CXX))
+        return set_error(err, err_size,
+                         "dependency '%s' is configured with {cxx}, and this build resolved no "
+                         "C++ compiler: its recipe names one with [artifacts].cpp_std",
+                         name);
     *out = *build;
     for(size_t i = 0; i < build->arg_count; i++) {
-        if(!expand(build->args[i], cc, nasm, out->args[i], sizeof out->args[i]))
+        if(!expand(build->args[i], cc, cxx, nasm, out->args[i], sizeof out->args[i]))
             return set_error(err, err_size,
                              "dependency '%s': [build].args '%s' is too long once expanded", name,
                              build->args[i]);
     }
     for(size_t i = 0; i < build->env_count; i++) {
-        if(!expand(build->env[i], cc, nasm, out->env[i], sizeof out->env[i]))
+        if(!expand(build->env[i], cc, cxx, nasm, out->env[i], sizeof out->env[i]))
             return set_error(err, err_size,
                              "dependency '%s': [build].env '%s' is too long once expanded", name,
                              build->env[i]);
@@ -561,8 +574,11 @@ static bool configure_now(const char *name, const char *root, const recipe_build
        resolved: FFmpeg's configure takes its compiler as `--cc=` and never
        reads CC. Static, because it is large and a configuration runs one at a
        time under its lock. */
+    char cxx_shell[CONFIGURE_PATH_MAX] = "";
+    if(view != NULL && view->cxx != NULL && view->cxx[0] != '\0')
+        shell_path(view->cxx, cxx_shell, sizeof cxx_shell);
     static recipe_build expanded;
-    if(!expand_build(name, recipe, cc_shell, nasm, &expanded, err, err_size))
+    if(!expand_build(name, recipe, cc_shell, cxx_shell, nasm, &expanded, err, err_size))
         return false;
     const recipe_build *build = &expanded;
 
@@ -739,7 +755,8 @@ static bool make_generated(const char *name, const char *root, const recipe_buil
 }
 
 bool configure_compile_lines(const char *name, const char *root, const recipe_build *build,
-                             const char *cc, compile_lines *out, char *err, size_t err_size) {
+                             const char *cc, const char *cxx, compile_lines *out, char *err,
+                             size_t err_size) {
     if(build->sources == recipe_sources_recipe)
         return true;
     char sources[CONFIGURE_PATH_MAX];
@@ -762,8 +779,11 @@ bool configure_compile_lines(const char *name, const char *root, const recipe_bu
         char ignored[512];
         if(tool_resolve_build("nasm", &nasm, ignored, sizeof ignored))
             shell_path(nasm.path, nasm_shell, sizeof nasm_shell);
-        const compile_drivers drivers = {.cc = cc_shell,
-                                         .nasm = nasm_shell[0] != '\0' ? nasm_shell : "nasm"};
+        char cxx_shell[CONFIGURE_PATH_MAX] = "";
+        if(cxx != NULL && cxx[0] != '\0')
+            shell_path(cxx, cxx_shell, sizeof cxx_shell);
+        const compile_drivers drivers = {
+            .cc = cc_shell, .cxx = cxx_shell, .nasm = nasm_shell[0] != '\0' ? nasm_shell : "nasm"};
         ok = build->sources == recipe_sources_make
                  ? ask_make(name, root, build, &drivers, out, err, err_size)
                  : ask_cmake(name, root, &drivers, out, err, err_size);

@@ -54,6 +54,9 @@ typedef struct {
     const str_list *link_flags;
     const configure_library *libraries;
     size_t library_count;
+    /* The C++ compiler molto resolved, for `{cxx}`; NULL or "" when the build
+       needs none. */
+    const char *cxx;
 } configure_view;
 
 /* Configure `name`'s source at `root` for the compiler `cc`, or do nothing if
@@ -78,7 +81,8 @@ void configure_fingerprint(const recipe_build *build, const char *cc, const char
    with the same compiler. */
 [[nodiscard]] bool configure_compile_lines(const char *name, const char *root,
                                            const recipe_build *build, const char *cc,
-                                           compile_lines *out, char *err, size_t err_size);
+                                           const char *cxx, compile_lines *out, char *err,
+                                           size_t err_size);
 
 /* Where a delegated CMake configuration writes, relative to the source: what a
    recipe's include paths name for the headers it generates. */

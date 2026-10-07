@@ -194,19 +194,6 @@ static bool is_source(const char *word) {
     return false;
 }
 
-/* A program's file name, `.exe` aside: what two spellings of one compiler
-   share. */
-static void program_name(const char *path, char *out, size_t size) {
-    const char *slash = strrchr(path, '/');
-    const char *backslash = strrchr(path, '\\');
-    if(backslash != NULL && (slash == NULL || backslash > slash))
-        slash = backslash;
-    snprintf(out, size, "%s", slash != NULL ? slash + 1 : path);
-    const size_t length = strlen(out);
-    if(length > 4 && strcmp(out + length - 4, ".exe") == 0)
-        out[length - 4] = '\0';
-}
-
 static bool same_program(const char *word, const char *driver) {
     if(driver == NULL || driver[0] == '\0')
         return false;
@@ -216,10 +203,6 @@ static bool same_program(const char *word, const char *driver) {
     snprintf(b, sizeof b, "%s", driver);
     forward_slashes(a);
     forward_slashes(b);
-    if(strcmp(a, b) == 0)
-        return true;
-    program_name(word, a, sizeof a);
-    program_name(driver, b, sizeof b);
     return strcmp(a, b) == 0;
 }
 
@@ -254,7 +237,7 @@ static bool read_command(const str_list *words, const char *cwd, const char *roo
         return true;
     const char *program = str_list_get(words, 0);
     const bool nasm = drivers->nasm != NULL && same_program(program, drivers->nasm);
-    if(!nasm && !same_program(program, drivers->cc))
+    if(!nasm && !same_program(program, drivers->cc) && !same_program(program, drivers->cxx))
         return true;
     const char *const *path_options = nasm ? NASM_PATH_OPTIONS : CC_PATH_OPTIONS;
     const size_t path_option_count = nasm ? sizeof NASM_PATH_OPTIONS / sizeof NASM_PATH_OPTIONS[0]
