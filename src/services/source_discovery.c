@@ -16,6 +16,12 @@ static bool has_suffix(const char *text, const char *suffix) {
 
 bool source_is_cpp(const char *path) { return has_suffix(path, ".cpp") || has_suffix(path, ".cc"); }
 
+bool source_is_nasm(const char *path) { return has_suffix(path, ".asm"); }
+
+bool source_is_asm(const char *path) {
+    return has_suffix(path, ".S") || has_suffix(path, ".s") || source_is_nasm(path);
+}
+
 static bool is_source(const char *path) { return has_suffix(path, ".c") || source_is_cpp(path); }
 
 bool source_is_header(const char *path) {

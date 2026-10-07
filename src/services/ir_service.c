@@ -27,6 +27,7 @@ static const ir_word SCOPES[] = {
 static const ir_word LANGUAGES[] = {
     {"c", ir_language_c},
     {"cpp", ir_language_cpp},
+    {"asm", ir_language_asm},
 };
 
 static const ir_word TARGET_KINDS[] = {

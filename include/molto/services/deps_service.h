@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <molto/project/project_ctx.h>
+#include <molto/services/compile_lines.h>
 #include <molto/services/dep_graph.h>
 #include <molto/util/str_list.h>
 
@@ -72,7 +73,16 @@ typedef struct {
        author would use — and what a diagnostic quotes when the package is
        somewhere the reader can go and look. */
     char root[DEP_GRAPH_PATH_MAX];
-    str_list sources;  /* .c files the consumer compiles as its own */
+    str_list sources; /* .c files the consumer compiles as its own */
+    /* Upstream's arguments for each of `sources`, in the same order, when its
+       configured build said what to compile (RFC-0025); NULL when the recipe
+       listed them. Compiled with these instead of `std`. */
+    str_list *source_args;
+    /* `[artifacts].exclude`, applied to a list read from the build. */
+    str_list exclude;
+    /* Every package this one reaches, nearest first: what a configuration may
+       be shown built (`[build.libraries]`, RFC-0025). */
+    str_list reaches;
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */
@@ -116,6 +126,11 @@ typedef struct {
     str_list link_flags;   /* link line only, verbatim (see prepared_interface) */
     str_list runtime_dirs; /* DLL directories, for beside an executable */
 } prepared_deps;
+
+/* What `unit`'s configured build compiles, as its sources and their arguments
+   (RFC-0025), minus what `[artifacts].exclude` names. Once per unit. */
+[[nodiscard]] bool deps_take_compile_lines(prepared_unit *unit, const compile_lines *lines,
+                                           char *err, size_t err_size);
 
 void prepared_deps_init(prepared_deps *out);
 void prepared_deps_free(prepared_deps *out);

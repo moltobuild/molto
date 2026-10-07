@@ -17,6 +17,7 @@
 #include <molto/services/platform_service.h>
 #include <molto/services/source_discovery.h>
 #include <molto/services/source_service.h>
+#include <molto/services/tool_service.h>
 #include <molto/services/toolchain_service.h>
 #include <molto/util/str_list.h>
 #include <molto/workspace/wsdb.h>
@@ -290,7 +291,6 @@ static int frontend_exit_code(frontend_result answer) {
  * package against the wrong flags.
  */
 [[nodiscard]] static int describe_the_project(const char *root, build_profile profile,
-                                              const char *platform, project_ctx *ctx_out,
                                               build_plan *plan) {
     /* The frontend describes the project; the engine below consumes what it
        said. The manifest is read twice for now — once here and once by
@@ -330,8 +330,21 @@ static int frontend_exit_code(frontend_result answer) {
        refuses on its own, so the two cannot drift. */
     if(!ir_transform_dependencies(&plan->doc, &plan->deps, &plan->dev, frontend_err,
                                   sizeof frontend_err) ||
-       !ir_transform_fold_dependencies(&plan->doc, frontend_err, sizeof frontend_err) ||
-       !ir_transform_dependency_targets(&plan->doc, &plan->deps, &plan->dev, ctx_out->target.std,
+       !ir_transform_fold_dependencies(&plan->doc, frontend_err, sizeof frontend_err)) {
+        fprintf(stderr, "molto: %s\n", frontend_err);
+        return exit_build_failure;
+    }
+    return exit_ok;
+}
+
+/* The packages as the targets they are, once every one of them knows what it
+   compiles — which for a package whose configured build says so is only after
+   it is configured (RFC-0025) — and then the document as a whole, checked. */
+[[nodiscard]] static int describe_the_packages(const char *root, build_profile profile,
+                                               const char *platform, project_ctx *ctx_out,
+                                               build_plan *plan) {
+    char frontend_err[512] = "";
+    if(!ir_transform_dependency_targets(&plan->doc, &plan->deps, &plan->dev, ctx_out->target.std,
                                         ctx_out->target.cpp_std, frontend_err,
                                         sizeof frontend_err)) {
         fprintf(stderr, "molto: %s\n", frontend_err);
@@ -384,10 +397,82 @@ static int frontend_exit_code(frontend_result answer) {
     bool needs_cpp = false;
     for(size_t i = 0; i < str_list_count(&plan->sources); i++)
         needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->sources, i));
-    for(size_t i = 0; i < str_list_count(&plan->package_sources); i++)
-        needs_cpp = needs_cpp || source_is_cpp(str_list_get(&plan->package_sources, i));
+    /* The packages this build links, asked before any is configured: one
+       whose build says what it compiles cannot list it yet, and says it is
+       C++ by naming a C++ standard (RFC-0025). */
+    for(size_t u = 0; u < plan->deps.unit_count; u++) {
+        const prepared_unit *unit = &plan->deps.units[u];
+        if(unit->build.sources != recipe_sources_recipe && unit->cpp_std[0] != '\0')
+            needs_cpp = true;
+        for(size_t i = 0; i < str_list_count(&unit->sources); i++)
+            needs_cpp = needs_cpp || source_is_cpp(str_list_get(&unit->sources, i));
+    }
     return toolchain_resolve(&ctx_out->target, platform, needs_cpp, db, refresh_toolchain,
                              chain_out);
+}
+
+/* The packages `unit`'s configuration sees built (`[build.libraries]`), from
+   the units this build prepared. A package it names but does not reach, or
+   one that is not compiled from sources, is an error naming the recipe. */
+[[nodiscard]] static bool libraries_for(const prepared_unit *unit, prepared_deps *const sets[],
+                                        size_t set_count, configure_library *out, char *err,
+                                        size_t err_size) {
+    for(size_t l = 0; l < unit->build.library_count; l++) {
+        const recipe_build_library *wanted = &unit->build.libraries[l];
+        const prepared_unit *found = NULL;
+        bool reached = false;
+        for(size_t r = 0; r < str_list_count(&unit->reaches); r++)
+            reached = reached || strcmp(str_list_get(&unit->reaches, r), wanted->package) == 0;
+        for(size_t s = 0; reached && found == NULL && s < set_count; s++) {
+            for(size_t i = 0; found == NULL && i < sets[s]->unit_count; i++) {
+                if(strcmp(sets[s]->units[i].name, wanted->package) == 0)
+                    found = &sets[s]->units[i];
+            }
+        }
+        if(found == NULL || found->system || str_list_count(&found->sources) == 0 ||
+           found->source_args != NULL) {
+            snprintf(err, err_size,
+                     "dependency '%s': [build.libraries] names '%s', which is not a package "
+                     "it depends on that molto compiles from a recipe's own sources",
+                     unit->name, wanted->package);
+            return false;
+        }
+        out[l] = (configure_library){.library = wanted->library,
+                                     .sources = &found->sources,
+                                     .includes = &found->includes,
+                                     .defines = &found->defines,
+                                     .flags = &found->flags,
+                                     .std = found->std};
+    }
+    return true;
+}
+
+/* What a configured package's build says it compiles, as its sources
+   (RFC-0025), and NASM resolved the first time one of them is `.asm`. */
+[[nodiscard]] static bool take_what_it_compiles(prepared_unit *unit, resolved_toolchain *chain,
+                                                char *err, size_t err_size) {
+    if(unit->build.sources == recipe_sources_recipe)
+        return true;
+    compile_lines lines;
+    compile_lines_init(&lines);
+    bool ok = configure_compile_lines(unit->name, unit->root, &unit->build, chain->cc, chain->cxx,
+                                      &lines, err, err_size) &&
+              deps_take_compile_lines(unit, &lines, err, err_size);
+    compile_lines_free(&lines);
+    for(size_t i = 0; ok && chain->nasm[0] == '\0' && i < str_list_count(&unit->sources); i++) {
+        if(!source_is_nasm(str_list_get(&unit->sources, i)))
+            continue;
+        resolved_tool nasm;
+        char reason[512] = "";
+        if(!tool_resolve_build("nasm", &nasm, reason, sizeof reason)) {
+            snprintf(err, err_size, "dependency '%s' assembles x86 code with NASM, and %s",
+                     unit->name, reason);
+            ok = false;
+        } else {
+            snprintf(chain->nasm, sizeof chain->nasm, "%s", nasm.path);
+        }
+    }
+    return ok;
 }
 
 /* Load the manifest, resolve what it depends on, and work out every unit the
@@ -415,11 +500,7 @@ static int frontend_exit_code(frontend_result answer) {
         return exit_dependency_failure;
     }
 
-    result = describe_the_project(root, profile, platform, ctx_out, plan);
-    if(result != exit_ok)
-        return result;
-
-    result = take_the_packages(root, ctx_out, plan);
+    result = describe_the_project(root, profile, plan);
     if(result != exit_ok)
         return result;
 
@@ -435,20 +516,38 @@ static int frontend_exit_code(frontend_result answer) {
     /* A dependency configured by upstream's configure needs to know which
        compiler it is being configured for, so this is the first moment it
        can run — and it has to run before anything of it compiles. */
-    const prepared_deps *sets[] = {&plan->deps, &plan->dev};
+    prepared_deps *sets[] = {&plan->deps, &plan->dev};
     for(size_t s = 0; s < sizeof sets / sizeof sets[0]; s++) {
         for(size_t i = 0; i < sets[s]->unit_count; i++) {
-            const prepared_unit *unit = &sets[s]->units[i];
+            prepared_unit *unit = &sets[s]->units[i];
             char configure_err[2048] = "";
+            configure_library libraries[RECIPE_BUILD_MAX_LIBRARIES];
+            if(!libraries_for(unit, sets, sizeof sets / sizeof sets[0], libraries, configure_err,
+                              sizeof configure_err)) {
+                fprintf(stderr, "molto: %s\n", configure_err);
+                return exit_dependency_failure;
+            }
             const configure_view view = {.includes = &unit->includes,
-                                         .link_flags = &sets[s]->link_flags};
+                                         .link_flags = &sets[s]->link_flags,
+                                         .libraries = libraries,
+                                         .library_count = unit->build.library_count,
+                                         .cxx = chain_out->cxx};
             if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
-                                     &view, configure_err, sizeof configure_err)) {
+                                     &view, configure_err, sizeof configure_err) ||
+               !take_what_it_compiles(unit, chain_out, configure_err, sizeof configure_err)) {
                 fprintf(stderr, "molto: %s\n", configure_err);
                 return exit_dependency_failure;
             }
         }
     }
+
+    result = describe_the_packages(root, profile, platform, ctx_out, plan);
+    if(result != exit_ok)
+        return result;
+
+    result = take_the_packages(root, ctx_out, plan);
+    if(result != exit_ok)
+        return result;
 
     /* Before anything compiles: a coverage build that went ahead without its
        instrumentation would report "no data" for a reason nobody could find. */

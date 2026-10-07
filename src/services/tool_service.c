@@ -218,8 +218,13 @@ bool tool_resolve_build(const char *name, resolved_tool *out, char *err, size_t 
     memset(out, 0, sizeof *out);
     snprintf(out->name, sizeof out->name, "%s", name);
 
+    /* MOLTO_CMAKE, MOLTO_NINJA, MOLTO_NASM: the name, upper case. */
     char variable[64];
-    snprintf(variable, sizeof variable, "MOLTO_%s", strcmp(name, "ninja") == 0 ? "NINJA" : "CMAKE");
+    snprintf(variable, sizeof variable, "MOLTO_%s", name);
+    for(char *c = variable; *c != '\0'; c++) {
+        if(*c >= 'a' && *c <= 'z')
+            *c = (char)(*c - 'a' + 'A');
+    }
     const char *chosen = getenv(variable);
     if(chosen != NULL && chosen[0] != '\0') {
         snprintf(out->path, sizeof out->path, "%s", chosen);

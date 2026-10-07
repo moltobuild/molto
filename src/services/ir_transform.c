@@ -63,9 +63,8 @@ static bool push_defines(ir_option **array, size_t *count, const str_list *value
    composing one never has to tell a library from a `-flto`. */
 static bool push_links(ir_option **array, size_t *count, const str_list *values) {
     for(size_t i = 0; i < str_list_count(values); i++) {
-        char flag[PROJECT_OPT_LEN + 4];
-        const int written = snprintf(flag, sizeof flag, "-l%s", str_list_get(values, i));
-        if(written < 0 || (size_t)written >= sizeof flag)
+        char flag[PROJECT_OPT_LEN + 16];
+        if(!project_link_flag(str_list_get(values, i), flag, sizeof flag))
             return false;
         if(!ir_add_option(array, count, flag, ir_scope_target))
             return false;
@@ -237,6 +236,16 @@ static bool push_std(ir_source *source, const char *value) {
     return ir_add_option(&source->options, &source->option_count, flag, ir_scope_unit);
 }
 
+/* Upstream's arguments for one of its own lines, in unit scope. */
+static bool push_unit_options(ir_source *source, const str_list *values) {
+    for(size_t i = 0; i < str_list_count(values); i++) {
+        if(!ir_add_option(&source->options, &source->option_count, str_list_get(values, i),
+                          ir_scope_unit))
+            return false;
+    }
+    return true;
+}
+
 /* One package's sources as one target. */
 static bool describe_target(ir_document *doc, const prepared_unit *unit, const char *std,
                             const char *cpp_std, char *err, size_t err_size) {
@@ -265,9 +274,17 @@ static bool describe_target(ir_document *doc, const prepared_unit *unit, const c
             return false;
         }
         const bool is_cpp = source_is_cpp(relative);
-        ir_source *source =
-            ir_add_source(target, relative, is_cpp ? ir_language_cpp : ir_language_c);
-        if(source == NULL || !push_std(source, std_for(unit, is_cpp, std, cpp_std))) {
+        const ir_language language = source_is_asm(relative) ? ir_language_asm
+                                     : is_cpp                ? ir_language_cpp
+                                                             : ir_language_c;
+        ir_source *source = ir_add_source(target, relative, language);
+        /* A line read from upstream's build carries its own standard, flags
+           and defines, in unit scope so they are the last word (RFC-0025). */
+        const bool ok =
+            source != NULL &&
+            (unit->source_args != NULL ? push_unit_options(source, &unit->source_args[i])
+                                       : push_std(source, std_for(unit, is_cpp, std, cpp_std)));
+        if(!ok) {
             snprintf(err, err_size, "out of memory describing source '%s' of package '%s'",
                      relative, unit->name);
             return false;

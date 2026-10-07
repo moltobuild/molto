@@ -104,7 +104,7 @@ against the document, not discovered as a deadlock in the scheduler.
 | Key | Type | Description |
 |---|---|---|
 | `path` | path | Relative to `Project.root` |
-| `language` | string | `c` or `cpp` |
+| `language` | string | `c`, `cpp` or `asm` (RFC-0025) |
 | `options` | array[`CompileOption`] | The unit scope of RFC-0007 |
 
 A `GeneratedSource` carries the same three keys and two more: `produced_by`, the

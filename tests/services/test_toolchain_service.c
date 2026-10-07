@@ -56,11 +56,15 @@ typedef struct {
    the `#!/bin/sh` this used to write is a file Windows cannot start, and the
    tests that installed it were the ones reporting `could not run pickup`. */
 MOLTEST_FAKE(fake_pickup_toolchain) {
-    (void)argc;
-    (void)argv;
+    /* One line per call, with what it was asked. */
     const char *log = moltest_fake_setting("log");
-    if (log != NULL)
-        (void)moltest_append_line(log, "called");
+    if (log != NULL) {
+        char line[1024] = "called";
+        size_t used = strlen(line);
+        for (int i = 1; i < argc && used < sizeof line; i++)
+            used += (size_t)snprintf(line + used, sizeof line - used, " %s", argv[i]);
+        (void)moltest_append_line(log, line);
+    }
     const char *answer = moltest_fake_setting("answer");
     if (answer != NULL) {
         char *text = fs_read_file(answer);
@@ -505,4 +509,32 @@ DESCRIBE(toolchain_refuses_a_recipe_it_cannot_carry_whole) {
     workspace_teardown(root);
     stub_answer_teardown(&answer);
     stub_teardown(&stub);
+}
+
+/* A C++ driver is asked for the C++ standard, never for C's: no C++ compiler
+   takes -std=c17, and asking one whether it does finds none. */
+DESCRIBE(a_cpp_request_names_the_cpp_standard) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+
+    project_target target = target_requiring(NULL);
+    snprintf(target.cpp_std, sizeof target.cpp_std, "%s", "c++17");
+    resolved_toolchain chain;
+    EXPECT_EQ(exit_ok, toolchain_resolve(&target, NULL, true, db, true, &chain));
+    char *log = fs_read_file(stub.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NOT_NULL(strstr(log, "--std c++17"));
+    EXPECT_NULL(strstr(log, "c2x"));
+    free(log);
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_teardown(&stub);
+    stub_answer_teardown(&answer);
 }

@@ -37,6 +37,12 @@
 /* Return true if `path` names a C++ source file (.cpp or .cc). */
 [[nodiscard]] bool source_is_cpp(const char *path);
 
+/* Assembly: `.S` and `.s`, which the C driver assembles, and `.asm`, which
+   NASM does (RFC-0025). Never discovered: compiled only when a build or a
+   recipe names it. */
+[[nodiscard]] bool source_is_asm(const char *path);
+[[nodiscard]] bool source_is_nasm(const char *path);
+
 /* Return true if `path` names a header (.h, .hpp or .hh). */
 [[nodiscard]] bool source_is_header(const char *path);
 

@@ -129,6 +129,122 @@ DESCRIBE(a_build_molto_does_not_configure_runs_nothing) {
     EXPECT_TRUE(configure_dependency("fake", "/nonexistent", &none, "cc", NULL, NULL, err, sizeof err));
 }
 
+/* --- what the configured build compiles (RFC-0025) --- */
+
+/* A configure that takes its compiler as an argument, as FFmpeg's does, and a
+   Makefile that compiles one file and archives it. */
+static bool make_buildable(sandbox *at) {
+    if (!make_source(at))
+        return false;
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/configure", at->root);
+    if (!fs_write_file(file, "echo run >> runs.txt\necho \"$*\" > args.txt\n"))
+        return false;
+    snprintf(file, sizeof file, "%s/a.c", at->root);
+    if (!fs_write_file(file, "int a(void) { return 1; }\n"))
+        return false;
+    snprintf(file, sizeof file, "%s/Makefile", at->root);
+    return fs_write_file(file, "liba.a: a.o\n\tar rc liba.a a.o\n"
+                               "a.o: a.c\n\tcc -Iinc -DA=1 -MMD -c -o a.o a.c\n");
+}
+
+DESCRIBE(the_compiler_reaches_configure_as_an_argument) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    recipe_build build = delegated();
+    build.target_count = 0;
+    snprintf(build.args[0], RECIPE_BUILD_ARG_MAX, "--cc={cc}");
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "/opt/cc", NULL, NULL, err,
+                                     sizeof err));
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/args.txt", at.root);
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    EXPECT_NOT_NULL(strstr(text, "--cc=/opt/cc"));
+    free(text);
+    (void)fs_remove_tree(at.root);
+}
+
+DESCRIBE(make_says_what_it_compiles_and_the_answer_is_kept) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    recipe_build build = delegated();
+    build.target_count = 0;
+    build.sources = recipe_sources_make;
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, NULL, err, sizeof err));
+
+    compile_lines lines;
+    compile_lines_init(&lines);
+    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", NULL, &lines, err, sizeof err));
+    ASSERT_EQ(1, (int)lines.count);
+    EXPECT_STREQ("a.c", lines.lines[0].source);
+    compile_lines_free(&lines);
+
+    /* Read back from beside the stamp: a Makefile that no longer answers is
+       not asked. */
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/Makefile", at.root);
+    ASSERT_TRUE(fs_write_file(file, "liba.a:\n\tfalse\n"));
+    compile_lines_init(&lines);
+    ASSERT_TRUE(configure_compile_lines("fake", at.root, &build, "cc", NULL, &lines, err, sizeof err));
+    EXPECT_EQ(1, (int)lines.count);
+    compile_lines_free(&lines);
+    (void)fs_remove_tree(at.root);
+}
+
+DESCRIBE(a_build_that_compiles_nothing_recognisable_is_an_error) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    recipe_build build = delegated();
+    build.target_count = 0;
+    build.sources = recipe_sources_make;
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "clang", NULL, NULL, err,
+                                     sizeof err));
+    compile_lines lines;
+    compile_lines_init(&lines);
+    EXPECT_FALSE(configure_compile_lines("fake", at.root, &build, "clang", NULL, &lines, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "compiles nothing"));
+    compile_lines_free(&lines);
+    (void)fs_remove_tree(at.root);
+}
+
+/* zlib's part, as FFmpeg's configure needs it: archived, and on LDFLAGS. */
+DESCRIBE(a_library_the_configuration_sees_is_built_first) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/configure", at.root);
+    ASSERT_TRUE(fs_write_file(file, "echo \"$LDFLAGS\" > ldflags.txt\n"));
+    char zsource[PATH_MAX_LEN];
+    snprintf(zsource, sizeof zsource, "%s/a.c", at.root);
+
+    str_list sources, none;
+    str_list_init(&sources);
+    str_list_init(&none);
+    ASSERT_TRUE(str_list_push(&sources, zsource));
+    const configure_library library = {
+        .library = "z", .sources = &sources, .includes = &none, .defines = &none, .flags = &none,
+        .std = ""};
+    const configure_view view = {.libraries = &library, .library_count = 1};
+    recipe_build build = delegated();
+    build.target_count = 0;
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, &view, err, sizeof err));
+
+    snprintf(file, sizeof file, "%s/.molto-libs/libz.a", at.root);
+    EXPECT_TRUE(fs_path_exists(file));
+    snprintf(file, sizeof file, "%s/ldflags.txt", at.root);
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    EXPECT_NOT_NULL(strstr(text, ".molto-libs"));
+    free(text);
+    str_list_free(&sources);
+    (void)fs_remove_tree(at.root);
+}
+
 /* --- a delegated CMake --- */
 
 #ifndef _WIN32

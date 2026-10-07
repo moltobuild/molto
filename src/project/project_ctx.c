@@ -517,3 +517,14 @@ bool project_test_sources(const project_test *test, str_list *out) {
     }
     return true;
 }
+
+bool project_link_flag(const char *name, char *out, size_t size) {
+    static const char FRAMEWORK[] = ".framework";
+    const size_t length = strlen(name);
+    const size_t suffix = sizeof FRAMEWORK - 1;
+    const int written =
+        length > suffix && strcmp(name + length - suffix, FRAMEWORK) == 0
+            ? snprintf(out, size, "-Wl,-framework,%.*s", (int)(length - suffix), name)
+            : snprintf(out, size, "-l%s", name);
+    return written >= 0 && (size_t)written < size;
+}

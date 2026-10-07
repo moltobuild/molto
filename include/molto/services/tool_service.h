@@ -48,9 +48,10 @@ typedef struct {
 
 /*
  * A build tool a dependency's configuration runs: `cmake` or `ninja`
- * (RFC-0023, `[tool].kind = "build"`; RFC-0009, `system = "cmake"`).
+ * (RFC-0023, `[tool].kind = "build"`; RFC-0009, `system = "cmake"`), or the
+ * `nasm` its `.asm` files are assembled with (RFC-0025).
  *
- * MOLTO_CMAKE and MOLTO_NINJA name one outright. Otherwise pickup is asked
+ * MOLTO_CMAKE, MOLTO_NINJA and MOLTO_NASM name one outright. Otherwise pickup is asked
  * which build tool of that name it has (`pickup install cmake` puts one
  * there), and failing that the PATH is: a machine with its own CMake does not
  * need pickup's. False, with a message saying how to get one, when none of the

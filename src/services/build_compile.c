@@ -129,10 +129,28 @@ static bool push_document(str_list *argv, const char *root, const compile_unit *
            push_scope(argv, root, unit->node, unit->unit, ir_scope_unit);
 }
 
+/* An `.asm` file's line: NASM with upstream's own arguments and nothing of the
+   C compiler's — no optimisation level, no warnings, no toolchain floor — then
+   the depfile, the object and the input (RFC-0025). */
+static bool nasm_argv(str_list *argv, const char *root, const compile_unit *unit,
+                      const char *object, const char *depfile, const resolved_toolchain *chain) {
+    if(chain->nasm[0] == '\0') {
+        fprintf(stderr, "molto: '%s' needs NASM and none was resolved\n", unit->source);
+        return false;
+    }
+    return str_list_push(argv, chain->nasm) &&
+           push_scope(argv, root, unit->node, unit->unit, ir_scope_unit) &&
+           str_list_push(argv, "-MD") && str_list_push(argv, depfile) &&
+           str_list_push(argv, ARG_OUTPUT) && str_list_push(argv, object) &&
+           str_list_push(argv, unit->source);
+}
+
 static bool build_compile_argv(str_list *argv, const char *root, const compile_unit *unit,
                                const char *object, const manifest_profile *settings,
                                const char *depfile, const resolved_toolchain *chain) {
     const char *source = unit->source;
+    if(source_is_nasm(source))
+        return nasm_argv(argv, root, unit, object, depfile, chain);
     bool is_cpp = source_is_cpp(source);
     const char *driver = compile_flags_driver(chain, is_cpp);
     if(driver == NULL) {

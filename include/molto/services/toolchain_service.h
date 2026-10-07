@@ -37,6 +37,9 @@
 typedef struct {
     char cc[TOOLCHAIN_PATH_MAX];  /* C driver */
     char cxx[TOOLCHAIN_PATH_MAX]; /* C++ driver; "" when none was found */
+    /* The assembler for `.asm` files (RFC-0025); "" until a build has one to
+       assemble. Not part of what the resolver answers: a build sets it. */
+    char nasm[TOOLCHAIN_PATH_MAX];
     char vendor[32];
     char version[32];
 

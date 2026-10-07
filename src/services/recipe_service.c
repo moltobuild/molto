@@ -414,6 +414,131 @@ static bool read_build_env(doc_view doc, recipe_build *out, char *err, size_t er
     return ok;
 }
 
+/* A path a recipe names inside the source: relative, never climbing out, and
+   never readable as an option. */
+static bool inside_source(const char *path) {
+    return path[0] != '\0' && path[0] != '/' && path[0] != '-' && strstr(path, "..") == NULL &&
+           strchr(path, '\\') == NULL;
+}
+
+/* `[build.libraries]` (RFC-0025): package = "library". Both are names, so
+   nothing in them can be read as a path or an option. */
+static bool plain_name(const char *name) {
+    if(name[0] == '\0' || name[0] == '-')
+        return false;
+    for(const char *c = name; *c != '\0'; c++) {
+        if(!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') ||
+             *c == '_' || *c == '-' || *c == '+' || *c == '.'))
+            return false;
+    }
+    return true;
+}
+
+static bool read_build_libraries(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    const char *table = BUILD_SECTION ".libraries";
+    if(!doc_has_table(doc, table)) {
+        if(doc_has_key(doc, BUILD_SECTION, "libraries"))
+            return set_error(err, err_size, "[build].libraries must be a table of strings");
+        return true;
+    }
+    long schema = 1;
+    if(!read_schema(doc, &schema, err, err_size))
+        return false;
+    if(schema < RECIPE_SCHEMA_BUILD_SOURCES)
+        return set_error(err, err_size, "[build.libraries] needs schema %d or later",
+                         RECIPE_SCHEMA_BUILD_SOURCES);
+    if(out->via != recipe_via_delegate)
+        return set_error(err, err_size,
+                         "[build.libraries] needs via = \"delegate\": it is what "
+                         "a configuration sees");
+    str_list names;
+    str_list_init(&names);
+    if(!doc_table_members(doc, table, &names)) {
+        str_list_free(&names);
+        return set_error(err, err_size, "[build.libraries] must be a table of strings");
+    }
+    bool ok = true;
+    if(str_list_count(&names) > RECIPE_BUILD_MAX_LIBRARIES)
+        ok = set_error(err, err_size, "[build.libraries] names more than %d",
+                       RECIPE_BUILD_MAX_LIBRARIES);
+    for(size_t i = 0; ok && i < str_list_count(&names); i++) {
+        recipe_build_library *library = &out->libraries[out->library_count];
+        const char *package = str_list_get(&names, i);
+        if(!plain_name(package) || strlen(package) >= sizeof library->package)
+            ok = set_error(err, err_size, "[build.libraries] names '%s', which is not a package",
+                           package);
+        else if(!doc_get_string(doc, table, package, library->library, sizeof library->library) ||
+                !plain_name(library->library))
+            ok = set_error(err, err_size,
+                           "[build.libraries].%s must name a library, as `-l` takes it", package);
+        else {
+            snprintf(library->package, sizeof library->package, "%s", package);
+            out->library_count++;
+        }
+    }
+    str_list_free(&names);
+    return ok;
+}
+
+/* `sources` and `goals` (RFC-0025): the list of what to compile, read from
+   upstream's build once it is configured instead of from the recipe. */
+static bool read_build_sources(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    const bool has_goals = doc_has_key(doc, BUILD_SECTION, "goals");
+    char from[32];
+    if(!doc_get_string(doc, BUILD_SECTION, "sources", from, sizeof from)) {
+        if(doc_has_key(doc, BUILD_SECTION, "sources"))
+            return set_error(err, err_size, "[build].sources must be a string");
+        if(has_goals)
+            return set_error(err, err_size,
+                             "[build].goals means something only with sources = "
+                             "\"make\"");
+        return true;
+    }
+
+    long schema = 1;
+    if(!read_schema(doc, &schema, err, err_size))
+        return false;
+    if(schema < RECIPE_SCHEMA_BUILD_SOURCES)
+        return set_error(err, err_size,
+                         "[build].sources needs schema %d or later, so a molto that does not "
+                         "read it refuses the recipe instead of compiling the whole tarball",
+                         RECIPE_SCHEMA_BUILD_SOURCES);
+    if(strcmp(from, "make") == 0 && out->system == recipe_build_autotools)
+        out->sources = recipe_sources_make;
+    else if(strcmp(from, "cmake") == 0 && out->system == recipe_build_cmake)
+        out->sources = recipe_sources_cmake;
+    else
+        return set_error(err, err_size,
+                         "[build].sources '%s' is not what a delegated %s build can answer: "
+                         "\"make\" for autotools, \"cmake\" for cmake",
+                         from, recipe_build_system_name(out->system));
+    if(out->via != recipe_via_delegate)
+        return set_error(err, err_size,
+                         "[build].sources needs via = \"delegate\": the build "
+                         "that answers has to have been configured");
+    /* Both would be two answers to one question, and no rule for which wins
+       is one a reader could guess. */
+    if(doc_has_key(doc, ARTIFACTS_SECTION, "sources"))
+        return set_error(err, err_size,
+                         "[build].sources reads the list from upstream's build; "
+                         "drop [artifacts].sources");
+    if(has_goals && out->sources != recipe_sources_make)
+        return set_error(err, err_size,
+                         "[build].goals means something only with sources = "
+                         "\"make\"");
+
+    if(!doc_read_strings(doc, BUILD_SECTION, "goals", out->goals[0], RECIPE_BUILD_MAX_GOALS,
+                         RECIPE_BUILD_ARG_MAX, &out->goal_count, err, err_size))
+        return false;
+    for(size_t i = 0; i < out->goal_count; i++) {
+        if(!inside_source(out->goals[i]))
+            return set_error(err, err_size,
+                             "[build].goals names '%s', which is not a goal inside the source",
+                             out->goals[i]);
+    }
+    return true;
+}
+
 static bool read_delegation(doc_view doc, recipe_build *out, char *err, size_t err_size) {
     char via[32];
     if(doc_get_string(doc, BUILD_SECTION, "via", via, sizeof via)) {
@@ -449,14 +574,13 @@ static bool read_delegation(doc_view doc, recipe_build *out, char *err, size_t e
     /* A target is a file a Makefile rule writes inside the source, so it is
        spelled as one: relative, and never climbing out. */
     for(size_t i = 0; i < out->target_count; i++) {
-        const char *target = out->targets[i];
-        if(target[0] == '\0' || target[0] == '/' || target[0] == '-' ||
-           strstr(target, "..") != NULL || strchr(target, '\\') != NULL)
+        if(!inside_source(out->targets[i]))
             return set_error(err, err_size,
                              "[build].targets names '%s', which is not a file inside the source",
-                             target);
+                             out->targets[i]);
     }
-    return true;
+    return read_build_sources(doc, out, err, err_size) &&
+           read_build_libraries(doc, out, err, err_size);
 }
 
 bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size) {

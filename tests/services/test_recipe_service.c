@@ -624,6 +624,87 @@ DESCRIBE(a_delegated_autotools_build_reads_what_configure_is_given) {
     EXPECT_STREQ("src/port/pg_config_paths.h", build.targets[0]);
 }
 
+/* --- sources read from the build (RFC-0025) --- */
+
+/* FFmpeg's: make says what it compiles, for the libraries named. */
+DESCRIBE(a_delegated_build_may_say_what_it_compiles) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                              "args = [\"--cc={cc}\"]\nsources = \"make\"\n"
+                              "goals = [\"libavutil/libavutil.a\"]\n",
+                              &build, err, sizeof err));
+    EXPECT_EQ(recipe_sources_make, build.sources);
+    ASSERT_EQ(1u, build.goal_count);
+    EXPECT_STREQ("libavutil/libavutil.a", build.goals[0]);
+
+    ASSERT_TRUE(read_build_of("schema = 5\n[build]\nsystem = \"cmake\"\nvia = \"delegate\"\n"
+                              "sources = \"cmake\"\n",
+                              &build, err, sizeof err));
+    EXPECT_EQ(recipe_sources_cmake, build.sources);
+}
+
+DESCRIBE(a_recipe_lists_its_own_sources_by_default) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n", &build, err,
+                              sizeof err));
+    EXPECT_EQ(recipe_sources_recipe, build.sources);
+}
+
+/* An older molto would read no [artifacts].sources and compile the tarball. */
+DESCRIBE(sources_from_the_build_need_schema_5) {
+    recipe_build build;
+    char err[256] = "";
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "sources = \"make\"\n",
+                               &build, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "schema 5"));
+}
+
+/* FFmpeg's: zlib built before configure, as the -lz its probe links. */
+DESCRIBE(a_configuration_may_see_a_dependency_built) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                              "libraries = { zlib = \"z\" }\n",
+                              &build, err, sizeof err));
+    ASSERT_EQ(1u, build.library_count);
+    EXPECT_STREQ("zlib", build.libraries[0].package);
+    EXPECT_STREQ("z", build.libraries[0].library);
+
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "libraries = { zlib = \"z\" }\n",
+                               &build, err, sizeof err));
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "libraries = { zlib = \"-lz\" }\n",
+                               &build, err, sizeof err));
+}
+
+DESCRIBE(sources_from_the_build_are_refused_where_they_cannot_be_answered) {
+    recipe_build build;
+    char err[256] = "";
+    /* cmake writes no Makefile to ask, and make no database. */
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"cmake\"\nvia = \"delegate\"\n"
+                               "sources = \"make\"\n",
+                               &build, err, sizeof err));
+    /* Nothing configured, nothing to ask. */
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nsources = \"make\"\n",
+                               &build, err, sizeof err));
+    /* Two answers to one question. */
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "sources = \"make\"\n[artifacts]\nsources = [\"a.c\"]\n",
+                               &build, err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "[artifacts].sources"));
+    /* goals are make's. */
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"cmake\"\nvia = \"delegate\"\n"
+                               "sources = \"cmake\"\ngoals = [\"all\"]\n",
+                               &build, err, sizeof err));
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "sources = \"make\"\ngoals = [\"../up\"]\n",
+                               &build, err, sizeof err));
+}
+
 /* Only autotools, delegated, is a build molto runs; the system alone is not. */
 DESCRIBE(an_autotools_build_that_does_not_delegate_is_not_run) {
     recipe_build build;

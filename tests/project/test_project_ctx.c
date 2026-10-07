@@ -509,3 +509,17 @@ DESCRIBE(an_isolated_test_that_says_too_little_is_a_manifest_error) {
         EXPECT_NOT_NULL(strstr(err, bad[i][1]));
     }
 }
+
+/* --- a link entry as the link line reads it --- */
+
+DESCRIBE(a_link_entry_is_a_library_or_a_framework) {
+    char flag[64];
+    ASSERT_TRUE(project_link_flag("m", flag, sizeof flag));
+    EXPECT_STREQ("-lm", flag);
+    ASSERT_TRUE(project_link_flag("VideoToolbox.framework", flag, sizeof flag));
+    EXPECT_STREQ("-Wl,-framework,VideoToolbox", flag);
+    /* A name that only contains the word is still a library. */
+    ASSERT_TRUE(project_link_flag("framework", flag, sizeof flag));
+    EXPECT_STREQ("-lframework", flag);
+    EXPECT_FALSE(project_link_flag("VideoToolbox.framework", flag, 8));
+}
