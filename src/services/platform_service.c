@@ -3,6 +3,7 @@
 #include <molto/services/fs_service.h>
 #include <molto/services/host_service.h>
 #include <molto/services/process_service.h>
+#include <molto/services/source_discovery.h>
 #include <molto/services/source_service.h>
 #include <molto/util/sha256.h>
 
@@ -1022,14 +1023,69 @@ static const char *const HOST_LIBRARY_DIRS[] = {
     "/lib",
 };
 
-static bool host_has_library(const char *file) {
+/* Where the host keeps `file`, or false. */
+static bool host_library_path(const char *file, char *out, size_t size) {
     for(size_t i = 0; i < sizeof HOST_LIBRARY_DIRS / sizeof HOST_LIBRARY_DIRS[0]; i++) {
-        char path[PLATFORM_PATH_MAX];
-        if(fs_format_path(path, sizeof path, "%s/%s", HOST_LIBRARY_DIRS[i], file) &&
-           fs_path_exists(path))
+        if(fs_format_path(out, size, "%s/%s", HOST_LIBRARY_DIRS[i], file) && fs_path_exists(out))
             return true;
     }
     return false;
+}
+
+static bool host_has_library(const char *file) {
+    char path[PLATFORM_PATH_MAX];
+    return host_library_path(file, path, sizeof path);
+}
+
+/*
+ * A development package's `libssl.so` is a relative link to `libssl.so.3`,
+ * which the runtime package installs beside it — and on a `host` platform
+ * molto pins the first and never the second, so the link dangles. A linker
+ * given `-l:libssl.so.3` does not care; a configuration does: CMake's
+ * FindOpenSSL picks the dangling `libssl.so`, every function check links
+ * against nothing, and libwebsockets is configured for an OpenSSL from 2008.
+ *
+ * So each link the package pins to one of the sonames it links by is pointed
+ * at the host's own file, which is exactly what installing the runtime package
+ * would have done. Done on every resolve, and nothing when it already points
+ * there.
+ */
+static bool point_links_at_host(const platform_entry *entry, const char *root, char *err,
+                                size_t err_size) {
+    str_list files;
+    str_list_init(&files);
+    bool listed = false;
+    for(size_t i = 0; i < str_list_count(&entry->link); i++) {
+        const char *library = str_list_get(&entry->link, i);
+        char host[PLATFORM_PATH_MAX];
+        if(library[0] != ':' || !host_library_path(library + 1, host, sizeof host))
+            continue;
+        if(!listed) {
+            listed = true;
+            if(!source_discovery_collect_all(root, &files)) {
+                str_list_free(&files);
+                return fail(err, err_size, "could not read %s", root);
+            }
+        }
+        /* `libssl.so.3` is linked to by `libssl.so`: the name up to `.so`. */
+        const char *so = strstr(library + 1, ".so");
+        const size_t stem = so != NULL ? (size_t)(so - library - 1) + 3 : strlen(library + 1);
+        for(size_t j = 0; j < str_list_count(&files); j++) {
+            const char *path = str_list_get(&files, j);
+            const char *slash = strrchr(path, '/');
+            const char *base = slash != NULL ? slash + 1 : path;
+            char target[PLATFORM_PATH_MAX];
+            if(strlen(base) != stem || strncmp(base, library + 1, stem) != 0 ||
+               !fs_link_target(path, target, sizeof target) || strcmp(target, host) == 0)
+                continue;
+            if(remove(path) != 0 || !fs_link(host, path)) {
+                str_list_free(&files);
+                return fail(err, err_size, "could not point %s at %s", path, host);
+            }
+        }
+    }
+    str_list_free(&files);
+    return true;
 }
 
 /* A `host` platform links against the host's libraries by soname, so each one
@@ -1110,6 +1166,8 @@ bool platform_resolve(const platform_recipe *recipe, const char *name, const cha
     return platform_dir(name, version, entry->name, destination, sizeof destination, err,
                         err_size) &&
            fetch_platform(entry, name, destination, err, err_size) &&
+           (entry->runtime != platform_runtime_host ||
+            point_links_at_host(entry, destination, err, err_size)) &&
            describe(entry, destination, out, err, err_size);
 }
 
