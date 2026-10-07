@@ -7,6 +7,7 @@
 #include <molto/util/loader.h>
 #include <molto/util/progress.h>
 #include <molto/util/sha256.h>
+#include <molto/util/thread.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -559,8 +560,8 @@ static bool ask_make(const char *name, const char *root, const recipe_build *bui
                        "tell what it compiles\n%s",
                        name, code, length > 600 ? output + length - 600 : output);
     } else if(spec.truncated) {
-        ok = set_error(err, err_size, "dependency '%s': `make -n` printed more than %zu bytes", name,
-                       DRY_RUN_MAX);
+        ok = set_error(err, err_size, "dependency '%s': `make -n` printed more than %zu bytes",
+                       name, DRY_RUN_MAX);
     } else {
         ok = compile_lines_from_make(output, root, drivers, out, err, err_size);
     }
@@ -582,21 +583,41 @@ static bool ask_cmake(const char *name, const char *root, const compile_drivers 
     return ok;
 }
 
-/* A source the build writes itself — FFmpeg 9 generates its NEON tables
-   (`ops_neon.gen.S`) with a program it compiles first — is not there after
-   configure. make is asked for each such file by its own rule, as for a
-   target, before anything compiles it. */
-static bool make_generated(const char *name, const char *root, const compile_lines *lines,
-                           char *err, size_t err_size) {
+/* Everything the build generates on the way to its objects — FFmpeg's
+   version header, the NEON tables a program it compiles first writes
+   (`ops_neon.gen.S`), the macros its x86 assembly includes — made by upstream's
+   own rules: make runs for the goals with every compiler and archiver it
+   would call replaced by `true`, so each generator runs and nothing compiles.
+   The programs it builds for itself use HOSTCC, which stays real. */
+static bool make_generated(const char *name, const char *root, const recipe_build *build,
+                           const compile_lines *lines, char *err, size_t err_size) {
+    static const char *const SILENCED[] = {"CC=true", "CXX=true",    "OBJCC=true",
+                                           "AS=true", "CCAS=true",   "X86ASM=true",
+                                           "AR=true", "RANLIB=true", "STRIP=true"};
+    const size_t silenced = sizeof SILENCED / sizeof SILENCED[0];
+    char jobs[32];
+    snprintf(jobs, sizeof jobs, "-j%zu", thread_cpu_count());
+    const char *argv[RECIPE_BUILD_MAX_GOALS + sizeof SILENCED / sizeof SILENCED[0] + 4];
+    size_t argc = 0;
+    argv[argc++] = "make";
+    argv[argc++] = jobs;
+    for(size_t i = 0; i < silenced; i++)
+        argv[argc++] = SILENCED[i];
+    for(size_t i = 0; i < build->goal_count; i++)
+        argv[argc++] = build->goals[i];
+    argv[argc] = NULL;
+    if(!run_step(argv, root, NULL, 0, name, "make", err, err_size))
+        return false;
+
     for(size_t i = 0; i < lines->count; i++) {
         char path[CONFIGURE_PATH_MAX];
         if(!fs_format_path(path, sizeof path, "%s/%s", root, lines->lines[i].source))
             return set_error(err, err_size, "the source of '%s' is too deep to read", name);
-        if(fs_path_exists(path))
-            continue;
-        const char *argv[] = {"make", lines->lines[i].source, NULL};
-        if(!run_step(argv, root, NULL, 0, name, "make", err, err_size))
-            return false;
+        if(!fs_path_exists(path))
+            return set_error(err, err_size,
+                             "dependency '%s': upstream's build compiles '%s', which its make "
+                             "did not write",
+                             name, lines->lines[i].source);
     }
     return true;
 }
@@ -635,7 +656,7 @@ bool configure_compile_lines(const char *name, const char *root, const recipe_bu
                            "dependency '%s': upstream's build compiles nothing molto recognises",
                            name);
         if(ok && build->sources == recipe_sources_make)
-            ok = make_generated(name, root, out, err, err_size);
+            ok = make_generated(name, root, build, out, err, err_size);
         if(ok && !compile_lines_write(out, sources))
             ok = set_error(err, err_size, "could not record what '%s' compiles", name);
     }

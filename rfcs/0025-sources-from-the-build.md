@@ -82,9 +82,12 @@ type = "source"
   `-MD`, `-MF`, `-MT`, `-MQ`, `-MP`), which are molto's to choose. A relative
   include (`-I.`, `-I./compat`, `-include`, NASM's `-P`) is made absolute
   against the source root. The words are split as `sh` splits them.
-- **A source the build generates** is asked of make by its own rule before
-  anything compiles it: FFmpeg 9 writes its NEON tables (`ops_neon.gen.S`)
-  with a program it compiles first.
+- **What the build generates** on the way to its objects is made by
+  upstream's own rules: make runs for the goals with every compiler and
+  archiver replaced by `true` (`CC=true AR=true …`), so each generator runs
+  and nothing compiles. FFmpeg 9 writes its NEON tables (`ops_neon.gen.S`)
+  with a program it builds with `HOSTCC`, which stays real, and the macros its
+  x86 assembly includes with the preprocessor.
 - **Kept with the configuration.** The list is written to `.molto-sources`
   beside the stamp (RFC-0009) and read back while the stamp holds; a new
   configuration reads it again.
