@@ -68,6 +68,9 @@ typedef enum {
 typedef enum {
     ir_language_c,
     ir_language_cpp,
+    /* `.S` and `.s`, assembled by the C driver, and `.asm`, by NASM
+       (RFC-0025). */
+    ir_language_asm,
 } ir_language;
 
 /* `executable`, `static`, `shared`, `object` or `test`.

@@ -1,5 +1,6 @@
 #include <molto/services/configure_service.h>
 
+#include <molto/services/compile_lines.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
 #include <molto/services/tool_service.h>
@@ -16,6 +17,11 @@
    another one configure again, and a fresh unpack starts unconfigured. */
 #define STAMP_FILE ".molto-configured"
 #define LOCK_FILE ".molto-configure.lock"
+/* What the configured build said it compiles (RFC-0025), kept while the stamp
+   holds and removed whenever configure runs again. */
+#define SOURCES_FILE ".molto-sources"
+/* Room for everything `make -n` prints. FFmpeg's is around 3 MB. */
+#define DRY_RUN_MAX ((size_t)64 * 1024 * 1024)
 
 #define CONFIGURE_PATH_MAX 4096
 /* Enough of configure's own output to show where it stopped. */
@@ -41,11 +47,22 @@ static void hash_field(sha256_state *state, const char *label, const char *value
     sha256_update(state, "\n", 1);
 }
 
-void configure_fingerprint(const recipe_build *build, const char *cc, const char *target,
-                           const configure_view *view, char hex_out[65]) {
+/* The digest, with the NASM `{nasm}` became: another assembler is another
+   answer, as another compiler is. */
+static void fingerprint_with(const recipe_build *build, const char *cc, const char *target,
+                             const configure_view *view, const char *nasm, char hex_out[65]) {
     sha256_state state;
     sha256_init(&state);
     hash_field(&state, "system", recipe_build_system_name(build->system));
+    /* Absent for a recipe that lists its own sources, so every stamp written
+       before RFC-0025 still holds. */
+    if(build->sources != recipe_sources_recipe) {
+        hash_field(&state, "sources", build->sources == recipe_sources_make ? "make" : "cmake");
+        for(size_t i = 0; i < build->goal_count; i++)
+            hash_field(&state, "goal", build->goals[i]);
+    }
+    if(nasm != NULL && nasm[0] != '\0')
+        hash_field(&state, "nasm", nasm);
     for(size_t i = 0; i < build->arg_count; i++)
         hash_field(&state, "arg", build->args[i]);
     for(size_t i = 0; i < build->env_count; i++)
@@ -67,6 +84,11 @@ void configure_fingerprint(const recipe_build *build, const char *cc, const char
     sha256_finish(&state, hex_out);
 }
 
+void configure_fingerprint(const recipe_build *build, const char *cc, const char *target,
+                           const configure_view *view, char hex_out[65]) {
+    fingerprint_with(build, cc, target, view, NULL, hex_out);
+}
+
 /* The compiler as a shell reads it: forward slashes, which MSYS2's sh takes on
    Windows and every POSIX shell takes everywhere. */
 static void shell_path(const char *path, char *out, size_t size) {
@@ -75,6 +97,107 @@ static void shell_path(const char *path, char *out, size_t size) {
         if(*c == '\\')
             *c = '/';
     }
+}
+
+/* --- placeholders (RFC-0025) --- */
+
+#define PLACEHOLDER_CC "{cc}"
+#define PLACEHOLDER_NASM "{nasm}"
+
+static bool build_mentions(const recipe_build *build, const char *placeholder) {
+    for(size_t i = 0; i < build->arg_count; i++) {
+        if(strstr(build->args[i], placeholder) != NULL)
+            return true;
+    }
+    for(size_t i = 0; i < build->env_count; i++) {
+        if(strstr(build->env[i], placeholder) != NULL)
+            return true;
+    }
+    return false;
+}
+
+/* Whether what is being configured for is x86, where an `.asm` file is
+   assembled rather than skipped. */
+static bool targets_x86(const char *target) {
+    if(target != NULL && target[0] != '\0')
+        return strncmp(target, "x86_64", 6) == 0 || strncmp(target, "amd64", 5) == 0 ||
+               strncmp(target, "i386", 4) == 0 || strncmp(target, "i686", 4) == 0;
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    return true;
+#else
+    return false;
+#endif
+}
+
+/* What `{nasm}` becomes: the NASM molto resolved, as a shell reads it, or ""
+   when the recipe never says it. A configuration for another architecture
+   never runs it, so there a missing NASM is `nasm` and not an error. */
+static bool resolve_nasm(const char *name, const recipe_build *build, const char *target, char *out,
+                         size_t size, char *err, size_t err_size) {
+    out[0] = '\0';
+    if(!build_mentions(build, PLACEHOLDER_NASM))
+        return true;
+    resolved_tool nasm;
+    char reason[512] = "";
+    if(tool_resolve_build("nasm", &nasm, reason, sizeof reason)) {
+        shell_path(nasm.path, out, size);
+        return true;
+    }
+    if(targets_x86(target))
+        return set_error(err, err_size, "dependency '%s' assembles x86 code with NASM, and %s",
+                         name, reason);
+    snprintf(out, size, "nasm");
+    return true;
+}
+
+/* `text` with every placeholder replaced, into `out`. False when the result
+   does not fit. */
+static bool expand(const char *text, const char *cc, const char *nasm, char *out, size_t size) {
+    size_t used = 0;
+    for(const char *c = text; *c != '\0';) {
+        const char *value = NULL;
+        size_t skip = 0;
+        if(strncmp(c, PLACEHOLDER_CC, strlen(PLACEHOLDER_CC)) == 0) {
+            value = cc;
+            skip = strlen(PLACEHOLDER_CC);
+        } else if(strncmp(c, PLACEHOLDER_NASM, strlen(PLACEHOLDER_NASM)) == 0) {
+            value = nasm;
+            skip = strlen(PLACEHOLDER_NASM);
+        }
+        if(value != NULL) {
+            const size_t length = strlen(value);
+            if(used + length >= size)
+                return false;
+            memcpy(out + used, value, length);
+            used += length;
+            c += skip;
+            continue;
+        }
+        if(used + 1 >= size)
+            return false;
+        out[used++] = *c++;
+    }
+    out[used] = '\0';
+    return true;
+}
+
+/* `build` with its arguments and environment expanded, into `out`. */
+static bool expand_build(const char *name, const recipe_build *build, const char *cc,
+                         const char *nasm, recipe_build *out, char *err, size_t err_size) {
+    *out = *build;
+    for(size_t i = 0; i < build->arg_count; i++) {
+        if(!expand(build->args[i], cc, nasm, out->args[i], sizeof out->args[i]))
+            return set_error(err, err_size,
+                             "dependency '%s': [build].args '%s' is too long once expanded", name,
+                             build->args[i]);
+    }
+    for(size_t i = 0; i < build->env_count; i++) {
+        if(!expand(build->env[i], cc, nasm, out->env[i], sizeof out->env[i]))
+            return set_error(err, err_size,
+                             "dependency '%s': [build].env '%s' is too long once expanded", name,
+                             build->env[i]);
+    }
+    return true;
 }
 
 /* One step, its output kept rather than shown: configure prints hundreds of
@@ -295,6 +418,9 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     argv[argc++] = d_cc;
     argv[argc++] = d_ninja;
     argv[argc++] = "-DCMAKE_BUILD_TYPE=Release";
+    /* What molto reads the list of sources from, when the recipe asks it to. */
+    if(build->sources == recipe_sources_cmake)
+        argv[argc++] = "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON";
     if(prefixes[0] != '\0')
         argv[argc++] = d_prefix;
     if(includes[0] != '\0')
@@ -316,11 +442,19 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     return ok;
 }
 
-static bool configure_now(const char *name, const char *root, const recipe_build *build,
-                          const char *cc, const char *target, const configure_view *view, char *err,
-                          size_t err_size) {
+static bool configure_now(const char *name, const char *root, const recipe_build *recipe,
+                          const char *cc, const char *target, const configure_view *view,
+                          const char *nasm, char *err, size_t err_size) {
     char cc_shell[CONFIGURE_PATH_MAX];
     shell_path(cc, cc_shell, sizeof cc_shell);
+    /* What the recipe said, with `{cc}` and `{nasm}` made into what molto
+       resolved: FFmpeg's configure takes its compiler as `--cc=` and never
+       reads CC. Static, because it is large and a configuration runs one at a
+       time under its lock. */
+    static recipe_build expanded;
+    if(!expand_build(name, recipe, cc_shell, nasm, &expanded, err, err_size))
+        return false;
+    const recipe_build *build = &expanded;
 
     /* CC first, then what the recipe asked for, which may add to it but is
        never allowed to choose another compiler: what molto compiles with and
@@ -354,12 +488,17 @@ bool configure_dependency(const char *name, const char *root, const recipe_build
     if(!recipe_build_configures(build))
         return true;
 
+    char nasm[CONFIGURE_PATH_MAX];
+    if(!resolve_nasm(name, build, target, nasm, sizeof nasm, err, err_size))
+        return false;
     char want[65];
-    configure_fingerprint(build, cc, target, view, want);
+    fingerprint_with(build, cc, target, view, nasm, want);
     char stamp[CONFIGURE_PATH_MAX];
     char lock_path[CONFIGURE_PATH_MAX];
+    char sources[CONFIGURE_PATH_MAX];
     if(!fs_format_path(stamp, sizeof stamp, "%s/" STAMP_FILE, root) ||
-       !fs_format_path(lock_path, sizeof lock_path, "%s/" LOCK_FILE, root))
+       !fs_format_path(lock_path, sizeof lock_path, "%s/" LOCK_FILE, root) ||
+       !fs_format_path(sources, sizeof sources, "%s/" SOURCES_FILE, root))
         return set_error(err, err_size, "the source of '%s' is too deep to configure", name);
 
     /* Two builds sharing the cache may reach the same source at once; the
@@ -373,9 +512,132 @@ bool configure_dependency(const char *name, const char *root, const recipe_build
     const bool configured = have != NULL && strncmp(have, want, 64) == 0;
     free(have);
     if(!configured) {
-        ok = configure_now(name, root, build, cc, target, view, err, err_size);
+        /* The list belonged to the configuration being replaced. */
+        remove(sources);
+        ok = configure_now(name, root, build, cc, target, view, nasm, err, err_size);
         if(ok && !fs_write_file(stamp, want))
             ok = set_error(err, err_size, "could not record that '%s' is configured", name);
+    }
+    fs_lock_release(&lock);
+    return ok;
+}
+
+/* --- what the configured build compiles (RFC-0025) --- */
+
+/* `make -n -B V=1 <goals>`: every line make would run, whatever the tree's
+   state, with the silent rules automake and FFmpeg use turned off. */
+static bool ask_make(const char *name, const char *root, const recipe_build *build,
+                     const compile_drivers *drivers, compile_lines *out, char *err,
+                     size_t err_size) {
+    const char *argv[RECIPE_BUILD_MAX_GOALS + 6];
+    size_t argc = 0;
+    argv[argc++] = "make";
+    argv[argc++] = "-n";
+    argv[argc++] = "-B";
+    argv[argc++] = "V=1";
+    for(size_t i = 0; i < build->goal_count; i++)
+        argv[argc++] = build->goals[i];
+    argv[argc] = NULL;
+
+    char *output = malloc(DRY_RUN_MAX);
+    if(output == NULL)
+        return set_error(err, err_size, "out of memory asking '%s' what it compiles", name);
+    output[0] = '\0';
+    process_spec spec = {
+        .stdout_to = process_stream_capture,
+        .stderr_to = process_stream_capture,
+        .capture = output,
+        .capture_size = DRY_RUN_MAX,
+        .cwd = root,
+    };
+    const int code = process_execute(argv, &spec);
+    bool ok = true;
+    if(code != 0) {
+        const size_t length = strlen(output);
+        ok = set_error(err, err_size,
+                       "dependency '%s': `make -n` failed with exit code %d, so molto cannot "
+                       "tell what it compiles\n%s",
+                       name, code, length > 600 ? output + length - 600 : output);
+    } else if(spec.truncated) {
+        ok = set_error(err, err_size, "dependency '%s': `make -n` printed more than %zu bytes", name,
+                       DRY_RUN_MAX);
+    } else {
+        ok = compile_lines_from_make(output, root, drivers, out, err, err_size);
+    }
+    free(output);
+    return ok;
+}
+
+static bool ask_cmake(const char *name, const char *root, const compile_drivers *drivers,
+                      compile_lines *out, char *err, size_t err_size) {
+    char path[CONFIGURE_PATH_MAX];
+    if(!fs_format_path(path, sizeof path, "%s/" CONFIGURE_CMAKE_DIR "/compile_commands.json", root))
+        return set_error(err, err_size, "the source of '%s' is too deep to read", name);
+    char *json = fs_read_file(path);
+    if(json == NULL)
+        return set_error(err, err_size, "dependency '%s': its CMake configuration wrote no %s",
+                         name, path);
+    const bool ok = compile_lines_from_database(json, root, drivers, out, err, err_size);
+    free(json);
+    return ok;
+}
+
+/* A source the build writes itself — FFmpeg 9 generates its NEON tables
+   (`ops_neon.gen.S`) with a program it compiles first — is not there after
+   configure. make is asked for each such file by its own rule, as for a
+   target, before anything compiles it. */
+static bool make_generated(const char *name, const char *root, const compile_lines *lines,
+                           char *err, size_t err_size) {
+    for(size_t i = 0; i < lines->count; i++) {
+        char path[CONFIGURE_PATH_MAX];
+        if(!fs_format_path(path, sizeof path, "%s/%s", root, lines->lines[i].source))
+            return set_error(err, err_size, "the source of '%s' is too deep to read", name);
+        if(fs_path_exists(path))
+            continue;
+        const char *argv[] = {"make", lines->lines[i].source, NULL};
+        if(!run_step(argv, root, NULL, 0, name, "make", err, err_size))
+            return false;
+    }
+    return true;
+}
+
+bool configure_compile_lines(const char *name, const char *root, const recipe_build *build,
+                             const char *cc, compile_lines *out, char *err, size_t err_size) {
+    if(build->sources == recipe_sources_recipe)
+        return true;
+    char sources[CONFIGURE_PATH_MAX];
+    char lock_path[CONFIGURE_PATH_MAX];
+    if(!fs_format_path(sources, sizeof sources, "%s/" SOURCES_FILE, root) ||
+       !fs_format_path(lock_path, sizeof lock_path, "%s/" LOCK_FILE, root))
+        return set_error(err, err_size, "the source of '%s' is too deep to read", name);
+
+    fs_lock lock;
+    if(!fs_lock_take(lock_path, &lock))
+        return set_error(err, err_size, "could not take the configure lock for '%s'", name);
+    bool ok = true;
+    if(!compile_lines_read(sources, out)) {
+        /* The compiler as configure was given it, and NASM if there is one:
+           the two programs whose lines are compile lines. */
+        char cc_shell[CONFIGURE_PATH_MAX];
+        shell_path(cc, cc_shell, sizeof cc_shell);
+        char nasm_shell[CONFIGURE_PATH_MAX] = "";
+        resolved_tool nasm;
+        char ignored[512];
+        if(tool_resolve_build("nasm", &nasm, ignored, sizeof ignored))
+            shell_path(nasm.path, nasm_shell, sizeof nasm_shell);
+        const compile_drivers drivers = {.cc = cc_shell,
+                                         .nasm = nasm_shell[0] != '\0' ? nasm_shell : "nasm"};
+        ok = build->sources == recipe_sources_make
+                 ? ask_make(name, root, build, &drivers, out, err, err_size)
+                 : ask_cmake(name, root, &drivers, out, err, err_size);
+        if(ok && out->count == 0)
+            ok = set_error(err, err_size,
+                           "dependency '%s': upstream's build compiles nothing molto recognises",
+                           name);
+        if(ok && build->sources == recipe_sources_make)
+            ok = make_generated(name, root, out, err, err_size);
+        if(ok && !compile_lines_write(out, sources))
+            ok = set_error(err, err_size, "could not record what '%s' compiles", name);
     }
     fs_lock_release(&lock);
     return ok;

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <molto/services/compile_lines.h>
 #include <molto/services/recipe_service.h>
 #include <molto/util/str_list.h>
 
@@ -54,6 +55,15 @@ typedef struct {
    again is testable without running it. */
 void configure_fingerprint(const recipe_build *build, const char *cc, const char *target,
                            const configure_view *view, char hex_out[65]);
+
+/* What `name`'s configured build compiles, when its recipe says to ask it
+   (`[build].sources`, RFC-0025): `make -n` or CMake's compile_commands.json,
+   read once per configuration and kept beside the stamp. Nothing, and true,
+   for a recipe that lists its own sources. Call after configure_dependency,
+   with the same compiler. */
+[[nodiscard]] bool configure_compile_lines(const char *name, const char *root,
+                                           const recipe_build *build, const char *cc,
+                                           compile_lines *out, char *err, size_t err_size);
 
 /* Where a delegated CMake configuration writes, relative to the source: what a
    recipe's include paths name for the headers it generates. */

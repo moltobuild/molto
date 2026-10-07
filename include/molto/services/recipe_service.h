@@ -34,8 +34,11 @@
 
    Schema 4 is `[artifacts.<os>]` and `[artifacts.private.<os>]`. A reader that
    predates them would build without the Windows-only `-lbcrypt` and fail at
-   the link with a message naming nobody's mistake, so it must refuse. */
-#define RECIPE_SCHEMA_MAX 4
+   the link with a message naming nobody's mistake, so it must refuse.
+
+   Schema 5 is `[build].sources` (RFC-0025). A reader that predates it would
+   find no `[artifacts].sources` and compile every file in the tarball. */
+#define RECIPE_SCHEMA_MAX 5
 
 /* The schema that introduced `[plugin]`, and the least a recipe carrying that
    table may declare.
@@ -54,6 +57,10 @@
 /* The schema that introduced the per-OS tables, and the least a recipe
    carrying one may declare. */
 #define RECIPE_SCHEMA_PER_OS 4
+
+/* The schema that introduced `[build].sources`, and the least a recipe
+   carrying it may declare. */
+#define RECIPE_SCHEMA_BUILD_SOURCES 5
 
 #define RECIPE_COORDINATE_MAX 128
 /* An upstream tarball holds far more than its library, so a recipe on one
@@ -267,10 +274,20 @@ typedef enum {
     recipe_via_delegate,
 } recipe_build_via;
 
-#define RECIPE_BUILD_MAX_ARGS 32
+/* Where the list of what to compile comes from (RFC-0025): the recipe's own
+   `[artifacts].sources`, or the compile lines of upstream's build once it is
+   configured — `make -n`, or CMake's compile_commands.json. */
+typedef enum {
+    recipe_sources_recipe,
+    recipe_sources_make,
+    recipe_sources_cmake,
+} recipe_build_sources;
+
+#define RECIPE_BUILD_MAX_ARGS 64
 #define RECIPE_BUILD_ARG_MAX 160
 #define RECIPE_BUILD_MAX_ENV 16
 #define RECIPE_BUILD_MAX_TARGETS 8
+#define RECIPE_BUILD_MAX_GOALS 16
 
 typedef struct {
     recipe_build_system system;
@@ -282,6 +299,10 @@ typedef struct {
     size_t env_count;
     char targets[RECIPE_BUILD_MAX_TARGETS][RECIPE_BUILD_ARG_MAX];
     size_t target_count;
+    recipe_build_sources sources;
+    /* What `make -n` is asked for; none is make's default goal. */
+    char goals[RECIPE_BUILD_MAX_GOALS][RECIPE_BUILD_ARG_MAX];
+    size_t goal_count;
 } recipe_build;
 
 /* True for the builds molto configures itself: autotools or cmake, delegated. */

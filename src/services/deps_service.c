@@ -40,7 +40,13 @@ void prepared_deps_init(prepared_deps *out) {
 
 void prepared_deps_free(prepared_deps *out) {
     for(size_t i = 0; i < out->unit_count; i++) {
+        if(out->units[i].source_args != NULL) {
+            for(size_t a = 0; a < str_list_count(&out->units[i].sources); a++)
+                str_list_free(&out->units[i].source_args[a]);
+            free(out->units[i].source_args);
+        }
         str_list_free(&out->units[i].sources);
+        str_list_free(&out->units[i].exclude);
         str_list_free(&out->units[i].includes);
         str_list_free(&out->units[i].defines);
         str_list_free(&out->units[i].flags);
@@ -85,6 +91,8 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     snprintf(unit->cpp_std, sizeof unit->cpp_std, "%s", node->artifacts.cpp_std);
     unit->build = node->build;
     str_list_init(&unit->sources);
+    unit->source_args = NULL;
+    str_list_init(&unit->exclude);
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);
     str_list_init(&unit->flags);
@@ -243,6 +251,12 @@ static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_
     }
     str_list_free(&reached);
 
+    /* A package whose lines come from its own build already says, line by
+       line, how each file is compiled; its interface is for its consumers.
+       On its own line `molto/include` ahead of upstream's `-I.` would find an
+       installed copy of a header whose neighbours stayed behind (RFC-0025). */
+    if(node->build.sources != recipe_sources_recipe)
+        return ok;
     return ok &&
            push_options(&node->artifacts.options, node->root, &unit->includes, &unit->defines,
                         &unit->flags, err, err_size) &&
@@ -301,8 +315,16 @@ static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps 
     if(!append_interface(out, &unit->exports, err, err_size))
         return false;
 
-    return collect_sources(artifacts, node->root, &unit->sources, err, err_size) &&
-           collect_unit(graph, node, unit, err, err_size);
+    /* A package whose build says what to compile has nothing to list until it
+       is configured; build_service fills its sources then (RFC-0025). */
+    if(node->build.sources == recipe_sources_recipe &&
+       !collect_sources(artifacts, node->root, &unit->sources, err, err_size))
+        return false;
+    for(size_t i = 0; i < artifacts->exclude_count; i++) {
+        if(!str_list_push(&unit->exclude, artifacts->exclude[i]))
+            return set_error(err, err_size, "out of memory collecting dependencies");
+    }
+    return collect_unit(graph, node, unit, err, err_size);
 }
 
 /* --- the whole graph --- */
@@ -428,6 +450,31 @@ bool deps_merge_interface(project_ctx *ctx, const prepared_deps *deps) {
                            library))
             return fs_report_long_path(library);
         ctx->target.link_count++;
+    }
+    return true;
+}
+
+bool deps_take_compile_lines(prepared_unit *unit, const compile_lines *lines, char *err,
+                             size_t err_size) {
+    unit->source_args = calloc(lines->count == 0 ? 1 : lines->count, sizeof *unit->source_args);
+    if(unit->source_args == NULL)
+        return set_error(err, err_size, "out of memory collecting dependencies");
+    for(size_t i = 0; i < lines->count; i++) {
+        const compile_line *line = &lines->lines[i];
+        bool excluded = false;
+        for(size_t e = 0; !excluded && e < str_list_count(&unit->exclude); e++)
+            excluded = strcmp(str_list_get(&unit->exclude, e), line->source) == 0;
+        if(excluded)
+            continue;
+        const size_t at = str_list_count(&unit->sources);
+        str_list *args = &unit->source_args[at];
+        str_list_init(args);
+        if(!push_rooted(&unit->sources, unit->root, line->source, err, err_size))
+            return false;
+        for(size_t a = 0; a < str_list_count(&line->args); a++) {
+            if(!str_list_push(args, str_list_get(&line->args, a)))
+                return set_error(err, err_size, "out of memory collecting dependencies");
+        }
     }
     return true;
 }
