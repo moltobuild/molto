@@ -421,6 +421,65 @@ static bool inside_source(const char *path) {
            strchr(path, '\\') == NULL;
 }
 
+/* `[build.libraries]` (RFC-0025): package = "library". Both are names, so
+   nothing in them can be read as a path or an option. */
+static bool plain_name(const char *name) {
+    if(name[0] == '\0' || name[0] == '-')
+        return false;
+    for(const char *c = name; *c != '\0'; c++) {
+        if(!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') ||
+             *c == '_' || *c == '-' || *c == '+' || *c == '.'))
+            return false;
+    }
+    return true;
+}
+
+static bool read_build_libraries(doc_view doc, recipe_build *out, char *err, size_t err_size) {
+    const char *table = BUILD_SECTION ".libraries";
+    if(!doc_has_table(doc, table)) {
+        if(doc_has_key(doc, BUILD_SECTION, "libraries"))
+            return set_error(err, err_size, "[build].libraries must be a table of strings");
+        return true;
+    }
+    long schema = 1;
+    if(!read_schema(doc, &schema, err, err_size))
+        return false;
+    if(schema < RECIPE_SCHEMA_BUILD_SOURCES)
+        return set_error(err, err_size, "[build.libraries] needs schema %d or later",
+                         RECIPE_SCHEMA_BUILD_SOURCES);
+    if(out->via != recipe_via_delegate)
+        return set_error(err, err_size,
+                         "[build.libraries] needs via = \"delegate\": it is what "
+                         "a configuration sees");
+    str_list names;
+    str_list_init(&names);
+    if(!doc_table_members(doc, table, &names)) {
+        str_list_free(&names);
+        return set_error(err, err_size, "[build.libraries] must be a table of strings");
+    }
+    bool ok = true;
+    if(str_list_count(&names) > RECIPE_BUILD_MAX_LIBRARIES)
+        ok = set_error(err, err_size, "[build.libraries] names more than %d",
+                       RECIPE_BUILD_MAX_LIBRARIES);
+    for(size_t i = 0; ok && i < str_list_count(&names); i++) {
+        recipe_build_library *library = &out->libraries[out->library_count];
+        const char *package = str_list_get(&names, i);
+        if(!plain_name(package) || strlen(package) >= sizeof library->package)
+            ok = set_error(err, err_size, "[build.libraries] names '%s', which is not a package",
+                           package);
+        else if(!doc_get_string(doc, table, package, library->library, sizeof library->library) ||
+                !plain_name(library->library))
+            ok = set_error(err, err_size,
+                           "[build.libraries].%s must name a library, as `-l` takes it", package);
+        else {
+            snprintf(library->package, sizeof library->package, "%s", package);
+            out->library_count++;
+        }
+    }
+    str_list_free(&names);
+    return ok;
+}
+
 /* `sources` and `goals` (RFC-0025): the list of what to compile, read from
    upstream's build once it is configured instead of from the recipe. */
 static bool read_build_sources(doc_view doc, recipe_build *out, char *err, size_t err_size) {
@@ -520,7 +579,8 @@ static bool read_delegation(doc_view doc, recipe_build *out, char *err, size_t e
                              "[build].targets names '%s', which is not a file inside the source",
                              out->targets[i]);
     }
-    return read_build_sources(doc, out, err, err_size);
+    return read_build_sources(doc, out, err, err_size) &&
+           read_build_libraries(doc, out, err, err_size);
 }
 
 bool recipe_read_build(doc_view doc, recipe_build *out, char *err, size_t err_size) {

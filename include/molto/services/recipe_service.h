@@ -288,6 +288,15 @@ typedef enum {
 #define RECIPE_BUILD_MAX_ENV 16
 #define RECIPE_BUILD_MAX_TARGETS 8
 #define RECIPE_BUILD_MAX_GOALS 16
+#define RECIPE_BUILD_MAX_LIBRARIES 8
+#define RECIPE_BUILD_NAME_MAX 64
+
+/* A dependency the configuration sees built, as the library its probes link:
+   zlib as `-lz` (RFC-0025). */
+typedef struct {
+    char package[RECIPE_BUILD_NAME_MAX];
+    char library[RECIPE_BUILD_NAME_MAX];
+} recipe_build_library;
 
 typedef struct {
     recipe_build_system system;
@@ -303,6 +312,10 @@ typedef struct {
     /* What `make -n` is asked for; none is make's default goal. */
     char goals[RECIPE_BUILD_MAX_GOALS][RECIPE_BUILD_ARG_MAX];
     size_t goal_count;
+    /* `[build.libraries]`: dependencies compiled and archived before
+       configure runs, so a probe that links against them finds them. */
+    recipe_build_library libraries[RECIPE_BUILD_MAX_LIBRARIES];
+    size_t library_count;
 } recipe_build;
 
 /* True for the builds molto configures itself: autotools or cmake, delegated. */

@@ -1,5 +1,6 @@
 #include <molto/services/configure_service.h>
 
+#include <molto/build/library.h>
 #include <molto/services/compile_lines.h>
 #include <molto/services/fs_service.h>
 #include <molto/services/process_service.h>
@@ -81,6 +82,13 @@ static void fingerprint_with(const recipe_build *build, const char *cc, const ch
     if(view != NULL && view->link_flags != NULL) {
         for(size_t i = 0; i < str_list_count(view->link_flags); i++)
             hash_field(&state, "link", str_list_get(view->link_flags, i));
+    }
+    /* Which libraries it saw built, and from what: their sources are under
+       their own digest-named roots, so the paths name the bytes. */
+    for(size_t i = 0; view != NULL && i < view->library_count; i++) {
+        hash_field(&state, "library", view->libraries[i].library);
+        for(size_t s = 0; s < str_list_count(view->libraries[i].sources); s++)
+            hash_field(&state, "library-source", str_list_get(view->libraries[i].sources, s));
     }
     sha256_finish(&state, hex_out);
 }
@@ -319,11 +327,104 @@ static loader *announce(const char *name, const char *how) {
     return NULL;
 }
 
+/* --- libraries a configuration sees built (RFC-0025) --- */
+
+#define LIBRARIES_DIR ".molto-libs"
+
+/* One library: each source compiled as its recipe compiles it, then archived.
+   Done once per configuration, beside it; the build proper compiles the same
+   sources again into molto's cache, as for any dependency. */
+static bool build_library(const char *name, const char *root, const char *cc,
+                          const configure_library *library, char *err, size_t err_size) {
+    char dir[CONFIGURE_PATH_MAX];
+    char archive[CONFIGURE_PATH_MAX];
+    if(!fs_format_path(dir, sizeof dir, "%s/" LIBRARIES_DIR "/%s", root, library->library) ||
+       !fs_format_path(archive, sizeof archive, "%s/" LIBRARIES_DIR "/lib%s.a", root,
+                       library->library) ||
+       !fs_make_dirs(dir))
+        return set_error(err, err_size, "dependency '%s': no room to build lib%s.a", name,
+                         library->library);
+    char archiver[CONFIGURE_PATH_MAX];
+    if(!library_archiver(cc, archiver, sizeof archiver))
+        return set_error(err, err_size, "dependency '%s': no archiver for %s", name, cc);
+
+    str_list archive_argv;
+    str_list_init(&archive_argv);
+    bool ok = str_list_push(&archive_argv, archiver) && str_list_push(&archive_argv, "rcs") &&
+              str_list_push(&archive_argv, archive);
+    for(size_t i = 0; ok && i < str_list_count(library->sources); i++) {
+        char object[CONFIGURE_PATH_MAX];
+        char std[RECIPE_STD_MAX + 8] = "";
+        if(library->std != NULL && library->std[0] != '\0')
+            snprintf(std, sizeof std, "-std=%s", library->std);
+        if(!fs_format_path(object, sizeof object, "%s/%zu.o", dir, i)) {
+            ok = set_error(err, err_size, "dependency '%s': no room to build lib%s.a", name,
+                           library->library);
+            break;
+        }
+        str_list argv;
+        str_list_init(&argv);
+        ok = str_list_push(&argv, cc) && str_list_push(&argv, "-c") &&
+             str_list_push(&argv, str_list_get(library->sources, i)) &&
+             str_list_push(&argv, "-o") && str_list_push(&argv, object);
+        if(ok && std[0] != '\0')
+            ok = str_list_push(&argv, std);
+        for(size_t d = 0; ok && d < str_list_count(library->defines); d++) {
+            char define[CONFIGURE_PATH_MAX];
+            snprintf(define, sizeof define, "-D%s", str_list_get(library->defines, d));
+            ok = str_list_push(&argv, define);
+        }
+        for(size_t d = 0; ok && d < str_list_count(library->includes); d++) {
+            char include[CONFIGURE_PATH_MAX];
+            snprintf(include, sizeof include, "-I%s", str_list_get(library->includes, d));
+            ok = str_list_push(&argv, include);
+        }
+        for(size_t d = 0; ok && d < str_list_count(library->flags); d++)
+            ok = str_list_push(&argv, str_list_get(library->flags, d));
+        const char **list = ok ? process_argv_from_list(&argv) : NULL;
+        if(list == NULL) {
+            str_list_free(&argv);
+            ok = set_error(err, err_size, "out of memory building lib%s.a", library->library);
+            break;
+        }
+        ok = run_step(list, root, NULL, 0, name, "the compiler", err, err_size) &&
+             str_list_push(&archive_argv, object);
+        free((void *)list);
+        str_list_free(&argv);
+    }
+    if(ok) {
+        (void)remove(archive);
+        const char **list = process_argv_from_list(&archive_argv);
+        ok = list != NULL && run_step(list, root, NULL, 0, name, "the archiver", err, err_size);
+        free((void *)list);
+    }
+    str_list_free(&archive_argv);
+    return ok;
+}
+
+/* Every library `view` names, built, and the `-L` that finds them. */
+static bool build_libraries(const char *name, const char *root, const char *cc,
+                            const configure_view *view, char *link_dir, size_t link_dir_size,
+                            char *err, size_t err_size) {
+    link_dir[0] = '\0';
+    if(view == NULL || view->library_count == 0)
+        return true;
+    for(size_t i = 0; i < view->library_count; i++) {
+        if(!build_library(name, root, cc, &view->libraries[i], err, err_size))
+            return false;
+    }
+    char dir[CONFIGURE_PATH_MAX];
+    if(!fs_format_path(dir, sizeof dir, "%s/" LIBRARIES_DIR, root))
+        return set_error(err, err_size, "the source of '%s' is too deep to configure", name);
+    shell_path(dir, link_dir, link_dir_size);
+    return true;
+}
+
 /* `sh ./configure <args>` in the source, then make for each target. */
 static bool configure_autotools(const char *name, const char *root, const recipe_build *build,
                                 const char *target, const configure_view *view,
-                                process_env_var *env, size_t env_count, char *err,
-                                size_t err_size) {
+                                const char *link_dir, process_env_var *env, size_t env_count,
+                                char *err, size_t err_size) {
     /* What molto resolved, visible to configure's probes as any installed
        library would be. */
     static char cppflags[VIEW_TEXT_MAX];
@@ -331,6 +432,10 @@ static bool configure_autotools(const char *name, const char *root, const recipe
     join_view(view != NULL ? view->includes : NULL, "-I", " ", as_is, cppflags, sizeof cppflags);
     join_view(view != NULL ? view->link_flags : NULL, "-L", " ", library_dir, ldflags,
               sizeof ldflags);
+    if(link_dir[0] != '\0') {
+        const size_t used = strlen(ldflags);
+        snprintf(ldflags + used, sizeof ldflags - used, "%s-L%s", used == 0 ? "" : " ", link_dir);
+    }
     if(cppflags[0] != '\0')
         env[env_count++] = (process_env_var){.name = "CPPFLAGS", .value = cppflags};
     if(ldflags[0] != '\0')
@@ -361,8 +466,8 @@ static bool configure_autotools(const char *name, const char *root, const recipe
    the recipe's arguments, then `cmake --build` for each target. Nothing else
    is built: molto compiles [artifacts] against what the configuration wrote. */
 static bool configure_cmake(const char *name, const char *root, const recipe_build *build,
-                            const char *cc, const configure_view *view, process_env_var *env,
-                            size_t env_count, char *err, size_t err_size) {
+                            const char *cc, const configure_view *view, const char *link_dir,
+                            process_env_var *env, size_t env_count, char *err, size_t err_size) {
     resolved_tool cmake;
     resolved_tool ninja;
     char reason[512] = "";
@@ -379,6 +484,10 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     join_view(view != NULL ? view->includes : NULL, "", ";", as_is, includes, sizeof includes);
     join_view(view != NULL ? view->link_flags : NULL, "", ";", library_dir, libraries,
               sizeof libraries);
+    if(link_dir[0] != '\0') {
+        const size_t used = strlen(libraries);
+        snprintf(libraries + used, sizeof libraries - used, "%s%s", used == 0 ? "" : ";", link_dir);
+    }
     /* Every include directory, to every compile a check makes. A find module
        hands its checks one directory (OPENSSL_INCLUDE_DIR) and a package may
        need two: Debian keeps opensslconf.h under usr/include/<multiarch>,
@@ -478,9 +587,16 @@ static bool configure_now(const char *name, const char *root, const recipe_build
         env[env_count++] = (process_env_var){.name = names[i], .value = equals + 1};
     }
 
+    /* What it is to see built, built first. */
+    char link_dir[CONFIGURE_PATH_MAX];
+    if(!build_libraries(name, root, cc, view, link_dir, sizeof link_dir, err, err_size))
+        return false;
+
     if(build->system == recipe_build_cmake)
-        return configure_cmake(name, root, build, cc, view, env, env_count, err, err_size);
-    return configure_autotools(name, root, build, target, view, env, env_count, err, err_size);
+        return configure_cmake(name, root, build, cc, view, link_dir, env, env_count, err,
+                               err_size);
+    return configure_autotools(name, root, build, target, view, link_dir, env, env_count, err,
+                               err_size);
 }
 
 bool configure_dependency(const char *name, const char *root, const recipe_build *build,

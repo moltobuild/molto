@@ -80,6 +80,9 @@ typedef struct {
     str_list *source_args;
     /* `[artifacts].exclude`, applied to a list read from the build. */
     str_list exclude;
+    /* Every package this one reaches, nearest first: what a configuration may
+       be shown built (`[build.libraries]`, RFC-0025). */
+    str_list reaches;
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */

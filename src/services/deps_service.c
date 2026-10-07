@@ -47,6 +47,7 @@ void prepared_deps_free(prepared_deps *out) {
         }
         str_list_free(&out->units[i].sources);
         str_list_free(&out->units[i].exclude);
+        str_list_free(&out->units[i].reaches);
         str_list_free(&out->units[i].includes);
         str_list_free(&out->units[i].defines);
         str_list_free(&out->units[i].flags);
@@ -93,6 +94,7 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     str_list_init(&unit->sources);
     unit->source_args = NULL;
     str_list_init(&unit->exclude);
+    str_list_init(&unit->reaches);
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);
     str_list_init(&unit->flags);
@@ -240,7 +242,7 @@ static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_
         return set_error(err, err_size, "out of memory collecting dependencies");
     }
 
-    bool ok = true;
+    bool ok = append_list(&unit->reaches, &reached, err, err_size);
     for(size_t i = 0; ok && i < str_list_count(&reached); i++) {
         const dep_node *other = dep_graph_find(graph, str_list_get(&reached, i));
         if(other != NULL && other->answer != NULL)

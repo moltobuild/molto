@@ -662,6 +662,25 @@ DESCRIBE(sources_from_the_build_need_schema_5) {
     EXPECT_NOT_NULL(strstr(err, "schema 5"));
 }
 
+/* FFmpeg's: zlib built before configure, as the -lz its probe links. */
+DESCRIBE(a_configuration_may_see_a_dependency_built) {
+    recipe_build build;
+    char err[256] = "";
+    ASSERT_TRUE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                              "libraries = { zlib = \"z\" }\n",
+                              &build, err, sizeof err));
+    ASSERT_EQ(1u, build.library_count);
+    EXPECT_STREQ("zlib", build.libraries[0].package);
+    EXPECT_STREQ("z", build.libraries[0].library);
+
+    EXPECT_FALSE(read_build_of("[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "libraries = { zlib = \"z\" }\n",
+                               &build, err, sizeof err));
+    EXPECT_FALSE(read_build_of("schema = 5\n[build]\nsystem = \"autotools\"\nvia = \"delegate\"\n"
+                               "libraries = { zlib = \"-lz\" }\n",
+                               &build, err, sizeof err));
+}
+
 DESCRIBE(sources_from_the_build_are_refused_where_they_cannot_be_answered) {
     recipe_build build;
     char err[256] = "";

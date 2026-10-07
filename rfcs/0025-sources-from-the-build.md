@@ -142,15 +142,29 @@ Today a delegated configure runs before any dependency compiles, so a probe
 that links (`check_lib zlib zlib.h zlibVersion -lz`) fails and the recipe has
 to turn the feature off. For FFmpeg that means no PNG.
 
-Now a delegated package's source dependencies are compiled first, each
-archived as `lib<name>.a` in a directory of the build, and that directory
-reaches configure as an `-L` with the package's includes, as RFC-0009 already
-does for platform packages. The rest of the build then proceeds as before; the
-objects are the same ones, taken from the cache.
+Now a recipe names the dependencies its configuration should see built, and
+the library name its probes link them by:
+
+```toml
+[build]
+libraries = { zlib = "z" }
+
+[deps]
+zlib = "1.3.1"
+```
+
+Before configure runs, molto compiles each one's sources as its recipe
+compiles them, archives them as `lib<library>.a` in `.molto-libs` beside the
+configuration, and adds that directory to what configure sees (`LDFLAGS` for
+autotools, `CMAKE_LIBRARY_PATH` for CMake), its includes already being there
+(RFC-0009). A package named here must be one the recipe depends on and that
+molto compiles from a recipe's own sources. The archive is for the probes
+only: the build proper compiles and links the dependency as it always has.
+Which libraries were built, and from which sources, is part of the stamp.
 
 ### Schema
 
-`[build].sources` and `[build].goals` are schema 5. A reader that predates
+`[build].sources`, `[build].goals` and `[build.libraries]` are schema 5. A reader that predates
 them would find no `[artifacts].sources`, compile every file in the tarball,
 and fail far from the cause, so it must refuse.
 

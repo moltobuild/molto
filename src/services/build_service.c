@@ -411,6 +411,42 @@ static int frontend_exit_code(frontend_result answer) {
                              chain_out);
 }
 
+/* The packages `unit`'s configuration sees built (`[build.libraries]`), from
+   the units this build prepared. A package it names but does not reach, or
+   one that is not compiled from sources, is an error naming the recipe. */
+[[nodiscard]] static bool libraries_for(const prepared_unit *unit, prepared_deps *const sets[],
+                                        size_t set_count, configure_library *out, char *err,
+                                        size_t err_size) {
+    for(size_t l = 0; l < unit->build.library_count; l++) {
+        const recipe_build_library *wanted = &unit->build.libraries[l];
+        const prepared_unit *found = NULL;
+        bool reached = false;
+        for(size_t r = 0; r < str_list_count(&unit->reaches); r++)
+            reached = reached || strcmp(str_list_get(&unit->reaches, r), wanted->package) == 0;
+        for(size_t s = 0; reached && found == NULL && s < set_count; s++) {
+            for(size_t i = 0; found == NULL && i < sets[s]->unit_count; i++) {
+                if(strcmp(sets[s]->units[i].name, wanted->package) == 0)
+                    found = &sets[s]->units[i];
+            }
+        }
+        if(found == NULL || found->system || str_list_count(&found->sources) == 0 ||
+           found->source_args != NULL) {
+            snprintf(err, err_size,
+                     "dependency '%s': [build.libraries] names '%s', which is not a package "
+                     "it depends on that molto compiles from a recipe's own sources",
+                     unit->name, wanted->package);
+            return false;
+        }
+        out[l] = (configure_library){.library = wanted->library,
+                                     .sources = &found->sources,
+                                     .includes = &found->includes,
+                                     .defines = &found->defines,
+                                     .flags = &found->flags,
+                                     .std = found->std};
+    }
+    return true;
+}
+
 /* What a configured package's build says it compiles, as its sources
    (RFC-0025), and NASM resolved the first time one of them is `.asm`. */
 [[nodiscard]] static bool take_what_it_compiles(prepared_unit *unit, resolved_toolchain *chain,
@@ -485,8 +521,16 @@ static int frontend_exit_code(frontend_result answer) {
         for(size_t i = 0; i < sets[s]->unit_count; i++) {
             prepared_unit *unit = &sets[s]->units[i];
             char configure_err[2048] = "";
+            configure_library libraries[RECIPE_BUILD_MAX_LIBRARIES];
+            if(!libraries_for(unit, sets, sizeof sets / sizeof sets[0], libraries, configure_err,
+                              sizeof configure_err)) {
+                fprintf(stderr, "molto: %s\n", configure_err);
+                return exit_dependency_failure;
+            }
             const configure_view view = {.includes = &unit->includes,
-                                         .link_flags = &sets[s]->link_flags};
+                                         .link_flags = &sets[s]->link_flags,
+                                         .libraries = libraries,
+                                         .library_count = unit->build.library_count};
             if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
                                      &view, configure_err, sizeof configure_err) ||
                !take_what_it_compiles(unit, chain_out, configure_err, sizeof configure_err)) {

@@ -36,9 +36,24 @@
    CMAKE_PREFIX_PATH of each include directory's parent, which is what its
    find modules search (OpenSSL's, for libwebsockets). Either list may be
    NULL. */
+/* A dependency the configuration sees built (`[build.libraries]`, RFC-0025):
+   its sources, compiled as its own recipe compiles them and archived as
+   `lib<library>.a` in the configured source's `.molto-libs`, whose directory
+   reaches configure as an `-L`. */
+typedef struct {
+    const char *library; /* the `-l` name a probe links: `z` for zlib */
+    const str_list *sources;
+    const str_list *includes;
+    const str_list *defines;
+    const str_list *flags;
+    const char *std; /* "" for the compiler's */
+} configure_library;
+
 typedef struct {
     const str_list *includes;
     const str_list *link_flags;
+    const configure_library *libraries;
+    size_t library_count;
 } configure_view;
 
 /* Configure `name`'s source at `root` for the compiler `cc`, or do nothing if

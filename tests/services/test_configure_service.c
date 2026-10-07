@@ -211,6 +211,40 @@ DESCRIBE(a_build_that_compiles_nothing_recognisable_is_an_error) {
     (void)fs_remove_tree(at.root);
 }
 
+/* zlib's part, as FFmpeg's configure needs it: archived, and on LDFLAGS. */
+DESCRIBE(a_library_the_configuration_sees_is_built_first) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/configure", at.root);
+    ASSERT_TRUE(fs_write_file(file, "echo \"$LDFLAGS\" > ldflags.txt\n"));
+    char zsource[PATH_MAX_LEN];
+    snprintf(zsource, sizeof zsource, "%s/a.c", at.root);
+
+    str_list sources, none;
+    str_list_init(&sources);
+    str_list_init(&none);
+    ASSERT_TRUE(str_list_push(&sources, zsource));
+    const configure_library library = {
+        .library = "z", .sources = &sources, .includes = &none, .defines = &none, .flags = &none,
+        .std = ""};
+    const configure_view view = {.libraries = &library, .library_count = 1};
+    recipe_build build = delegated();
+    build.target_count = 0;
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, &view, err, sizeof err));
+
+    snprintf(file, sizeof file, "%s/.molto-libs/libz.a", at.root);
+    EXPECT_TRUE(fs_path_exists(file));
+    snprintf(file, sizeof file, "%s/ldflags.txt", at.root);
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    EXPECT_NOT_NULL(strstr(text, ".molto-libs"));
+    free(text);
+    str_list_free(&sources);
+    (void)fs_remove_tree(at.root);
+}
+
 /* --- a delegated CMake --- */
 
 #ifndef _WIN32
