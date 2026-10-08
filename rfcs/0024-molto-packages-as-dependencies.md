@@ -319,7 +319,6 @@ Acceptance coverage lives in `tests/services/test_package_service.c`:
 - [x] Entry archives support consumers and test binaries with their own main.
 - [x] Two entries are refused; author assembly uses tracked files and rejects missing headers.
 
-Ecosystem migration remains pending: the currently pinned moltest, coverage and
-mock releases carry both descriptions. New releases must remove their recipes
-before this repository's pins can move to compatible tags. Those repositories
-and releases are outside this implementation.
+Ecosystem migration PRs remove the carried recipes from moltest, coverage and
+mock. This repository pins their immutable migrated revisions while compatible
+release tags are pending. Replace the revision pins after those releases.

@@ -61,9 +61,8 @@ configuration and catches headers which were available only in the checkout.
 
 Existing recipe-based dependencies remain supported when their source carries
 only `recipe.toml`. Libraries carrying both descriptions need a new release
-which removes the recipe and declares its public interface. In particular,
-Molto's currently pinned test-framework tags need that migration before the
-ordinary `molto test` command can resolve them with this reader.
+which removes the recipe and declares its public interface. Molto pins immutable migrated revisions of its test frameworks until
+compatible release tags are published.
 
 See [RFC-0024](../rfcs/0024-molto-packages-as-dependencies.md) for the checklist
 and ecosystem migration sequence.
