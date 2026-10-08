@@ -245,6 +245,55 @@ DESCRIBE(a_library_the_configuration_sees_is_built_first) {
     (void)fs_remove_tree(at.root);
 }
 
+/* xz's part: a library whose own build said what it compiles is compiled with
+   those lines, not with a recipe's lists. */
+DESCRIBE(a_library_read_from_its_build_is_compiled_with_its_own_lines) {
+    sandbox at;
+    ASSERT_TRUE(make_buildable(&at));
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/configure", at.root);
+    ASSERT_TRUE(fs_write_file(file, "echo \"$CPPFLAGS\" > cppflags.txt\n"));
+    char source[PATH_MAX_LEN];
+    snprintf(source, sizeof source, "%s/needs.c", at.root);
+    ASSERT_TRUE(fs_write_file(source, "#ifndef FROM_ITS_LINE\n#error not its line\n#endif\n"
+                                      "int needs(void) { return 1; }\n"));
+
+    str_list sources, none, defines;
+    str_list_init(&sources);
+    str_list_init(&none);
+    str_list_init(&defines);
+    ASSERT_TRUE(str_list_push(&sources, source));
+    ASSERT_TRUE(str_list_push(&defines, "LZMA_API_STATIC"));
+    str_list args[1];
+    str_list_init(&args[0]);
+    ASSERT_TRUE(str_list_push(&args[0], "-DFROM_ITS_LINE"));
+    const configure_library library = {.library = "lzma",
+                                       .sources = &sources,
+                                       .includes = &none,
+                                       .defines = &none,
+                                       .flags = &none,
+                                       .std = "",
+                                       .source_args = args};
+    const configure_view view = {.defines = &defines, .libraries = &library, .library_count = 1};
+    recipe_build build = delegated();
+    build.target_count = 0;
+    char err[512] = "";
+    ASSERT_TRUE(configure_dependency("fake", at.root, &build, "cc", NULL, &view, err, sizeof err));
+    snprintf(file, sizeof file, "%s/.molto-libs/liblzma.a", at.root);
+    EXPECT_TRUE(fs_path_exists(file));
+    /* What its dependencies define reaches the probes, as the build reads it. */
+    snprintf(file, sizeof file, "%s/cppflags.txt", at.root);
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    EXPECT_NOT_NULL(strstr(text, "-DLZMA_API_STATIC"));
+    free(text);
+
+    str_list_free(&args[0]);
+    str_list_free(&sources);
+    str_list_free(&defines);
+    (void)fs_remove_tree(at.root);
+}
+
 /* --- a delegated CMake --- */
 
 #ifndef _WIN32

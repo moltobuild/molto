@@ -95,6 +95,7 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     unit->source_args = NULL;
     str_list_init(&unit->exclude);
     str_list_init(&unit->reaches);
+    unit->configured = false;
     str_list_init(&unit->includes);
     str_list_init(&unit->defines);
     str_list_init(&unit->flags);

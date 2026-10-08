@@ -411,29 +411,42 @@ static int frontend_exit_code(frontend_result answer) {
                              chain_out);
 }
 
+/* The unit named `name` among the ones this build prepared, or NULL. */
+static prepared_unit *unit_named(prepared_deps *const sets[], size_t set_count, const char *name) {
+    for(size_t s = 0; s < set_count; s++) {
+        for(size_t i = 0; i < sets[s]->unit_count; i++) {
+            if(strcmp(sets[s]->units[i].name, name) == 0)
+                return &sets[s]->units[i];
+        }
+    }
+    return NULL;
+}
+
+/* The package `unit`'s `[build.libraries]` entry `wanted` names, if `unit`
+   reaches it and molto compiles it; NULL otherwise. */
+static prepared_unit *library_unit(const prepared_unit *unit, const recipe_build_library *wanted,
+                                   prepared_deps *const sets[], size_t set_count) {
+    bool reached = false;
+    for(size_t r = 0; r < str_list_count(&unit->reaches); r++)
+        reached = reached || strcmp(str_list_get(&unit->reaches, r), wanted->package) == 0;
+    prepared_unit *found = reached ? unit_named(sets, set_count, wanted->package) : NULL;
+    return found != NULL && !found->system ? found : NULL;
+}
+
 /* The packages `unit`'s configuration sees built (`[build.libraries]`), from
-   the units this build prepared. A package it names but does not reach, or
-   one that is not compiled from sources, is an error naming the recipe. */
+   the units this build prepared — each already configured, so its sources
+   are known. A package it names but does not reach, or one molto does not
+   compile, is an error naming the recipe. */
 [[nodiscard]] static bool libraries_for(const prepared_unit *unit, prepared_deps *const sets[],
                                         size_t set_count, configure_library *out, char *err,
                                         size_t err_size) {
     for(size_t l = 0; l < unit->build.library_count; l++) {
         const recipe_build_library *wanted = &unit->build.libraries[l];
-        const prepared_unit *found = NULL;
-        bool reached = false;
-        for(size_t r = 0; r < str_list_count(&unit->reaches); r++)
-            reached = reached || strcmp(str_list_get(&unit->reaches, r), wanted->package) == 0;
-        for(size_t s = 0; reached && found == NULL && s < set_count; s++) {
-            for(size_t i = 0; found == NULL && i < sets[s]->unit_count; i++) {
-                if(strcmp(sets[s]->units[i].name, wanted->package) == 0)
-                    found = &sets[s]->units[i];
-            }
-        }
-        if(found == NULL || found->system || str_list_count(&found->sources) == 0 ||
-           found->source_args != NULL) {
+        const prepared_unit *found = library_unit(unit, wanted, sets, set_count);
+        if(found == NULL || str_list_count(&found->sources) == 0) {
             snprintf(err, err_size,
                      "dependency '%s': [build.libraries] names '%s', which is not a package "
-                     "it depends on that molto compiles from a recipe's own sources",
+                     "it depends on that molto compiles",
                      unit->name, wanted->package);
             return false;
         }
@@ -442,7 +455,22 @@ static int frontend_exit_code(frontend_result answer) {
                                      .includes = &found->includes,
                                      .defines = &found->defines,
                                      .flags = &found->flags,
-                                     .std = found->std};
+                                     .std = found->std,
+                                     .source_args = found->source_args};
+    }
+    return true;
+}
+
+/* What the packages `unit` reaches define for their consumers, as its
+   configuration should read their headers. */
+[[nodiscard]] static bool reached_defines(const prepared_unit *unit, prepared_deps *const sets[],
+                                          size_t set_count, str_list *out) {
+    for(size_t r = 0; r < str_list_count(&unit->reaches); r++) {
+        const prepared_unit *other = unit_named(sets, set_count, str_list_get(&unit->reaches, r));
+        for(size_t d = 0; other != NULL && d < str_list_count(&other->exports.defines); d++) {
+            if(!str_list_push(out, str_list_get(&other->exports.defines, d)))
+                return false;
+        }
     }
     return true;
 }
@@ -472,6 +500,43 @@ static int frontend_exit_code(frontend_result answer) {
             snprintf(chain->nasm, sizeof chain->nasm, "%s", nasm.path);
         }
     }
+    return ok;
+}
+
+/* Configure `unit` and read what it compiles, once. The packages its
+   configuration sees built are configured first: their sources, and for a
+   package whose own build lists them, their lines, have to be known before
+   they can be compiled for it. */
+[[nodiscard]] static bool configure_unit(prepared_unit *unit, prepared_deps *const sets[],
+                                         size_t set_count, const str_list *link_flags,
+                                         resolved_toolchain *chain, const char *platform, char *err,
+                                         size_t err_size) {
+    if(unit->configured)
+        return true;
+    unit->configured = true;
+    for(size_t l = 0; l < unit->build.library_count; l++) {
+        prepared_unit *library = library_unit(unit, &unit->build.libraries[l], sets, set_count);
+        if(library != NULL &&
+           !configure_unit(library, sets, set_count, link_flags, chain, platform, err, err_size))
+            return false;
+    }
+    configure_library libraries[RECIPE_BUILD_MAX_LIBRARIES];
+    if(!libraries_for(unit, sets, set_count, libraries, err, err_size))
+        return false;
+    str_list defines;
+    str_list_init(&defines);
+    bool ok = reached_defines(unit, sets, set_count, &defines);
+    const configure_view view = {.includes = &unit->includes,
+                                 .defines = &defines,
+                                 .link_flags = link_flags,
+                                 .libraries = libraries,
+                                 .library_count = unit->build.library_count,
+                                 .cxx = chain->cxx};
+    ok = ok &&
+         configure_dependency(unit->name, unit->root, &unit->build, chain->cc, platform, &view, err,
+                              err_size) &&
+         take_what_it_compiles(unit, chain, err, err_size);
+    str_list_free(&defines);
     return ok;
 }
 
@@ -519,22 +584,10 @@ static int frontend_exit_code(frontend_result answer) {
     prepared_deps *sets[] = {&plan->deps, &plan->dev};
     for(size_t s = 0; s < sizeof sets / sizeof sets[0]; s++) {
         for(size_t i = 0; i < sets[s]->unit_count; i++) {
-            prepared_unit *unit = &sets[s]->units[i];
             char configure_err[2048] = "";
-            configure_library libraries[RECIPE_BUILD_MAX_LIBRARIES];
-            if(!libraries_for(unit, sets, sizeof sets / sizeof sets[0], libraries, configure_err,
-                              sizeof configure_err)) {
-                fprintf(stderr, "molto: %s\n", configure_err);
-                return exit_dependency_failure;
-            }
-            const configure_view view = {.includes = &unit->includes,
-                                         .link_flags = &sets[s]->link_flags,
-                                         .libraries = libraries,
-                                         .library_count = unit->build.library_count,
-                                         .cxx = chain_out->cxx};
-            if(!configure_dependency(unit->name, unit->root, &unit->build, chain_out->cc, platform,
-                                     &view, configure_err, sizeof configure_err) ||
-               !take_what_it_compiles(unit, chain_out, configure_err, sizeof configure_err)) {
+            if(!configure_unit(&sets[s]->units[i], sets, sizeof sets / sizeof sets[0],
+                               &sets[s]->link_flags, chain_out, platform, configure_err,
+                               sizeof configure_err)) {
                 fprintf(stderr, "molto: %s\n", configure_err);
                 return exit_dependency_failure;
             }

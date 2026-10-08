@@ -47,10 +47,18 @@ typedef struct {
     const str_list *defines;
     const str_list *flags;
     const char *std; /* "" for the compiler's */
+    /* Upstream's arguments for each of `sources` when the package's own build
+       said what it compiles (RFC-0025): used instead of the four above. NULL
+       otherwise. */
+    const str_list *source_args;
 } configure_library;
 
 typedef struct {
     const str_list *includes;
+    /* What its dependencies define for their consumers — `BZ_EXPORT`,
+       `LZMA_API_STATIC` on Windows — so a probe reads their headers as the
+       build will. autotools gets them in CPPFLAGS. May be NULL. */
+    const str_list *defines;
     const str_list *link_flags;
     const configure_library *libraries;
     size_t library_count;
