@@ -949,6 +949,8 @@ package should be one, and should publish as `kind = "package"` with a real
 
 ## Related RFCs
 
+- [RFC-0024: Molto Packages as Dependencies](0024-molto-packages-as-dependencies.md) — manifest interfaces, carried descriptions and author validation
+
 - [RFC-0001: Manifesto](0001-manifesto.md) — why a recipe names a build system instead of inventing one
 - [RFC-0002: CLI Specification](0002-cli-specification.md) — `molto publish`, which reads a recipe
 - [RFC-0003: Project Manifest](0003-project-manifest.md) — the `[deps]` syntax a recipe reuses, and the reserved metadata keys `[about]` mirrors

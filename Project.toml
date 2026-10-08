@@ -60,12 +60,12 @@ replaces = ["src/services/resolve_service.c", "src/services/source_service.c"]
 # by molto: the bootstrap Makefile builds the first molto and nothing else, and
 # its `test` and `coverage` targets hand over to it.
 [dev-deps]
-moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
+moltest = { git = "https://github.com/moltobuild/moltest", rev = "9e0611007d3b1ccebd589273dd14a7a229265c3c" }
 # The coverage report and its floor (moltest-coverage.toml), at the end of
 # `molto test --profile coverage` (RFC-0019).
-moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.2.1" }
+moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", rev = "89186fcc19fc9d7389be331a0df3b9bf4e30259e" }
 # Fakes for the isolated tests below, the ones that replace a source (RFC-0021).
-moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.4.0" }
+moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", rev = "4c168f5dd691f270fe5b4eb78416a2fc0754cfe3" }
 
 [profile.debug]
 opt_level = 0

@@ -217,6 +217,13 @@ disabled, or bypassed entirely with `--token` for non-interactive use;
 Publishes the current package to a configured registry (public or private,
 see `spec.md` sections 15–16). Requires a stored credential from `molto login`.
 
+### `molto package [--list]`
+
+Validates a library manifest and assembles its tracked consumer files in
+`build/package/<name>-<version>/`. `--list` prints the selected files; otherwise
+Molto also builds a consumer of the assembled copy. Required checklist failures
+and build failures return non-zero. See RFC-0024 for the shared checklist.
+
 ### `molto update`
 
 Asks the registry for newer releases of the declared dependencies, reports what
@@ -314,6 +321,8 @@ A caller that needs to distinguish Molto's failures from the program's should
 run `molto build` first and then the executable directly.
 
 ## Related RFCs
+
+- [RFC-0024: Molto Packages as Dependencies](0024-molto-packages-as-dependencies.md) — manifest interfaces, carried descriptions and author validation
 
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0003: Project Manifest](0003-project-manifest.md)

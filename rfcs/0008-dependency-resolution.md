@@ -103,6 +103,16 @@ A URL to a source archive. Because a URL can serve different bytes tomorrow, an
 archive dependency **MUST** carry a checksum; without one there is no difference
 between "the upstream re-rolled the tarball" and "someone replaced it".
 
+### Carried descriptions and pruning
+
+A `git`, `archive` or `path` source carries exactly one of `recipe.toml` and
+`Project.toml` at its root. A manifest derives its source artifacts and public
+interface under RFC-0024; both descriptions together, or neither, are errors.
+Manifest git/archive packages are pruned before installation using RFC-0024's
+allowlist and a versioned completion stamp. Path and recipe-directed sources
+remain complete. Git fetches the resolved commit at depth one, with a full-clone
+fallback when necessary.
+
 ### `recipe`, withdrawn
 
 There was a fifth source: a recipe name resolved through a registry, written for
@@ -586,6 +596,8 @@ system rather than a script.
   lock file. Reserved by RFC-0004 for the same reason.
 
 ## Related RFCs
+
+- [RFC-0024: Molto Packages as Dependencies](0024-molto-packages-as-dependencies.md) — manifest interfaces, carried descriptions and author validation
 
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0002: CLI Specification](0002-cli-specification.md) — `add`, `remove`, `update`, and exit code 3 for a failed resolution

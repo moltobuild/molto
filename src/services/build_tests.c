@@ -82,7 +82,8 @@ static bool link_one_test(const test_link_context *context, const str_list *obje
     /* No library names: a test binary is an executable, and the only thing they
        carry is the name to record inside a shared library. */
     if(!build_link_project(cpp, objects, binary, node, NULL, &context->ctx->env, context->chain,
-                           context->force, context->db, context->root, context->report))
+                           context->force, context->db, context->root, context->report,
+                           context->plan))
         return false;
     return str_list_push(binaries_out, binary);
 }
@@ -238,7 +239,10 @@ static bool is_test_file(const char *root, const char *source) {
         ok = str_list_push(&link_objects, str_list_get(context->lib_objects, i));
     for(size_t i = 0; ok && i < context->dev_start; i++) {
         const char *kept = str_list_get(context->lib_objects, i);
-        if(!list_holds(&replaced, kept))
+        size_t length = strlen(kept);
+        if(length >= 8 && !strcmp(kept + length - 8, ".entry.a"))
+            ok = str_list_push(&link_objects, kept);
+        else if(!list_holds(&replaced, kept))
             ok = str_list_push(&archived, kept);
     }
     if(ok && str_list_count(&archived) > 0)
@@ -609,13 +613,18 @@ int build_tests_with(const char *root, build_profile profile, const char *platfo
         result = build_run_plan(&plan, report, &any_compiled);
     }
 
+    str_list link_objects;
+    str_list_init(&link_objects);
+    if(result == exit_ok && !build_entry_objects(&plan, &lib_objects, &link_objects, report))
+        result = exit_build_failure;
     if(result == exit_ok)
-        result = link_the_suite(root, profile_dir, &ctx, &chain, &plan, &lib_objects, dev_start,
+        result = link_the_suite(root, profile_dir, &ctx, &chain, &plan, &link_objects, dev_start,
                                 &test_objects, any_compiled, db, report, test_binaries_out);
 
     if(result == exit_ok)
         prune_what_a_deleted_test_left(db, root, profile_dir, &test_objects, test_binaries_out);
 
+    str_list_free(&link_objects);
     return finish_tests(result, &plan, options.cdb, root, &objects, &lib_objects, &test_objects,
                         db);
 }

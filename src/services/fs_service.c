@@ -291,7 +291,17 @@ bool fs_make_dirs(const char *path) {
 bool fs_remove_tree(const char *path) {
     if(!fs_is_dir_no_follow(path)) {
         /* A file, a symlink, or nothing at all. */
-        return remove(path) == 0 || !fs_path_exists(path);
+        if(remove(path) == 0 || !fs_path_exists(path))
+            return true;
+#ifdef _WIN32
+        /* Git marks object files read-only. Windows refuses to remove them
+           until that attribute is cleared, unlike POSIX directory unlinking. */
+        DWORD attributes = GetFileAttributesA(path);
+        if(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) &&
+           SetFileAttributesA(path, attributes & ~FILE_ATTRIBUTE_READONLY))
+            return remove(path) == 0;
+#endif
+        return false;
     }
     DIR *dir = opendir(path);
     if(dir == NULL)

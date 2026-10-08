@@ -1,3 +1,4 @@
+#include <molto/services/package_service.h>
 #include <molto/services/source_service.h>
 
 #include <molto/services/fs_service.h>
@@ -395,15 +396,27 @@ static bool stamp_path(const char *directory, char *out, size_t size) {
     return fs_format_path(out, size, "%s/%s", directory, STAMP_FILE);
 }
 
-static bool is_complete(const char *directory) {
+static bool is_complete(const char *directory, bool carried) {
     char stamp[SOURCE_PATH_MAX];
-    return stamp_path(directory, stamp, sizeof stamp) && fs_path_exists(stamp);
+    if(!stamp_path(directory, stamp, sizeof stamp) || !fs_path_exists(stamp))
+        return false;
+    if(!carried)
+        return true;
+    char manifest[SOURCE_PATH_MAX];
+    if(!fs_format_path(manifest, sizeof manifest, "%s/Project.toml", directory))
+        return false;
+    if(!fs_path_exists(manifest))
+        return true;
+    char *text = fs_read_file(stamp);
+    bool ok = text && strcmp(text, PACKAGE_PRUNE_STAMP) == 0;
+    free(text);
+    return ok;
 }
 
 bool source_is_cached(const char *name, const char *version, const char *target) {
     char directory[SOURCE_PATH_MAX];
     return source_cache_path(name, version, target, directory, sizeof directory) &&
-           is_complete(directory);
+           is_complete(directory, false);
 }
 
 /* --- running the tools --- */
@@ -638,12 +651,25 @@ static bool download(const char *url, const char *into, char *err, size_t err_si
 }
 
 static bool clone(const source_spec *spec, const char *into, char *err, size_t err_size) {
-    const char *clone_argv[] = {"git", "clone", "--quiet", spec->location, into, NULL};
+    if(*spec->reference) {
+        const char *init[] = {"git", "init", "--quiet", into, NULL};
+        const char *fetch[] = {"git", "-C", into,           "fetch",         "--quiet", "--depth",
+                               "1",   "--", spec->location, spec->reference, NULL};
+        const char *checkout[] = {"git",     "-C",       into,         "checkout",
+                                  "--quiet", "--detach", "FETCH_HEAD", NULL};
+        char ignored[512];
+        if(process_capture_all(init, NULL, 0, ignored, sizeof ignored, NULL) == 0 &&
+           process_capture_all(fetch, NULL, 0, ignored, sizeof ignored, NULL) == 0 &&
+           process_capture_all(checkout, NULL, 0, ignored, sizeof ignored, NULL) == 0)
+            return true;
+        if(!fs_remove_tree(into))
+            return fail(err, err_size, "could not clear the shallow fetch before falling back");
+    }
+    const char *clone_argv[] = {"git", "clone", "--quiet", "--", spec->location, into, NULL};
     if(!run(clone_argv, err, err_size, "git clone"))
         return false;
-    if(spec->reference[0] == '\0')
+    if(!*spec->reference)
         return true;
-
     const char *checkout_argv[] = {"git", "-C", into, "checkout", "--quiet", spec->reference, NULL};
     return run(checkout_argv, err, err_size, "git checkout");
 }
@@ -697,14 +723,16 @@ static bool assemble(const source_spec *spec, const char *work, char *root, size
 
 /* The fetched tree replaces whatever was at `destination`, in one rename, so
    no reader ever sees a directory being filled. */
-static bool install(const char *root, const char *destination, char *err, size_t err_size) {
+static bool install(const char *root, const char *destination, bool carried, char *err,
+                    size_t err_size) {
     if(!fs_remove_tree(destination))
         return fail_about(err, err_size, "could not clear", destination);
     if(rename(root, destination) != 0)
         return fail_about(err, err_size, "could not move the fetched source into", destination);
 
     char stamp[SOURCE_PATH_MAX];
-    if(!stamp_path(destination, stamp, sizeof stamp) || !fs_write_file(stamp, "ok\n"))
+    if(!stamp_path(destination, stamp, sizeof stamp) ||
+       !fs_write_file(stamp, carried ? PACKAGE_PRUNE_STAMP : "ok\n"))
         return fail(err, err_size, "could not record that the fetch completed");
     return true;
 }
@@ -750,8 +778,9 @@ static loader *announce_fetch(const char *name, const source_spec *spec) {
     return loader_start(stderr, label);
 }
 
-bool source_fetch(const source_spec *spec, const char *name, const char *version,
-                  const char *target, char *out, size_t out_size, char *err, size_t err_size) {
+static bool fetch_with(const source_spec *spec, const char *name, const char *version,
+                       const char *target, char *out, size_t out_size, char *err, size_t err_size,
+                       bool carried) {
     if(spec->origin == source_origin_path)
         return use_local_path(spec, out, out_size, err, err_size);
 
@@ -761,7 +790,7 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
                     "this machine has no home directory, so there is nowhere to cache a "
                     "source; set MOLTO_HOME or MOLTO_CACHE to a directory molto may use");
 
-    if(is_complete(destination)) {
+    if(is_complete(destination, carried)) {
         snprintf(out, out_size, "%s", destination);
         return true;
     }
@@ -775,7 +804,8 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
     char root[SOURCE_PATH_MAX];
     loader *spinner = announce_fetch(name, spec);
     const bool ok = assemble(spec, work, root, sizeof root, err, err_size) &&
-                    install(root, destination, err, err_size);
+                    (!carried || package_prune(root, err, err_size)) &&
+                    install(root, destination, carried, err, err_size);
     loader_stop(spinner);
 
     /* Whatever is left of the working tree goes, on success and on failure:
@@ -784,6 +814,17 @@ bool source_fetch(const source_spec *spec, const char *name, const char *version
     if(ok)
         snprintf(out, out_size, "%s", destination);
     return ok;
+}
+
+bool source_fetch(const source_spec *spec, const char *name, const char *version,
+                  const char *target, char *out, size_t out_size, char *err, size_t err_size) {
+    return fetch_with(spec, name, version, target, out, out_size, err, err_size, false);
+}
+
+bool source_fetch_carried(const source_spec *spec, const char *name, const char *version,
+                          const char *target, char *out, size_t out_size, char *err,
+                          size_t err_size) {
+    return fetch_with(spec, name, version, target, out, out_size, err, err_size, true);
 }
 
 /* --- [[provide]] --- */

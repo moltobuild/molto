@@ -156,6 +156,13 @@ typedef struct {
     /* The rest of `[package]`: what the package says about itself rather than
        what it needs to build. Nothing here reaches a compile line. */
     manifest_about about;
+    project_options interface;
+    char interface_link[PROJECT_MAX_LINK][PROJECT_LINK_NAME_MAX];
+    size_t interface_link_count;
+    char entry[PROJECT_OPT_LEN];
+    char files[PROJECT_MAX_OPTS][PROJECT_OPT_LEN];
+    size_t file_count;
+    bool version_declared;
     project_target target;
     project_test test;
     project_env env;
@@ -190,6 +197,11 @@ typedef struct {
 
 /* Read the file at `path` and delegate to project_parse. */
 [[nodiscard]] bool project_load(const char *path, project_ctx *out, char *err, size_t err_size);
+
+/* Read only the tables a dependency may contribute. Development tables never
+   affect its consumer or grant consent to dependency plugins. */
+[[nodiscard]] bool project_load_dependency(const char *path, project_ctx *out, char *err,
+                                           size_t err_size);
 
 /* Print the populated context for debugging. */
 void project_ctx_dump(const project_ctx *ctx, FILE *stream);

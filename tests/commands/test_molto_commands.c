@@ -16,7 +16,7 @@ static int run_molto(const char *command) {
     char program[] = "molto";
     char argument[32];
     snprintf(argument, sizeof argument, "%s", command);
-    char *argv[] = { program, argument };
+    char *argv[] = {program, argument};
     return cli_run(2, argv);
 }
 
@@ -35,15 +35,15 @@ DESCRIBE(molto_reports_commands_that_are_not_implemented_yet) {
        covered in test_manifest_edit.c, which works on a temporary one — a case
        here would rewrite Molto's own. */
     static const char *pending[] = {
-        "bench", "update", "migrate",
+        "bench",
+        "update",
+        "migrate",
     };
-    for (size_t i = 0; i < sizeof pending / sizeof pending[0]; i++)
+    for(size_t i = 0; i < sizeof pending / sizeof pending[0]; i++)
         EXPECT_EQ(exit_not_implemented, run_molto(pending[i]));
 }
 
-DESCRIBE(molto_rejects_an_unknown_command) {
-    EXPECT_EQ(exit_usage_error, run_molto("frobnicate"));
-}
+DESCRIBE(molto_rejects_an_unknown_command) { EXPECT_EQ(exit_usage_error, run_molto("frobnicate")); }
 
 DESCRIBE(molto_answers_help_and_version) {
     EXPECT_EQ(exit_ok, run_molto("--help"));
@@ -55,8 +55,25 @@ DESCRIBE(molto_without_a_command_prints_help) {
     /* Bare `molto` shows the command list and succeeds; only an unusable
        invocation (unknown command, bad option) is a usage error. */
     char program[] = "molto";
-    char *argv[] = { program };
+    char *argv[] = {program};
     EXPECT_EQ(exit_ok, cli_run(1, argv));
+}
+
+/* Metadata tests own their manifest: the real workspace's dev-deps may need
+   network access or releases which are not compatible with this reader. */
+static int metadata_in_empty_workspace(const char *output) {
+    char root[MOLTEST_PATH], original[4096], manifest[4096];
+    if(!fs_current_dir(original, sizeof original) ||
+       !moltest_temp_dir("molto_metadata", root, sizeof root) ||
+       !fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root) ||
+       !fs_write_file(manifest, "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n") ||
+       chdir(root) != 0)
+        return exit_build_failure;
+    int result = metadata_command_run(output, false);
+    if(chdir(original) != 0)
+        return exit_build_failure;
+    (void)fs_remove_tree(root);
+    return result;
 }
 
 DESCRIBE(molto_metadata_writes_a_bill_of_materials) {
@@ -72,7 +89,7 @@ DESCRIBE(molto_metadata_writes_a_bill_of_materials) {
     char path[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_file("molto_bom", path, sizeof path));
 
-    EXPECT_EQ(exit_ok, metadata_command_run(path, false));
+    EXPECT_EQ(exit_ok, metadata_in_empty_workspace(path));
 
     char *text = fs_read_file(path);
     ASSERT_NOT_NULL(text);
@@ -91,5 +108,5 @@ DESCRIBE(molto_metadata_writes_a_bill_of_materials) {
 }
 
 DESCRIBE(molto_metadata_refuses_a_file_it_cannot_write) {
-    EXPECT_EQ(exit_build_failure, metadata_command_run("/nonexistent_dir/sbom.json", false));
+    EXPECT_EQ(exit_build_failure, metadata_in_empty_workspace("/nonexistent_dir/sbom.json"));
 }

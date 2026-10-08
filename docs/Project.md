@@ -832,3 +832,10 @@ each piece under the key that owns it.
 - [RFC-0003: Project Manifest](../rfcs/0003-project-manifest.md) — the schema specification
 - [RFC-0002: CLI Specification](../rfcs/0002-cli-specification.md) — the commands
 - [RFC-0004: Workspace](../rfcs/0004-workspace-specification.md) — `build/` and `.bin/`
+
+## Packages consumed by other projects
+
+`[interface]` declares public includes, defines, flags, link libraries and an
+optional entry source. `[package].files` preserves extra paths and glob matches
+in fetched packages. See [Packages.md](Packages.md) for the consumer rules and
+`molto package` validation.

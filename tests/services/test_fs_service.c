@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /*
@@ -20,6 +21,16 @@ static bool write_temp(char *path, size_t path_size, const char *content) {
     if(!moltest_temp_file("molto_fs", path, path_size))
         return false;
     return fs_write_file(path, content);
+}
+
+DESCRIBE(removing_a_tree_also_removes_read_only_git_objects) {
+    char root[MOLTEST_PATH], path[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_readonly", root, sizeof root));
+    ASSERT_TRUE(fs_format_path(path, sizeof path, "%s/object", root));
+    ASSERT_TRUE(fs_write_file(path, "git object fixture\n"));
+    ASSERT_EQ(0, chmod(path, S_IRUSR));
+    EXPECT_TRUE(fs_remove_tree(root));
+    EXPECT_FALSE(fs_path_exists(root));
 }
 
 DESCRIBE(a_line_is_read_without_its_ending) {

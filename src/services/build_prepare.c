@@ -217,6 +217,20 @@ static void watch_registry(size_t frame, void *context) {
 
     /* For the OS this build is for, which is the target's and not this
        machine's: a Windows build made on Linux still links -lbcrypt. */
+    if(platform != NULL) {
+        for(size_t i = 0; i < dep_graph_count(graph); i++) {
+            const dep_node *node = dep_graph_at(graph, i);
+            if(!node->excluded && node->artifacts.requirements.host_count) {
+                snprintf(err, err_size,
+                         "dependency '%s' declares [target].host, which cannot be resolved for "
+                         "another platform",
+                         node->name);
+                dep_graph_free(graph);
+                free(hosts);
+                return false;
+            }
+        }
+    }
     ok = dep_graph_select_os(graph, recipe_os_for_platform(platform), err, err_size) &&
          deps_prepare_graph(graph, out, err, err_size) &&
          deps_prepare_dev(graph, dev_out, err, err_size);

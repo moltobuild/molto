@@ -1,4 +1,5 @@
 #include <molto/services/deps_service.h>
+#include <molto/services/host_service.h>
 
 #include <molto/services/fs_service.h>
 #include <molto/services/recipe_service.h>
@@ -91,6 +92,11 @@ static prepared_unit *unit_open(prepared_deps *out, const dep_node *node, char *
     snprintf(unit->std, sizeof unit->std, "%s", node->artifacts.std);
     snprintf(unit->cpp_std, sizeof unit->cpp_std, "%s", node->artifacts.cpp_std);
     unit->build = node->build;
+    unit->entry[0] = '\0';
+    if(*node->artifacts.entry &&
+       !fs_format_path(unit->entry, sizeof unit->entry, "%s/%s", node->root, node->artifacts.entry))
+        return NULL;
+    unit->requirements = node->artifacts.requirements;
     str_list_init(&unit->sources);
     unit->source_args = NULL;
     str_list_init(&unit->exclude);
@@ -252,6 +258,16 @@ static bool collect_unit(const dep_graph *graph, const dep_node *node, prepared_
             ok = push_options(&other->artifacts.options, other->root, &unit->includes,
                               &unit->defines, &unit->flags, err, err_size);
     }
+    for(size_t r = 0; ok && r < str_list_count(&reached); r++) {
+        const dep_node *other = dep_graph_find(graph, str_list_get(&reached, r));
+        for(size_t h = 0; other && ok && h < other->artifacts.requirements.host_count; h++) {
+            host_answer answer;
+            ok = host_resolve(other->artifacts.requirements.host[h], &answer, err, err_size);
+            for(size_t i = 0; ok && i < answer.include_count; i++)
+                ok = str_list_push(&unit->includes, answer.includes[i]) &&
+                     str_list_push(&unit->bounds, answer.includes[i]);
+        }
+    }
     str_list_free(&reached);
 
     /* A package whose lines come from its own build already says, line by
@@ -314,6 +330,21 @@ static bool collect(const dep_graph *graph, const dep_node *node, prepared_deps 
     for(size_t i = 0; i < artifacts->link_count; i++) {
         if(!str_list_push(&unit->exports.links, artifacts->link[i]))
             return set_error(err, err_size, "out of memory collecting dependencies");
+    }
+    for(size_t h = 0; h < artifacts->requirements.host_count; h++) {
+        host_answer answer;
+        if(!host_resolve(artifacts->requirements.host[h], &answer, err, err_size))
+            return false;
+        for(size_t i = 0; i < answer.include_count; i++) {
+            if(!str_list_push(&unit->includes, answer.includes[i]) ||
+               !str_list_push(&unit->exports.includes, answer.includes[i]) ||
+               !str_list_push(&unit->bounds, answer.includes[i]))
+                return false;
+        }
+        for(size_t i = 0; i < answer.link_count; i++) {
+            if(!str_list_push(&unit->exports.link_flags, answer.links[i]))
+                return false;
+        }
     }
     if(!append_interface(out, &unit->exports, err, err_size))
         return false;

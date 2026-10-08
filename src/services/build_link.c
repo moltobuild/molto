@@ -91,8 +91,16 @@ static bool build_link_argv(str_list *argv, bool any_cpp, const str_list *object
         if(ok && names != NULL && names->name_option[0] != '\0')
             ok = str_list_push(argv, names->name_option);
     }
-    for(size_t i = 0; ok && i < str_list_count(objects); i++)
-        ok = str_list_push(argv, str_list_get(objects, i));
+    /* Entry archives must follow every loose object, including test objects. */
+    for(size_t pass = 0; pass < 2; pass++) {
+        for(size_t i = 0; ok && i < str_list_count(objects); i++) {
+            const char *object = str_list_get(objects, i);
+            size_t n = strlen(object);
+            bool entry = n >= 8 && strcmp(object + n - 8, ".entry.a") == 0;
+            if(entry == (pass == 1))
+                ok = str_list_push(argv, object);
+        }
+    }
     if(ok)
         ok = str_list_push(argv, ARG_OUTPUT) && str_list_push(argv, binary);
     return ok && push_links(argv, node, ir_scope_target) &&
@@ -200,7 +208,7 @@ static bool link_line(const str_list *argv, const char *binary, str_list *out, c
 bool build_link_project(bool any_cpp, const str_list *objects, const char *binary,
                         const ir_target *node, const library_names *names, const project_env *env,
                         const resolved_toolchain *chain, bool force, wsdb *db, const char *root,
-                        build_report *report) {
+                        build_report *report, const build_plan *plan) {
     str_list argv;
     str_list_init(&argv);
     if(!build_link_argv(&argv, any_cpp, objects, binary, node, chain, names)) {
@@ -238,6 +246,23 @@ bool build_link_project(bool any_cpp, const str_list *objects, const char *binar
                                     .report = report,
                                     .any_cpp = any_cpp};
             report_link_diagnostics(&where, output, truncated, status);
+            if(status != 0 && plan && strstr(output, "main") &&
+               (strstr(output, "duplicate") || strstr(output, "multiple definition") ||
+                strstr(output, "LNK2005"))) {
+                const prepared_deps *sets[] = {&plan->deps, &plan->dev};
+                for(size_t s = 0; s < 2; s++) {
+                    for(size_t i = 0; i < sets[s]->unit_count; i++) {
+                        const prepared_unit *unit = &sets[s]->units[i];
+                        char component[DEP_NAME_MAX + 3];
+                        snprintf(component, sizeof component, "/%s/", unit->name);
+                        if(strstr(output, component) || strstr(output, unit->root))
+                            build_report_message(report,
+                                                 "molto: dependency '%s' defines main(); declare "
+                                                 "its optional main source as [interface].entry\n",
+                                                 unit->name);
+                    }
+                }
+            }
         } else if(!ok) {
             build_report_message(report, "molto: failed to link '%s'\n", binary);
         }
@@ -349,4 +374,60 @@ void build_place_shared_links(const char *directory, const library_names *names,
             build_report_message(report, "molto: warning: could not link '%s' to '%s'\n", links[i],
                                  names->file);
     }
+}
+
+/* An entry stays compiled under its package's options; only linkage changes. */
+bool build_entry_objects(const build_plan *plan, const str_list *objects, str_list *out,
+                         build_report *report) {
+    const char *entry_name = NULL;
+    for(size_t i = 0; i < str_list_count(objects); i++) {
+        const char *object = str_list_get(objects, i);
+        const prepared_unit *entry = NULL;
+        const compile_pass *owner = NULL;
+        const prepared_deps *sets[] = {&plan->deps, &plan->dev};
+        for(size_t p = 0; p < plan->pass_count; p++) {
+            const compile_pass *pass = &plan->passes[p];
+            for(size_t u = 0; u < pass->count; u++) {
+                const planned_unit *compiled = &pass->units[u];
+                if(strcmp(object, compiled->object))
+                    continue;
+                for(size_t s = 0; s < 2; s++) {
+                    for(size_t d = 0; d < sets[s]->unit_count; d++) {
+                        const prepared_unit *unit = &sets[s]->units[d];
+                        if(*unit->entry && !strcmp(unit->entry, compiled->unit->source)) {
+                            entry = unit;
+                            owner = pass;
+                        }
+                    }
+                }
+            }
+        }
+        if(entry == NULL) {
+            if(!str_list_push(out, object))
+                return false;
+            continue;
+        }
+        if(entry_name && strcmp(entry_name, entry->name)) {
+            build_report_message(
+                report, "molto: dependencies '%s' and '%s' both declare [interface].entry\n",
+                entry_name, entry->name);
+            return false;
+        }
+        entry_name = entry->name;
+        char archive[PATH_BUFFER_SIZE];
+        const char *object_dir = strstr(object + strlen(owner->env.root), "/obj/");
+        if(!object_dir || !fs_format_path(archive, sizeof archive, "%.*s/%s.entry.a",
+                                          (int)(object_dir - object), object, entry->name))
+            return false;
+        str_list member;
+        str_list_init(&member);
+        bool ok = str_list_push(&member, object) &&
+                  build_archive_project(&member, archive, owner->env.env, owner->env.chain, false,
+                                        owner->env.db, report) &&
+                  str_list_push(out, archive);
+        str_list_free(&member);
+        if(!ok)
+            return false;
+    }
+    return true;
 }

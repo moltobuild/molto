@@ -73,6 +73,8 @@ typedef struct {
        author would use — and what a diagnostic quotes when the package is
        somewhere the reader can go and look. */
     char root[DEP_GRAPH_PATH_MAX];
+    char entry[DEP_GRAPH_PATH_MAX];
+    project_target requirements;
     str_list sources; /* .c files the consumer compiles as its own */
     /* Upstream's arguments for each of `sources`, in the same order, when its
        configured build said what to compile (RFC-0025); NULL when the recipe
