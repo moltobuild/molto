@@ -26,6 +26,8 @@
 #define LANG_C "c"
 #define LANG_CXX "c++"
 #define ARG_STD "--std"
+#define ARG_MIXED "--mixed"
+#define ARG_C_STD "--c-std"
 #define ARG_REQUIRE "--require"
 #define ARG_VENDOR "--vendor"
 #define ARG_FORMAT "--format"
@@ -117,11 +119,12 @@ static bool compose_request(const project_target *target, const char *platform, 
                             const char *features, char *out, size_t out_size) {
     const char *vendor = vendor_of(target->compiler);
     return fs_format_path(
-        out, out_size, "lang=%s std=%s require=%s vendor=%s target=%s",
+        out, out_size, "lang=%s std=%s require=%s vendor=%s target=%s mixed=%d c_std=%s",
         needs_cpp ? LANG_CXX : LANG_C,
         requested_std(target, needs_cpp)[0] != '\0' ? requested_std(target, needs_cpp) : "-",
         features[0] != '\0' ? features : "-", vendor != NULL ? vendor : "-",
-        platform != NULL ? platform : "-");
+        platform != NULL ? platform : "-", needs_cpp,
+        needs_cpp && target->std[0] != '\0' ? target->std : "-");
 }
 
 /* Build the pickup command line for this request. */
@@ -130,6 +133,11 @@ static bool build_pickup_argv(const char *program, const project_target *target,
                               str_list *argv) {
     bool ok = str_list_push(argv, program) && str_list_push(argv, ARG_RESOLVE) &&
               str_list_push(argv, ARG_LANG) && str_list_push(argv, needs_cpp ? LANG_CXX : LANG_C);
+    if(ok && needs_cpp) {
+        ok = str_list_push(argv, ARG_MIXED);
+        if(ok && target->std[0] != '\0')
+            ok = str_list_push(argv, ARG_C_STD) && str_list_push(argv, target->std);
+    }
     const char *std = requested_std(target, needs_cpp);
     if(ok && std[0] != '\0')
         ok = str_list_push(argv, ARG_STD) && str_list_push(argv, std);

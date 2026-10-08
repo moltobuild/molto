@@ -851,3 +851,8 @@ each piece under the key that owns it.
 optional entry source. `[package].files` preserves extra paths and glob matches
 in fetched packages. See [Packages.md](Packages.md) for the consumer rules and
 `molto package` validation.
+
+Mixed C/C++ builds ask Pickup to validate both drivers of one toolchain with
+`resolve --lang c++ --mixed`. Feature ids retain their catalog language, and
+Molto sends the C and C++ standards separately. This requires a Pickup build
+that supports `--mixed` and `--c-std`.
