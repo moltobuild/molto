@@ -337,6 +337,20 @@ typedef struct {
     uint64_t signature; /* what the source was when this compilation began */
 } compile_task;
 
+/* Whether a unit that compiled keeps what the compiler said to itself: one
+   from a package someone else published — the registry's, or a git or archive
+   dependency pinned to a version. Its warnings are upstream's to fix and a
+   consumer can do nothing with them; FFmpeg alone has a screenful. A failure
+   is always shown, and so is a path dependency, which is code on this machine
+   that its reader may well have written. */
+static bool keeps_its_warnings(const build_unit_label *label) {
+    if(label == NULL)
+        return false;
+    return label->origin == build_origin_registry ||
+           (label->origin == build_origin_module && label->version != NULL &&
+            label->version[0] != '\0');
+}
+
 /* Everything the compiler had to say about one unit, framed and written as a
    single act — one call, so it is atomic against the bar and against the other
    workers, and with the text as an argument rather than as a format, because a
@@ -344,11 +358,14 @@ typedef struct {
  *
  * Called whether or not the unit compiled: capturing the compiler's output and
  * then printing it only on failure would make every warning in every green
- * build disappear. */
+ * build disappear — except for a published dependency's, which are not the
+ * reader's to fix (keeps_its_warnings). */
 static void report_diagnostics(const compile_task *task, const char *output, bool truncated,
                                int status) {
     const build_pass_env *env = task->env;
     const compile_unit *unit = task->planned->unit;
+    if(status == 0 && keeps_its_warnings(unit->label))
+        return;
 
     diagnostic_list found;
     diagnostic_list_init(&found);
