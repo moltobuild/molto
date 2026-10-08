@@ -113,7 +113,7 @@ int test_command_run(const char *requested_profile, bool refresh_toolchain, size
     /* One argv for every binary: its own path first, then what came after `--`.
        The same arguments go to each, which is what a single-mode suite wants
        and what a per-file one at least does not mind. */
-    const char **argv = calloc((size_t)forwarded_count + 2, sizeof *argv);
+    const char **argv = (const char **)calloc((size_t)forwarded_count + 2, sizeof *argv);
     if(argv == NULL) {
         str_list_free(&binaries);
         return exit_build_failure;

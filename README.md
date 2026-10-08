@@ -166,10 +166,18 @@ make coverage                  # ./build/molto test --profile coverage
 
 The Makefile builds the first `molto` and nothing more: the suite is built by
 that molto, which takes its test framework,
-[moltest](https://github.com/moltobuild/moltest), and
+[moltest](https://github.com/moltobuild/moltest),
+[moltest-mock](https://github.com/moltobuild/moltest-mock), and
 [moltest-coverage](https://github.com/moltobuild/moltest-coverage) from its
 shared store like any project's dependencies (`[dev-deps]` in `Project.toml`).
 Without pickup, name the compiler for it: `C_COMPILER=gcc-12 make test`.
+
+For new suites, use the latest compatible `moltest[all]` set: moltest,
+moltest-mock and moltest-coverage together. This is shorthand for three
+`[dev-deps]` entries, not a literal CLI argument; see the
+[manifest examples](docs/Project.md#my-tests-use-a-framework-with-its-own-main).
+The published coverage 0.3.0 and mock 0.5.0 plugins require the runner revision
+in `Project.toml` (moltest 0.3.0); moltest 0.4.0 cannot be combined with them yet.
 
 `make coverage` ends with the coverage of `src/` and fails under the floor in
 `moltest-coverage.toml`; `build/coverage.lcov` holds the detail.

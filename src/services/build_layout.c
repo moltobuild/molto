@@ -134,7 +134,13 @@ static build_unit_label label_for_target(const ir_document *doc, const ir_target
 [[nodiscard]] bool build_compose_binary_path(const char *root, const char *segment,
                                              const char *name, ir_target_kind kind, char *out,
                                              size_t out_size) {
-    const char *suffix = kind == ir_target_executable ? FS_EXECUTABLE_SUFFIX : "";
+    const char *suffix = "";
+#ifdef _WIN32
+    if(kind == ir_target_executable)
+        suffix = FS_EXECUTABLE_SUFFIX;
+#else
+    (void)kind;
+#endif
     return fs_format_path(out, out_size, "%s/" DIR_BUILD "/%s/%s%s", root, segment, name, suffix) ||
            fs_report_long_path(name);
 }

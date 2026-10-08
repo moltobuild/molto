@@ -440,8 +440,8 @@ static bool project_parse_with(const char *toml, project_ctx *out, char *err, si
     ok = ok && doc_table_members(doc_from_toml(doc), "interface", &interface_keys);
     for(size_t i = 0; ok && i < str_list_count(&interface_keys); i++) {
         const char *key = str_list_get(&interface_keys, i);
-        if(strcmp(key, "include") && strcmp(key, "defines") && strcmp(key, "flags") &&
-           strcmp(key, "link") && strcmp(key, "entry"))
+        if(strcmp(key, "include") != 0 && strcmp(key, "defines") != 0 &&
+           strcmp(key, "flags") != 0 && strcmp(key, "link") != 0 && strcmp(key, "entry") != 0)
             ok = set_error(err, err_size, "[interface]: unknown key '%s'", key);
     }
     str_list_free(&interface_keys);

@@ -14,14 +14,14 @@ dependencies = []
 
 [[package]]
 name = "moltest_coverage"
-version = "0.2.1"
-source = "git+https://github.com/moltobuild/moltest-coverage#89186fcc19fc9d7389be331a0df3b9bf4e30259e"
+version = "0.3.0"
+source = "git+https://github.com/moltobuild/moltest-coverage#v0.3.0"
 scopes = ["dev"]
 dependencies = ["moltest"]
 
 [[package]]
 name = "moltest_mock"
-version = "0.4.0"
-source = "git+https://github.com/moltobuild/moltest-mock#4c168f5dd691f270fe5b4eb78416a2fc0754cfe3"
+version = "0.5.0"
+source = "git+https://github.com/moltobuild/moltest-mock#v0.5.0"
 scopes = ["dev"]
 dependencies = ["moltest"]

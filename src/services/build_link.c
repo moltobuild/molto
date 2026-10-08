@@ -389,7 +389,7 @@ bool build_entry_objects(const build_plan *plan, const str_list *objects, str_li
             const compile_pass *pass = &plan->passes[p];
             for(size_t u = 0; u < pass->count; u++) {
                 const planned_unit *compiled = &pass->units[u];
-                if(strcmp(object, compiled->object))
+                if(strcmp(object, compiled->object) != 0)
                     continue;
                 for(size_t s = 0; s < 2; s++) {
                     for(size_t d = 0; d < sets[s]->unit_count; d++) {
@@ -407,7 +407,7 @@ bool build_entry_objects(const build_plan *plan, const str_list *objects, str_li
                 return false;
             continue;
         }
-        if(entry_name && strcmp(entry_name, entry->name)) {
+        if(entry_name && strcmp(entry_name, entry->name) != 0) {
             build_report_message(
                 report, "molto: dependencies '%s' and '%s' both declare [interface].entry\n",
                 entry_name, entry->name);

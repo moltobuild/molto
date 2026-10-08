@@ -530,7 +530,7 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
 
     if(out->artifacts.from_manifest && dep->git_ref == dep_git_ref_tag && *version) {
         const char *tag = dep->reference[0] == 'v' ? dep->reference + 1 : dep->reference;
-        if(strcmp(tag, version))
+        if(strcmp(tag, version) != 0)
             fprintf(
                 stderr,
                 "molto: warning: dependency '%s' tag '%s' disagrees with [package].version '%s'\n",
