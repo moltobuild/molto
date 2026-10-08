@@ -340,7 +340,7 @@ static bool collect_scope(const dep_graph *graph, unsigned wanted, unsigned with
                           prepared_deps *out, char *err, size_t err_size) {
     for(size_t i = 0; i < dep_graph_count(graph); i++) {
         const dep_node *node = dep_graph_at(graph, i);
-        if((node->scope & wanted) == 0 || (node->scope & without) != 0)
+        if((node->scope & wanted) == 0 || (node->scope & without) != 0 || node->excluded)
             continue;
         char reason[512] = "";
         if(!collect(graph, node, out, reason, sizeof reason))

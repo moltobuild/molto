@@ -429,6 +429,7 @@ source key must be present:
 | `path`             | string        | Local directory (source)                                                       |
 | `archive`          | string        | Archive URL (source)                                                           |
 | `registry`         | string        | Named registry to use (default: the official one)                              |
+| `os`               | array[string] | Only on these: `linux`, `macos`, `windows` (default: every one)                |
 | `artifact`         | string        | How the dependency is built: `source`/`static`/`shared`                        |
 | `optional`         | bool          | If true, only resolved when a feature enables it (default false)               |
 | `features`         | array[string] | Features to enable in the dependency                                           |
@@ -436,6 +437,13 @@ source key must be present:
 
 Rules:
 
+- `os` limits a dependency to some operating systems: SDL needs X11 on Linux
+  and nothing of it on macOS or Windows. It stays in the resolution and in the
+  lock file everywhere, so the lock is the same on every machine, and is no
+  part of a build for another OS: not fetched, not compiled, not seen by
+  anything that reaches it. An empty list or an unknown name is refused, and a
+  molto that predates the key refuses it too, as it does any key it does not
+  know.
 - Exactly one source among `version`, `git`, `path`, `archive`. The
   plain-string form `dep = "1.2.3"` is equivalent to `{ version = "1.2.3" }`.
 - There was a fifth, `recipe`, naming a recipe for a registry to resolve. It is

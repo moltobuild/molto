@@ -89,7 +89,16 @@ typedef struct {
     char sha256[DEP_DIGEST_MAX];
     char strip_prefix[DEP_PREFIX_MAX];
     dep_git_ref git_ref;
+    /* The operating systems it is a dependency on, as DEP_OS_* bits; 0 is
+       every one. SDL needs X11 on Linux and nothing of it anywhere else. */
+    unsigned os;
 } project_dep;
+
+/* `os = ["linux"]`: what a dependency's `os` names. */
+#define DEP_OS_LINUX 1u
+#define DEP_OS_MACOS 2u
+#define DEP_OS_WINDOWS 4u
+#define DEP_OS_ALL (DEP_OS_LINUX | DEP_OS_MACOS | DEP_OS_WINDOWS)
 
 typedef struct {
     project_dep items[PROJECT_MAX_DEPS];

@@ -747,3 +747,41 @@ DESCRIBE(a_provision_the_walk_cannot_apply_fails_the_resolution) {
 
     sandbox_close(&at);
 }
+
+/* A dependency for another operating system stays in the graph, so the lock
+   is the same on every machine, and is no part of this build: nothing reaches
+   it and nothing of it is fetched. */
+DESCRIBE(a_dependency_for_another_os_is_left_out_of_this_build) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+#ifdef _WIN32
+    const char *elsewhere = "linux";
+#else
+    const char *elsewhere = "windows";
+#endif
+    char deps[PATH_MAX_LEN * 2];
+    snprintf(deps, sizeof deps, "[deps]\nonly = { path = \"%s/only\", os = [\"%s\"] }\n", at.root,
+             elsewhere);
+    EXPECT_TRUE(make_package(&at, "a", deps));
+    EXPECT_TRUE(make_package(&at, "only", NULL));
+
+    project_ctx ctx;
+    char err[512] = "";
+    const char *const names[] = {"a"};
+    ASSERT_TRUE(parse_root(&at, names, 1, &ctx, err, sizeof err));
+    dep_graph *graph = NULL;
+    ASSERT_TRUE(dep_graph_resolve(&ctx, &graph, err, sizeof err));
+    ASSERT_TRUE(dep_graph_select_os(graph, recipe_os_for_platform(NULL), err, sizeof err));
+
+    EXPECT_EQ(2u, dep_graph_count(graph));
+    EXPECT_TRUE(dep_graph_find(graph, "only")->excluded);
+    EXPECT_FALSE(dep_graph_find(graph, "a")->excluded);
+    str_list reached;
+    str_list_init(&reached);
+    ASSERT_TRUE(dep_graph_closure(graph, "a", &reached));
+    EXPECT_EQ(0u, str_list_count(&reached));
+    str_list_free(&reached);
+
+    dep_graph_free(graph);
+    sandbox_close(&at);
+}

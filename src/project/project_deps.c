@@ -53,7 +53,7 @@ static const struct {
 };
 
 /* Everything else this reader acts on. */
-static const char *const DEP_SUPPORTED_KEYS[] = {"registry", "sha256", "strip_prefix"};
+static const char *const DEP_SUPPORTED_KEYS[] = {"registry", "sha256", "strip_prefix", "os"};
 
 /* Keys RFC-0003 defines and this reader does not implement. Refused rather
    than ignored, following [package].artifact: accepting a key and quietly
@@ -202,6 +202,41 @@ static bool read_git_ref(doc_view doc, const char *table, const char *section, c
     return true;
 }
 
+/* `os`: the operating systems this is a dependency on. Absent is all of
+   them; an empty list or a name that is not one is refused, because a
+   dependency on nothing is a mistake and a misspelt one would be silently
+   never. */
+static bool read_os(doc_view doc, const char *table, const char *section, const char *name,
+                    project_dep *out, char *err, size_t err_size) {
+    static const struct {
+        const char *name;
+        unsigned bit;
+    } OSES[] = {{"linux", DEP_OS_LINUX}, {"macos", DEP_OS_MACOS}, {"windows", DEP_OS_WINDOWS}};
+    out->os = 0;
+    if(!doc_has_key(doc, section, "os"))
+        return true;
+    char names[3][16];
+    size_t count = 0;
+    if(!doc_read_strings(doc, section, "os", names[0], 3, sizeof names[0], &count, err, err_size))
+        return set_error(err, err_size, "[%s].%s: os must list linux, macos or windows", table,
+                         name);
+    if(count == 0)
+        return set_error(err, err_size, "[%s].%s: os names no operating system", table, name);
+    for(size_t i = 0; i < count; i++) {
+        unsigned bit = 0;
+        for(size_t k = 0; k < sizeof OSES / sizeof OSES[0]; k++) {
+            if(strcmp(OSES[k].name, names[i]) == 0)
+                bit = OSES[k].bit;
+        }
+        if(bit == 0)
+            return set_error(err, err_size,
+                             "[%s].%s: os names '%s', which is not linux, macos or windows", table,
+                             name, names[i]);
+        out->os |= bit;
+    }
+    return true;
+}
+
 static bool read_table(doc_view doc, const char *table, const char *section, const char *name,
                        project_dep *out, char *err, size_t err_size) {
     if(!check_keys(doc, table, section, name, err, err_size))
@@ -209,6 +244,8 @@ static bool read_table(doc_view doc, const char *table, const char *section, con
     if(!read_source_key(doc, table, section, name, out, err, err_size))
         return false;
     if(!read_git_ref(doc, table, section, name, out, err, err_size))
+        return false;
+    if(!read_os(doc, table, section, name, out, err, err_size))
         return false;
 
     if(!doc_get_string(doc, section, "registry", out->registry, sizeof out->registry))

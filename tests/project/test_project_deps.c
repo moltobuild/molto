@@ -393,3 +393,22 @@ DESCRIBE(a_range_in_a_recipe_is_refused_too) {
     EXPECT_FALSE(read_deps_json("{\"deps\":{\"png\":\">=1.6.0\"}}", &deps, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "'>='"));
 }
+
+/* SDL's X11: a dependency on one operating system only. */
+DESCRIBE(deps_read_the_operating_systems_a_dependency_is_for) {
+    project_deps deps;
+    char err[512] = "";
+    ASSERT_TRUE(read_deps("[deps]\nx11 = { version = \"1.8.7\", os = [\"linux\"] }\n"
+                          "zlib = \"1.3.1\"\n",
+                          &deps, err, sizeof err));
+    ASSERT_EQ(2u, deps.count);
+    EXPECT_EQ(DEP_OS_LINUX, deps.items[0].os);
+    /* Absent is every OS. */
+    EXPECT_EQ(0u, deps.items[1].os);
+
+    EXPECT_FALSE(read_deps("[deps]\nx11 = { version = \"1.8.7\", os = [\"linus\"] }\n", &deps,
+                           err, sizeof err));
+    EXPECT_NOT_NULL(strstr(err, "linus"));
+    EXPECT_FALSE(read_deps("[deps]\nx11 = { version = \"1.8.7\", os = [] }\n", &deps, err,
+                           sizeof err));
+}
