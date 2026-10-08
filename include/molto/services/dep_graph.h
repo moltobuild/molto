@@ -82,6 +82,14 @@ typedef struct {
     /* One or both of dep_scope. A package required by both tables carries
        both, and is compiled once. */
     unsigned scope;
+    /* The operating systems it is part of the build on, as DEP_OS_* bits:
+       the union over every edge that reaches it, each narrowed by `os` and by
+       what its dependent is limited to. */
+    unsigned os;
+    /* Not part of this build: its `os` leaves out the one being built for.
+       Still in the graph, and in the lock, so the lock is the same on every
+       machine; never fetched, compiled or seen by anything that reaches it. */
+    bool excluded;
     /* The names it depends on, sorted, for the lock's `dependencies`. */
     str_list dependencies;
     recipe_artifacts artifacts;

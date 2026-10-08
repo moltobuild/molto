@@ -136,10 +136,33 @@ static bool listed(const str_list *list, const char *value) {
 
 /* Append what `node` depends on and `out` has not seen, never `root` itself:
    a cycle back to the package being asked about is not part of its closure. */
-static bool push_unseen(const dep_node *node, const char *root, str_list *out) {
+/* The DEP_OS_* bit for `os`; 0 for one a dependency cannot name. */
+static unsigned os_bit(recipe_os os) {
+    switch(os) {
+    case recipe_os_linux:
+        return DEP_OS_LINUX;
+    case recipe_os_macos:
+        return DEP_OS_MACOS;
+    case recipe_os_windows:
+        return DEP_OS_WINDOWS;
+    default:
+        return 0;
+    }
+}
+
+/* Whether `node` is part of a build for `os`. An OS nothing can name takes
+   every dependency, as it did before `os` existed. */
+static bool for_os(const dep_node *node, recipe_os os) {
+    const unsigned bit = os_bit(os);
+    return bit == 0 || (node->os & bit) != 0;
+}
+
+static bool push_unseen(const dep_graph *graph, const dep_node *node, const char *root,
+                        str_list *out) {
     for(size_t i = 0; i < str_list_count(&node->dependencies); i++) {
         const char *name = str_list_get(&node->dependencies, i);
-        if(strcmp(name, root) == 0 || listed(out, name))
+        const dep_node *other = dep_graph_find(graph, name);
+        if(strcmp(name, root) == 0 || listed(out, name) || (other != NULL && other->excluded))
             continue;
         if(!str_list_push(out, name))
             return false;
@@ -156,13 +179,13 @@ bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out) 
        has been expanded, everything above it is waiting. A name is pushed once,
        which is what makes a cycle stop here instead of recursing. */
     const size_t base = str_list_count(out);
-    if(!push_unseen(root, name, out))
+    if(!push_unseen(graph, root, name, out))
         return false;
     for(size_t cursor = base; cursor < str_list_count(out); cursor++) {
         const dep_node *reached = dep_graph_find(graph, str_list_get(out, cursor));
         /* A name the graph does not carry cannot be expanded, and a partial
            graph is a resolution failure someone else already reported. */
-        if(reached != NULL && !push_unseen(reached, name, out))
+        if(reached != NULL && !push_unseen(graph, reached, name, out))
             return false;
     }
     return true;
@@ -171,6 +194,9 @@ bool dep_graph_closure(const dep_graph *graph, const char *name, str_list *out) 
 bool dep_graph_select_os(dep_graph *graph, recipe_os os, char *err, size_t err_size) {
     for(size_t i = 0; graph != NULL && i < graph->count; i++) {
         dep_node *node = graph->nodes[i];
+        node->excluded = !for_os(node, os);
+        if(node->excluded)
+            continue;
         char reason[512] = "";
         if(!recipe_artifacts_select_os(&node->artifacts, os, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
@@ -574,6 +600,8 @@ typedef struct {
        through a development dependency is itself only ever compiled into the
        test build. */
     unsigned scope;
+    /* What it is limited to: its own `os` narrowed by its dependent's. */
+    unsigned os;
 } pending;
 
 typedef struct {
@@ -584,7 +612,7 @@ typedef struct {
 } queue;
 
 static bool queue_push(queue *q, const project_dep *dep, const char *required_by, unsigned scope,
-                       char *err, size_t err_size) {
+                       unsigned os, char *err, size_t err_size) {
     if(q->count == q->capacity) {
         const size_t grown = q->capacity == 0 ? 16 : q->capacity * 2;
         pending *items = realloc(q->items, grown * sizeof *items);
@@ -596,6 +624,7 @@ static bool queue_push(queue *q, const project_dep *dep, const char *required_by
     q->items[q->count].dep = *dep;
     snprintf(q->items[q->count].required_by, DEP_NAME_MAX, "%s", required_by);
     q->items[q->count].scope = scope;
+    q->items[q->count].os = (dep->os != 0 ? dep->os : DEP_OS_ALL) & os;
     q->count++;
     return true;
 }
@@ -630,9 +659,9 @@ static bool anchor_nested(const project_dep *requirer, visited *found, char *err
 }
 
 static bool enqueue_all(queue *q, const project_deps *deps, const char *required_by, unsigned scope,
-                        char *err, size_t err_size) {
+                        unsigned os, char *err, size_t err_size) {
     for(size_t i = 0; i < deps->count; i++) {
-        if(!queue_push(q, &deps->items[i], required_by, scope, err, err_size))
+        if(!queue_push(q, &deps->items[i], required_by, scope, os, err, err_size))
             return false;
     }
     return true;
@@ -681,10 +710,16 @@ static bool materialize_platform(dep_node *node, char *err, size_t err_size) {
 }
 
 static bool materialize(dep_graph *graph, char *err, size_t err_size) {
+    /* What this machine fetches: a platform package is answered for it, and
+       a dependency limited to another OS is never needed here. */
+    const recipe_os here = recipe_os_for_platform(NULL);
     for(size_t i = 0; i < graph->fetch_count; i++) {
         const deferred_fetch *entry = &graph->fetches[i];
         dep_node *node = graph->nodes[entry->node];
         char reason[512] = "";
+        node->excluded = !for_os(node, here);
+        if(node->excluded)
+            continue;
 
         if(node->platform != NULL) {
             if(!materialize_platform(node, err, err_size))
@@ -710,6 +745,8 @@ static bool provide_all(dep_graph *graph, char *err, size_t err_size) {
     for(size_t i = 0; i < graph->count; i++) {
         dep_node *node = graph->nodes[i];
         char reason[512] = "";
+        if(node->excluded)
+            continue;
         if(!source_provide(node->root, &node->provide, reason, sizeof reason))
             return set_error(err, err_size, "dependency '%s': %s", node->name, reason);
     }
@@ -753,6 +790,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
            builds. Everything below it inherits the wider scope too, which is
            why this walks rather than just setting a flag. */
         widen_scope(graph, seen, entry->scope);
+        seen->os |= entry->os;
         return true;
     }
 
@@ -810,6 +848,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
     snprintf(node->required_by, sizeof node->required_by, "%s", entry->required_by);
     snprintf(node->source, sizeof node->source, "%s", source);
     node->scope = entry->scope;
+    node->os = entry->os;
     node->artifacts = found->artifacts;
     node->provide = found->provide;
     node->build = found->build;
@@ -819,7 +858,7 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
 
     ok = record_edges(node, &found->deps, err, err_size) &&
          anchor_nested(dep, found, err, err_size) &&
-         enqueue_all(q, &found->deps, dep->name, entry->scope, err, err_size);
+         enqueue_all(q, &found->deps, dep->name, entry->scope, entry->os, err, err_size);
     if(ok)
         ok = graph_push(graph, node, err, err_size);
     if(ok && found->deferred)
@@ -884,7 +923,7 @@ static bool walk(const project_ctx *ctx, const credentials *creds, const char *p
        root package: a dependency's own are read and ignored, which is what
        keeps a library's test framework out of its consumer's build. */
     queue q = {0};
-    bool ok = enqueue_all(&q, &deps, "", dep_scope_runtime, err, err_size);
+    bool ok = enqueue_all(&q, &deps, "", dep_scope_runtime, DEP_OS_ALL, err, err_size);
     for(; ok && q.head < q.count; q.head++)
         ok = visit_one(ctx, &q.items[q.head], creds, graph, &q, conflict, err, err_size);
 
@@ -892,7 +931,7 @@ static bool walk(const project_ctx *ctx, const credentials *creds, const char *p
        ones walked. Doing them in one pass would let a node be created under the
        narrower scope while its children were still queued, and widening it
        later would not reach them. */
-    ok = ok && enqueue_all(&q, &dev_deps, "", dep_scope_dev, err, err_size);
+    ok = ok && enqueue_all(&q, &dev_deps, "", dep_scope_dev, DEP_OS_ALL, err, err_size);
     for(; ok && q.head < q.count; q.head++)
         ok = visit_one(ctx, &q.items[q.head], creds, graph, &q, conflict, err, err_size);
     free(q.items);
