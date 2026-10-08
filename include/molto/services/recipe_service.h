@@ -179,6 +179,9 @@ typedef struct {
     project_options private_options;             /* the same three, and only for its own sources */
     recipe_os_artifacts per_os[RECIPE_OS_COUNT]; /* empty once recipe_artifacts_select_os ran */
     bool os_selected;
+    bool from_manifest;
+    char entry[RECIPE_SOURCE_MAX];
+    project_target requirements;
 } recipe_artifacts;
 
 /* Read the top-level coordinate. Refuses a schema newer than this reader

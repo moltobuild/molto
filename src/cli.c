@@ -15,6 +15,7 @@
 #include <molto/commands/run_command.h>
 #include <molto/commands/test_command.h>
 #include <molto/exit_code.h>
+#include <molto/services/package_service.h>
 #include <molto/services/plugin_service.h>
 #include <molto/services/registry_service.h>
 #include <molto/util/cli.h>
@@ -34,6 +35,14 @@
 const char *cli_version(void) { return MOLTO_PKG_VERSION; }
 
 /* The --all switch of `molto clean`. */
+static const cli_option package_options[] = {
+    {"--list", 0, cli_opt_flag, NULL, "Assemble and list the files a consumer receives", NULL},
+};
+
+static int handle_package(const cli_args *args) {
+    return package_command_run(cli_args_flag(args, "--list"));
+}
+
 static const cli_option clean_options[] = {
     {"--all", 'a', cli_opt_flag, NULL, "Also remove .bin/ (the incremental state)", NULL},
 };
@@ -393,6 +402,8 @@ static const cli_option plugin_options[] = {
 /* --- command table --- */
 
 static const cli_command commands[] = {
+    {"package", "Validate and assemble this project as a dependency", NULL, package_options,
+     sizeof package_options / sizeof package_options[0], handle_package},
     {"new", "Create a new project in a new directory", "<name>", new_options,
      sizeof new_options / sizeof new_options[0], handle_new},
     {"init", "Initialize a project in the current directory", NULL, new_options,

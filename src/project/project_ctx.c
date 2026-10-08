@@ -49,7 +49,8 @@ static void seed_defaults(project_ctx *ctx) {
  * looks wrong. So this table is read the way `[deps]` is (RFC-0008).
  */
 static const char *const PACKAGE_KEYS[] = {
-    "name", "version", "artifact", "description", "license", "homepage", "repository", "authors",
+    "name",     "version",    "artifact", "description", "license",
+    "homepage", "repository", "authors",  "files",
 };
 
 static bool is_package_key(const char *key) {
@@ -305,7 +306,8 @@ static bool replacement_is_well_formed(const char *entry) {
            read_option_array(doc, section, "flags", out->flags, &out->flag_count, err, err_size);
 }
 
-bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
+static bool project_parse_with(const char *toml, project_ctx *out, char *err, size_t err_size,
+                               bool dependency) {
     seed_defaults(out);
 
     toml_document *doc = toml_parse(toml, err, err_size);
@@ -317,9 +319,11 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         return false;
     }
 
+    out->version_declared = doc_has_key(doc_from_toml(doc), "package", "version");
     const toml_field schema[] = {
         TOML_STR(project_ctx, "package", "name", project_name),
         TOML_STR(project_ctx, "package", "version", version),
+        TOML_STR(project_ctx, "interface", "entry", entry),
         TOML_STR(project_ctx, "target", "compiler", target.compiler),
         TOML_STR(project_ctx, "target", "std", target.std),
         TOML_STR(project_ctx, "target", "cpp_std", target.cpp_std),
@@ -334,7 +338,7 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
         TOML_INT(project_ctx, "profile.coverage", "opt_level", profile.coverage.opt_level),
         TOML_BOOL(project_ctx, "profile.coverage", "debug_info", profile.coverage.debug_info),
     };
-    size_t field_count = sizeof schema / sizeof schema[0];
+    size_t field_count = dependency ? 6 : sizeof schema / sizeof schema[0];
     if(!toml_bind(doc, schema, field_count, out, err, err_size)) {
         toml_free(doc);
         return false;
@@ -360,7 +364,7 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     }
 
     /* target.compiler must be a known toolchain (if given). */
-    if(!valid_compiler(out->target.compiler)) {
+    if(!dependency && !valid_compiler(out->target.compiler)) {
         toml_free(doc);
         return set_error(err, err_size, "unknown compiler '%s'", out->target.compiler);
     }
@@ -388,18 +392,20 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     }
     str_list_free(&libs);
 
-    /* [test].mode is an enum expressed as a string, like package.artifact. */
-    char test_mode_name[16];
-    if(ok && toml_get_string(doc, "test", "mode", test_mode_name, sizeof test_mode_name) &&
-       !map_test_mode(test_mode_name, &out->test.mode))
-        ok =
-            set_error(err, err_size, "unknown test mode '%s' (per_file or single)", test_mode_name);
+    if(!dependency) {
+        /* [test].mode is an enum expressed as a string, like package.artifact. */
+        char test_mode_name[16];
+        if(ok && toml_get_string(doc, "test", "mode", test_mode_name, sizeof test_mode_name) &&
+           !map_test_mode(test_mode_name, &out->test.mode))
+            ok = set_error(err, err_size, "unknown test mode '%s' (per_file or single)",
+                           test_mode_name);
 
-    ok = ok &&
-         read_option_array(doc, "test", "sources", out->test.sources, &out->test.source_count, err,
-                           err_size) &&
-         read_options(doc, "test", &out->test.options, err, err_size) &&
-         read_isolated_tests(doc, &out->test, err, err_size);
+        ok = ok &&
+             read_option_array(doc, "test", "sources", out->test.sources, &out->test.source_count,
+                               err, err_size) &&
+             read_options(doc, "test", &out->test.options, err, err_size) &&
+             read_isolated_tests(doc, &out->test, err, err_size);
+    }
 
     /* target.requires: the features the project needs from a compiler. */
     ok = ok && read_option_array(doc, "target", "requires", out->target.requires,
@@ -416,17 +422,43 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
 
     /* Base compilation options ([target]), the [env] table, and per-profile
        additions. */
-    ok = ok && read_env(doc, &out->env, err, err_size) &&
-         read_options(doc, "target", &out->target.options, err, err_size) &&
-         read_options(doc, "profile.debug", &out->profile_options.debug, err, err_size) &&
-         read_options(doc, "profile.release", &out->profile_options.release, err, err_size) &&
-         read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
-         read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size) &&
-         read_options(doc, "profile.coverage", &out->profile_options.coverage, err, err_size);
+    ok = ok && read_options(doc, "target", &out->target.options, err, err_size);
+    if(!dependency) {
+        ok = ok && read_env(doc, &out->env, err, err_size) &&
+             read_options(doc, "profile.debug", &out->profile_options.debug, err, err_size) &&
+             read_options(doc, "profile.release", &out->profile_options.release, err, err_size) &&
+             read_options(doc, "profile.bench", &out->profile_options.bench, err, err_size) &&
+             read_options(doc, "profile.custom", &out->profile_options.custom, err, err_size) &&
+             read_options(doc, "profile.coverage", &out->profile_options.coverage, err, err_size);
+    }
 
     /* The rest of `[package]`. Read with the same code a recipe's `[about]` is
        read with, because RFC-0009 requires the two to say the same thing and
        two readers of one format drift. */
+    str_list interface_keys;
+    str_list_init(&interface_keys);
+    ok = ok && doc_table_members(doc_from_toml(doc), "interface", &interface_keys);
+    for(size_t i = 0; ok && i < str_list_count(&interface_keys); i++) {
+        const char *key = str_list_get(&interface_keys, i);
+        if(strcmp(key, "include") && strcmp(key, "defines") && strcmp(key, "flags") &&
+           strcmp(key, "link") && strcmp(key, "entry"))
+            ok = set_error(err, err_size, "[interface]: unknown key '%s'", key);
+    }
+    str_list_free(&interface_keys);
+    ok = ok && read_options(doc, "interface", &out->interface, err, err_size) &&
+         doc_read_strings(doc_from_toml(doc), "interface", "link", out->interface_link[0],
+                          PROJECT_MAX_LINK, PROJECT_LINK_NAME_MAX, &out->interface_link_count, err,
+                          err_size) &&
+         read_option_array(doc, "package", "files", out->files, &out->file_count, err, err_size);
+    for(size_t i = 0; ok && i < out->interface.include_count; i++) {
+        const char *include = out->interface.include[i];
+        if(strcmp(include, "include") == 0 || strcmp(include, "include/") == 0 ||
+           strcmp(include, "./include") == 0 || strcmp(include, "./include/") == 0)
+            ok = set_error(
+                err, err_size,
+                "[interface].include must not name include/: it is exported by convention");
+    }
+
     ok = ok && manifest_read_about(doc_from_toml(doc), "package", &out->about, err, err_size);
 
     /* Dependencies, and the registries one may name. Checked together after
@@ -435,11 +467,14 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
        Both tables are read here and kept apart: what separates them is not how
        they are written but where their flags are allowed to land, and that is
        the build's decision (RFC-0008). */
-    ok = ok && project_deps_read_doc(doc_from_toml(doc), &out->deps, err, err_size) &&
-         project_dev_deps_read_doc(doc_from_toml(doc), &out->dev_deps, err, err_size) &&
-         project_registries_read(doc, &out->registries, err, err_size) &&
-         project_deps_check_registries(&out->deps, "deps", &out->registries, err, err_size) &&
-         project_deps_check_registries(&out->dev_deps, "dev-deps", &out->registries, err, err_size);
+    ok = ok && project_deps_read_doc(doc_from_toml(doc), &out->deps, err, err_size);
+    if(!dependency) {
+        ok = ok && project_dev_deps_read_doc(doc_from_toml(doc), &out->dev_deps, err, err_size) &&
+             project_registries_read(doc, &out->registries, err, err_size) &&
+             project_deps_check_registries(&out->deps, "deps", &out->registries, err, err_size) &&
+             project_deps_check_registries(&out->dev_deps, "dev-deps", &out->registries, err,
+                                           err_size);
+    }
 
     toml_free(doc);
     if(!ok)
@@ -448,6 +483,10 @@ bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_siz
     if(!manifest_is_valid_name(out->project_name))
         return set_error(err, err_size, "package name is missing or not snake_case");
     return add_package_defines(out, err, err_size);
+}
+
+bool project_parse(const char *toml, project_ctx *out, char *err, size_t err_size) {
+    return project_parse_with(toml, out, err, err_size, false);
 }
 
 /* The directory `path` sits in, which is the project root. */
@@ -475,6 +514,17 @@ bool project_load(const char *path, project_ctx *out, char *err, size_t err_size
     bool ok = project_parse(toml, out, err, err_size);
     free(toml);
     /* After the parse, which zeroes the whole struct. */
+    if(ok)
+        manifest_dir(path, out->root, sizeof out->root);
+    return ok;
+}
+
+bool project_load_dependency(const char *path, project_ctx *out, char *err, size_t err_size) {
+    char *text = fs_read_file(path);
+    if(!text)
+        return set_error(err, err_size, "could not read '%s'", path);
+    bool ok = project_parse_with(text, out, err, err_size, true);
+    free(text);
     if(ok)
         manifest_dir(path, out->root, sizeof out->root);
     return ok;

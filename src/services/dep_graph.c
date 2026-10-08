@@ -1,4 +1,5 @@
 #include <molto/services/dep_graph.h>
+#include <molto/services/package_service.h>
 
 #include <molto/services/credentials_service.h>
 #include <molto/services/fs_service.h>
@@ -305,11 +306,30 @@ static bool read_carried_recipe(const char *root, const char *name, recipe_artif
     char path[DEP_GRAPH_PATH_MAX];
     if(!fs_format_path(path, sizeof path, "%s/" CARRIED_RECIPE, root))
         return set_error(err, err_size, "the recipe path for '%s' is too long", name);
+    char manifest[DEP_GRAPH_PATH_MAX];
+    if(!fs_format_path(manifest, sizeof manifest, "%s/Project.toml", root))
+        return set_error(err, err_size, "the manifest path for '%s' is too long", name);
+    if(fs_path_exists(manifest)) {
+        project_ctx *package = calloc(1, sizeof *package);
+        if(package == NULL)
+            return set_error(err, err_size, "out of memory reading a package");
+        bool ok = package_read(root, name, package, artifacts, err, err_size);
+        if(ok) {
+            memset(build, 0, sizeof *build);
+            memset(provide, 0, sizeof *provide);
+            memset(declared, 0, sizeof *declared);
+            declared->origin = source_origin_path;
+            *deps = package->deps;
+            *about = package->about;
+            snprintf(version, version_size, "%s", package->version);
+        }
+        free(package);
+        return ok;
+    }
     if(!fs_path_exists(path))
-        return set_error(err, err_size,
-                         "'%s' brings no " CARRIED_RECIPE " at the root of its source, and [deps] "
-                         "has nowhere to say what to compile",
-                         name);
+        return set_error(
+            err, err_size,
+            "'%s' brings neither recipe.toml nor Project.toml at the root of its source", name);
 
     char *text = fs_read_file(path);
     if(text == NULL)
@@ -488,15 +508,15 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
     /* A path dependency is used where it is, so it has no cache key and its
        directory is the source. */
     if(spec.origin == source_origin_path) {
-        if(!source_fetch(&spec, dep->name, "", CARRIED_TARGET, out->root, sizeof out->root, err,
-                         err_size))
+        if(!source_fetch_carried(&spec, dep->name, "", CARRIED_TARGET, out->root, sizeof out->root,
+                                 err, err_size))
             return false;
     } else {
         char key[SOURCE_DIGEST_MAX];
         if(!source_cache_key(&spec, key, sizeof key, err, err_size))
             return false;
-        if(!source_fetch(&spec, dep->name, key, CARRIED_TARGET, out->root, sizeof out->root, err,
-                         err_size))
+        if(!source_fetch_carried(&spec, dep->name, key, CARRIED_TARGET, out->root, sizeof out->root,
+                                 err, err_size))
             return false;
         snprintf(out->checksum, sizeof out->checksum, "%s", spec.sha256);
     }
@@ -507,6 +527,15 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
                             &declared, &out->deps, &out->about, version, sizeof version,
                             &out->platform, err, err_size))
         return false;
+
+    if(out->artifacts.from_manifest && dep->git_ref == dep_git_ref_tag && *version) {
+        const char *tag = dep->reference[0] == 'v' ? dep->reference + 1 : dep->reference;
+        if(strcmp(tag, version))
+            fprintf(
+                stderr,
+                "molto: warning: dependency '%s' tag '%s' disagrees with [package].version '%s'\n",
+                dep->name, dep->reference, version);
+    }
 
     /* A recipe directory rather than a source: its recipe names a tarball or
        a commit, and the directory holds the recipe alone. The bytes come from
@@ -521,6 +550,8 @@ static bool visit_carried(const project_ctx *ctx, const project_dep *dep, visite
             return false;
         snprintf(out->checksum, sizeof out->checksum, "%s", declared.sha256);
     }
+    if(out->artifacts.from_manifest)
+        snprintf(out->version, sizeof out->version, "%s", version);
     if(out->platform != NULL) {
         snprintf(out->version, sizeof out->version, "%s", version);
         platform_recipe_digest(out->platform, out->checksum);
@@ -784,7 +815,8 @@ static bool visit_one(const project_ctx *ctx, const pending *entry, const creden
        is empty, so it would compare equal to anything. */
     dep_node *seen = str_map_get(graph->index, dep->name);
     if(seen != NULL) {
-        if(strcmp(seen->version, dep->version) != 0 || strcmp(seen->source, source) != 0)
+        if((dep->source == dep_source_version && strcmp(seen->version, dep->version) != 0) ||
+           strcmp(seen->source, source) != 0)
             return report_conflict(seen, dep, source, entry->required_by, conflict, err, err_size);
         /* Required by both tables: one node, compiled once, reachable from both
            builds. Everything below it inherits the wider scope too, which is

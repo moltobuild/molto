@@ -212,6 +212,11 @@ typedef struct {
     compile_unit *dev_package_units;
 } build_plan;
 
+/* Compile entry sources normally, then replace only their link inputs with
+   individual lazy archives. Original object lists keep the plan's borrows alive. */
+[[nodiscard]] bool build_entry_objects(const build_plan *plan, const str_list *objects,
+                                       str_list *out, build_report *report);
+
 /* --- build_layout.c: where a thing goes, and what it is called --- */
 
 /* Whether `target` belongs to the set of a document's targets one pass is
@@ -286,7 +291,8 @@ void build_push_own(diagnostic_list *found, const char *source, diagnostic_sever
 [[nodiscard]] bool build_link_project(bool any_cpp, const str_list *objects, const char *binary,
                                       const ir_target *node, const library_names *names,
                                       const project_env *env, const resolved_toolchain *chain,
-                                      bool force, wsdb *db, const char *root, build_report *report);
+                                      bool force, wsdb *db, const char *root, build_report *report,
+                                      const build_plan *plan);
 
 /* Archive `objects` into a static library. */
 [[nodiscard]] bool build_archive_project(const str_list *objects, const char *archive,

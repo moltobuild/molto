@@ -90,6 +90,7 @@ debug_info = true
 | `homepage`   | string        | no       | URL of the project's page                                                   |
 | `repository` | string        | no       | URL of the source repository                                                |
 | `authors`    | array[string] | no       | At most 8 entries                                                           |
+| `files`      | array[string] | no       | Extra package paths and globs preserved for consumers (RFC-0024)            |
 
 **Current state:** `executable`, `static` and `shared` are all built. `source`
 is still refused: it describes a package a registry serves as sources, which is
@@ -141,6 +142,15 @@ wrong.
 recipe's `[about]` agree, although this RFC and RFC-0009 both require it. The
 publish path reads a recipe alone today and can run without a project around it,
 so the check needs its own design.
+
+## `[interface]`
+
+Optional `include`, `defines`, `flags`, `link` lists and an `entry` source define
+what a Molto library exports to its consumers (RFC-0024). Unknown keys are errors.
+`include/` is exported by convention and must not be repeated here. When the
+package is a dependency, target includes, defines and flags stay private;
+language standards, toolchain requirements, host capabilities and both link
+lists still apply. Development configuration is ignored.
 
 ## `[target]`
 
@@ -503,6 +513,8 @@ understand that schema refuses the file rather than reading the half it
 recognises.
 
 ## Related RFCs
+
+- [RFC-0024: Molto Packages as Dependencies](0024-molto-packages-as-dependencies.md) — manifest interfaces, carried descriptions and author validation
 
 - [RFC-0001: Manifesto](0001-manifesto.md)
 - [RFC-0002: CLI Specification](0002-cli-specification.md)

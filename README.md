@@ -36,6 +36,8 @@ reads as the state of a release.
 - [`docs/Project.md`](docs/Project.md) — how to configure `Project.toml` to
   build a C/C++ project: include paths, link libraries, test layout, profiles,
   and what to do when a build that works with `make` does not work here
+- [`docs/Packages.md`](docs/Packages.md) — consuming Molto libraries and checking
+  the tracked files a package exports with `molto package`
 - [`docs/Style.md`](docs/Style.md) — `molto fmt` and `molto lint`: the two
   configuration files, where the formatter and the linter come from, and what
   each command reports

@@ -301,3 +301,25 @@ error listing every failed item and ending with: "its author can run
 - [RFC-0014: Plugin System](0014-plugin-system.md)
 - [RFC-0016: Host Libraries](0016-host-libraries.md)
 - [RFC-0021: Isolated Tests](0021-isolated-tests.md)
+
+## Implementation Status
+
+The manifest reader, carried dependency conversion, source-only discovery,
+private/interface split, optional entry archives, pre-install pruning,
+versioned stamps, shallow git fetch with fallback and `molto package [--list]`
+are implemented. See [the package guide](../docs/Packages.md).
+
+Acceptance coverage lives in `tests/services/test_package_service.c`:
+
+- [x] Public/private options and source discovery, excluding the package main.
+- [x] Strict interface keys, conventional includes and aggregated checklist errors.
+- [x] Dependency development configuration is ignored; duplicate descriptions fail.
+- [x] Paths remain unpruned; archives retain the allowlist and invalidate old stamps.
+- [x] Recipe-directed sources keep their complete upstream tree.
+- [x] Entry archives support consumers and test binaries with their own main.
+- [x] Two entries are refused; author assembly uses tracked files and rejects missing headers.
+
+Ecosystem migration remains pending: the currently pinned moltest, coverage and
+mock releases carry both descriptions. New releases must remove their recipes
+before this repository's pins can move to compatible tags. Those repositories
+and releases are outside this implementation.

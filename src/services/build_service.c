@@ -574,6 +574,22 @@ static prepared_unit *library_unit(const prepared_unit *unit, const recipe_build
         return exit_build_failure;
     }
 
+    const prepared_deps *requirement_sets[] = {&plan->deps, &plan->dev};
+    for(size_t s = 0; s < 2; s++) {
+        for(size_t u = 0; u < requirement_sets[s]->unit_count; u++) {
+            const project_target *req = &requirement_sets[s]->units[u].requirements;
+            for(size_t i = 0; i < req->requires_count; i++) {
+                bool found = false;
+                for(size_t j = 0; j < ctx_out->target.requires_count; j++)
+                    found = found || !strcmp(req->requires[i], ctx_out->target.requires[j]);
+                if(!found &&
+                   !deps_append_option(ctx_out->target.requires, &ctx_out->target.requires_count,
+                                       PROJECT_MAX_OPTS, req->requires[i], "[target].requires"))
+                    return exit_dependency_failure;
+            }
+        }
+    }
+
     result = resolve_the_toolchain(plan, ctx_out, platform, db, refresh_toolchain, chain_out);
     if(result != exit_ok)
         return result;
@@ -737,16 +753,20 @@ int build_project_with(const char *root, build_profile profile, const char *plat
 
         /* Whatever the linker had to say has already been framed and printed
            by then; a line here would only repeat it less clearly. */
+        str_list link_objects;
+        str_list_init(&link_objects);
+        bool entries_ready = build_entry_objects(&plan, &objects, &link_objects, report);
         bool produced = false;
-        if(node->kind == ir_target_static) {
+        if(entries_ready && node->kind == ir_target_static) {
             produced =
                 build_archive_project(&objects, binary, &ctx.env, &chain, any_compiled, db, report);
-        } else {
-            produced = build_link_project(any_cpp, &objects, binary, node, &names, &ctx.env, &chain,
-                                          any_compiled, db, root, report);
+        } else if(entries_ready) {
+            produced = build_link_project(any_cpp, &link_objects, binary, node, &names, &ctx.env,
+                                          &chain, any_compiled, db, root, report, &plan);
             if(produced && node->kind == ir_target_shared)
                 build_place_shared_links(directory, &names, report);
         }
+        str_list_free(&link_objects);
         /* Windows looks for a program's DLLs beside it, and a bundled platform
            package (RFC-0022) has no rpath to say otherwise: its runtime is
            copied next to the executable, and only what changed is copied

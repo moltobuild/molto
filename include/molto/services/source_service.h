@@ -204,4 +204,11 @@ struct recipe_provide;
 [[nodiscard]] bool source_git_newest_release(const char *url, char *out, size_t size, char *err,
                                              size_t err_size);
 
+/* Fetch a source whose root describes itself, applying RFC-0024 pruning to
+   manifest packages before installing them. Recipe-directed fetches above
+   never prune upstream's tree. */
+[[nodiscard]] bool source_fetch_carried(const source_spec *spec, const char *name,
+                                        const char *version, const char *target, char *out,
+                                        size_t out_size, char *err, size_t err_size);
+
 #endif /* MOLTO_SOURCE_SERVICE_H */

@@ -33,6 +33,8 @@ MOCK_VOID_FUNC(resolve_remember, const char *, const char *, const char *);
 MOCK_VOID_FUNC(resolved_dep_release, resolved_dep *);
 MOCK_VALUE_FUNC(bool, source_fetch, const source_spec *, const char *, const char *, const char *,
                 char *, size_t, char *, size_t);
+MOCK_VALUE_FUNC(bool, source_fetch_carried, const source_spec *, const char *, const char *,
+                const char *, char *, size_t, char *, size_t);
 MOCK_VALUE_FUNC(bool, source_provide, const char *, const struct recipe_provide *, char *, size_t);
 /* Read only from a recipe a path or git source carries, which nothing here
    is; the linker takes dep_graph.c whole. */
@@ -262,14 +264,22 @@ DESCRIBE(the_search_tries_a_bounded_number_of_releases) {
     /* Twelve newer png releases, none of which settles it: the search gives up
        after eight rather than walking the whole history while somebody waits. */
     static const release table[] = {
-        {"png", "2.11.0", "zlib = \"1.2.0\"\n", false}, {"png", "2.10.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "2.9.0", "zlib = \"1.2.0\"\n", false},  {"png", "2.8.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "2.7.0", "zlib = \"1.2.0\"\n", false},  {"png", "2.6.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "2.5.0", "zlib = \"1.2.0\"\n", false},  {"png", "2.4.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "2.3.0", "zlib = \"1.2.0\"\n", false},  {"png", "2.2.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "2.1.0", "zlib = \"1.2.0\"\n", false},  {"png", "2.0.0", "zlib = \"1.2.0\"\n", false},
-        {"png", "1.6.0", "zlib = \"1.2.0\"\n", false},  {"tiff", "4.0.0", "zlib = \"1.3.1\"\n", false},
-        {"zlib", "1.3.1", NULL, false},                 {"zlib", "1.2.0", NULL, false},
+        {"png", "2.11.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.10.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.9.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.8.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.7.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.6.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.5.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.4.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.3.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.2.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.1.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "2.0.0", "zlib = \"1.2.0\"\n", false},
+        {"png", "1.6.0", "zlib = \"1.2.0\"\n", false},
+        {"tiff", "4.0.0", "zlib = \"1.3.1\"\n", false},
+        {"zlib", "1.3.1", NULL, false},
+        {"zlib", "1.2.0", NULL, false},
     };
     PUBLISH(table);
     EXPECT_FALSE(resolve("png = \"1.6.0\"\ntiff = \"4.0.0\"\n", true));

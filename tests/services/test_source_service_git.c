@@ -23,6 +23,8 @@ MOCK_VALUE_FUNC(int, process_capture, const char *const *, char *, size_t);
 /* Never called here. source_service.c clones with it, and the linker takes an
    object whole, so whatever any function of it calls needs a definition. */
 MOCK_VALUE_FUNC(int, process_run, const char *const *);
+MOCK_VALUE_FUNC(int, process_capture_all, const char *const *, const process_env_var *, size_t,
+                char *, size_t, bool *);
 
 /* What the fake prints, and the command it was run with. argv lives in the
    caller's frame, so it is copied during the call rather than read after. */
@@ -111,8 +113,8 @@ DESCRIBE(the_newest_release_is_asked_of_the_repositorys_tags) {
              "2222222222222222222222222222222222222222\trefs/tags/v0.3.0\n";
     process_capture_mock.custom_fake = git_answers;
     char tag[64] = "";
-    ASSERT_TRUE(source_git_newest_release("https://example.com/repo", tag, sizeof tag, err,
-                                          sizeof err));
+    ASSERT_TRUE(
+        source_git_newest_release("https://example.com/repo", tag, sizeof tag, err, sizeof err));
     EXPECT_STREQ("v0.3.0", tag);
     EXPECT_STREQ("git ls-remote --tags --refs https://example.com/repo", ran);
 }
@@ -121,8 +123,8 @@ DESCRIBE(a_repository_without_releases_says_so) {
     answer = "";
     process_capture_mock.custom_fake = git_answers;
     char tag[64] = "";
-    EXPECT_FALSE(source_git_newest_release("https://example.com/repo", tag, sizeof tag, err,
-                                           sizeof err));
+    EXPECT_FALSE(
+        source_git_newest_release("https://example.com/repo", tag, sizeof tag, err, sizeof err));
     EXPECT_NOT_NULL(strstr(err, "no release"));
 }
 
