@@ -544,6 +544,16 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     static char d_include[VIEW_TEXT_MAX + 32];
     static char d_library[VIEW_TEXT_MAX + 32];
     snprintf(d_cc, sizeof d_cc, "-DCMAKE_C_COMPILER=%s", cc_shell);
+    /* And the C++ one, when the build has one: SDL's Windows GameInput is
+       C++, and a CMake left to find its own would compile it with a program
+       whose lines molto does not recognise as its own. */
+    static char d_cxx[CONFIGURE_PATH_MAX + 32];
+    d_cxx[0] = '\0';
+    if(view != NULL && view->cxx != NULL && view->cxx[0] != '\0') {
+        char cxx_shell[CONFIGURE_PATH_MAX];
+        shell_path(view->cxx, cxx_shell, sizeof cxx_shell);
+        snprintf(d_cxx, sizeof d_cxx, "-DCMAKE_CXX_COMPILER=%s", cxx_shell);
+    }
     snprintf(d_ninja, sizeof d_ninja, "-DCMAKE_MAKE_PROGRAM=%s", ninja_shell);
     snprintf(d_prefix, sizeof d_prefix, "-DCMAKE_PREFIX_PATH=%s", prefixes);
     snprintf(d_include, sizeof d_include, "-DCMAKE_INCLUDE_PATH=%s", includes);
@@ -559,6 +569,8 @@ static bool configure_cmake(const char *name, const char *root, const recipe_bui
     argv[argc++] = "-G";
     argv[argc++] = "Ninja";
     argv[argc++] = d_cc;
+    if(d_cxx[0] != '\0')
+        argv[argc++] = d_cxx;
     argv[argc++] = d_ninja;
     argv[argc++] = "-DCMAKE_BUILD_TYPE=Release";
     /* What molto reads the list of sources from, when the recipe asks it to. */

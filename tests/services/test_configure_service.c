@@ -335,7 +335,7 @@ DESCRIBE(cmake_configures_with_molto_s_compiler_and_what_it_resolved) {
     str_list_init(&links);
     ASSERT_TRUE(str_list_push(&links, "-L/deps/openssl/lib"));
     ASSERT_TRUE(str_list_push(&links, "-lssl"));
-    const configure_view view = {.includes = &includes, .link_flags = &links};
+    const configure_view view = {.includes = &includes, .link_flags = &links, .cxx = "c++"};
 
     char err[512] = "";
     ASSERT_TRUE(configure_dependency("lws", at.root, &build, "cc", NULL, &view, err, sizeof err));
@@ -346,6 +346,8 @@ DESCRIBE(cmake_configures_with_molto_s_compiler_and_what_it_resolved) {
     ASSERT_NOT_NULL(args);
     EXPECT_NOT_NULL(strstr(args, "-G\nNinja\n"));
     EXPECT_NOT_NULL(strstr(args, "-DCMAKE_C_COMPILER=cc\n"));
+    /* The C++ compiler too, when the build has one. */
+    EXPECT_NOT_NULL(strstr(args, "-DCMAKE_CXX_COMPILER=c++\n"));
     EXPECT_NOT_NULL(strstr(args, "-DLWS_WITH_SSL=ON\n"));
     /* OpenSSL's find module searches <prefix>/include and <prefix>/lib. */
     EXPECT_NOT_NULL(strstr(args, "-DCMAKE_PREFIX_PATH=/deps/openssl\n"));
