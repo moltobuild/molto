@@ -172,6 +172,24 @@ read from its build with its own lines. What the packages a configuration
 reaches define for their consumers (`LZMA_API_STATIC` on Windows) reaches it
 too, in `CPPFLAGS`, so a probe reads their headers as the build will.
 
+### What a configuration sees of the platform packages it reaches
+
+A platform package (RFC-0022) a configuration reaches is unpacked somewhere
+under molto's cache, and some configurations run its programs or ask
+`pkg-config` about it: SDL's CMake looks for Wayland, PipeWire and PulseAudio
+with `pkg-config` and generates Wayland's protocol code with
+`wayland-scanner`. So the configuration is given:
+
+- `PKG_CONFIG_PATH` and `PKG_CONFIG_LIBDIR`: the package's `.pc` files,
+  copied to `<root>/.molto-pkgconfig` with every variable that names `/usr…`
+  moved under the root. Only theirs: a host's own `.pc` files would make one
+  machine's build differ from the next.
+- `PATH`, with the package's `usr/bin` first, and `LD_LIBRARY_PATH`, with its
+  library directories, so a distribution's `pkgconf` or `wayland-scanner`, run
+  from where it was unpacked, finds its own libraries.
+
+A host answer has no tree and adds nothing. All of it is part of the stamp.
+
 ### Schema
 
 `[build].sources`, `[build].goals` and `[build.libraries]` are schema 5. A reader that predates

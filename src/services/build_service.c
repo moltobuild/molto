@@ -524,19 +524,42 @@ static prepared_unit *library_unit(const prepared_unit *unit, const recipe_build
     if(!libraries_for(unit, sets, set_count, libraries, err, err_size))
         return false;
     str_list defines;
+    str_list pkgconfig_dirs;
+    str_list tool_dirs;
+    str_list library_dirs;
     str_list_init(&defines);
+    str_list_init(&pkgconfig_dirs);
+    str_list_init(&tool_dirs);
+    str_list_init(&library_dirs);
     bool ok = reached_defines(unit, sets, set_count, &defines);
+    /* The platform packages it reaches, unpacked: their programs and .pc
+       files are what a configuration runs and asks (pkg-config,
+       wayland-scanner for SDL). */
+    for(size_t r = 0; ok && r < str_list_count(&unit->reaches); r++) {
+        const prepared_unit *other = unit_named(sets, set_count, str_list_get(&unit->reaches, r));
+        if(other != NULL && other->system)
+            ok = configure_platform_tree(other->root, &pkgconfig_dirs, &tool_dirs, &library_dirs);
+    }
+    if(!ok)
+        snprintf(err, err_size, "dependency '%s': could not prepare what its configuration sees",
+                 unit->name);
     const configure_view view = {.includes = &unit->includes,
                                  .defines = &defines,
                                  .link_flags = link_flags,
                                  .libraries = libraries,
                                  .library_count = unit->build.library_count,
-                                 .cxx = chain->cxx};
+                                 .cxx = chain->cxx,
+                                 .pkgconfig_dirs = &pkgconfig_dirs,
+                                 .tool_dirs = &tool_dirs,
+                                 .library_dirs = &library_dirs};
     ok = ok &&
          configure_dependency(unit->name, unit->root, &unit->build, chain->cc, platform, &view, err,
                               err_size) &&
          take_what_it_compiles(unit, chain, err, err_size);
     str_list_free(&defines);
+    str_list_free(&pkgconfig_dirs);
+    str_list_free(&tool_dirs);
+    str_list_free(&library_dirs);
     return ok;
 }
 

@@ -374,3 +374,57 @@ DESCRIBE(a_build_tool_named_outright_is_taken_as_named) {
     EXPECT_STREQ("/opt/ninja/ninja", ninja.path);
     (void)unsetenv("MOLTO_NINJA");
 }
+
+/* --- what a platform package gives a configuration --- */
+
+/* A distribution's package unpacked somewhere: its .pc moved there, its bin
+   and its libraries named. */
+DESCRIBE(a_platform_tree_is_relocated_for_its_configuration) {
+    sandbox at;
+    ASSERT_TRUE(moltest_temp_dir("molto_tree", at.root, sizeof at.root));
+    char dir[PATH_MAX_LEN];
+    snprintf(dir, sizeof dir, "%s/usr/lib/x86_64-linux-gnu/pkgconfig", at.root);
+    ASSERT_TRUE(fs_make_dirs(dir));
+    snprintf(dir, sizeof dir, "%s/usr/bin", at.root);
+    ASSERT_TRUE(fs_make_dirs(dir));
+    char file[PATH_MAX_LEN];
+    snprintf(file, sizeof file, "%s/usr/lib/x86_64-linux-gnu/pkgconfig/wayland-client.pc", at.root);
+    ASSERT_TRUE(fs_write_file(file, "prefix=/usr\n"
+                                    "libdir=/usr/lib/x86_64-linux-gnu\n"
+                                    "includedir=${prefix}/include\n\n"
+                                    "Name: Wayland Client\n"
+                                    "Cflags: -I${includedir}\n"
+                                    "Libs: -L${libdir} -lwayland-client\n"));
+
+    str_list pc, bin, lib;
+    str_list_init(&pc);
+    str_list_init(&bin);
+    str_list_init(&lib);
+    ASSERT_TRUE(configure_platform_tree(at.root, &pc, &bin, &lib));
+    ASSERT_EQ(1, (int)str_list_count(&pc));
+    ASSERT_EQ(1, (int)str_list_count(&bin));
+    /* The multiarch directory first, then usr/lib, which holds it. */
+    ASSERT_EQ(2, (int)str_list_count(&lib));
+    EXPECT_NOT_NULL(strstr(str_list_get(&lib, 0), "usr/lib/x86_64-linux-gnu"));
+
+    snprintf(file, sizeof file, "%s/wayland-client.pc", str_list_get(&pc, 0));
+    char *text = fs_read_file(file);
+    ASSERT_NOT_NULL(text);
+    char expected[PATH_MAX_LEN];
+    snprintf(expected, sizeof expected, "prefix=%s/usr\n", at.root);
+    EXPECT_NOT_NULL(strstr(text, expected));
+    snprintf(expected, sizeof expected, "libdir=%s/usr/lib/x86_64-linux-gnu\n", at.root);
+    EXPECT_NOT_NULL(strstr(text, expected));
+    /* The fields refer to the variables and are left as they are. */
+    EXPECT_NOT_NULL(strstr(text, "Libs: -L${libdir} -lwayland-client\n"));
+    free(text);
+
+    /* A host answer has no tree, and gives nothing. */
+    ASSERT_TRUE(configure_platform_tree("host", &pc, &bin, &lib));
+    EXPECT_EQ(1, (int)str_list_count(&pc));
+
+    str_list_free(&pc);
+    str_list_free(&bin);
+    str_list_free(&lib);
+    (void)fs_remove_tree(at.root);
+}

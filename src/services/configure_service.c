@@ -10,6 +10,7 @@
 #include <molto/util/sha256.h>
 #include <molto/util/thread.h>
 
+#include <dirent.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,6 +107,12 @@ static void fingerprint_with(const recipe_build *build, const char *cc, const ch
     if(view != NULL && view->defines != NULL) {
         for(size_t i = 0; i < str_list_count(view->defines); i++)
             hash_field(&state, "define", str_list_get(view->defines, i));
+    }
+    const str_list *trees[] = {view != NULL ? view->pkgconfig_dirs : NULL,
+                               view != NULL ? view->tool_dirs : NULL};
+    for(size_t t = 0; t < sizeof trees / sizeof trees[0]; t++) {
+        for(size_t i = 0; trees[t] != NULL && i < str_list_count(trees[t]); i++)
+            hash_field(&state, "tree", str_list_get(trees[t], i));
     }
     /* Which libraries it saw built, and from what: their sources are under
        their own digest-named roots, so the paths name the bytes. */
@@ -618,7 +625,7 @@ static bool configure_now(const char *name, const char *root, const recipe_build
        never allowed to choose another compiler: what molto compiles with and
        what configure tested have to be the same program. Room for the two
        variables autotools adds. */
-    process_env_var env[RECIPE_BUILD_MAX_ENV + 3];
+    process_env_var env[RECIPE_BUILD_MAX_ENV + 8];
     char names[RECIPE_BUILD_MAX_ENV][RECIPE_BUILD_ARG_MAX];
     size_t env_count = 0;
     env[env_count++] = (process_env_var){.name = "CC", .value = cc_shell};
@@ -633,6 +640,39 @@ static bool configure_now(const char *name, const char *root, const recipe_build
                              "compiler it resolved",
                              name);
         env[env_count++] = (process_env_var){.name = names[i], .value = equals + 1};
+    }
+
+    /* The platform packages it reaches, as programs it may run and modules
+       pkg-config may answer for: theirs, and only theirs — a host's own .pc
+       files would make one machine's build differ from the next. */
+    static char pkgconfig[VIEW_TEXT_MAX];
+    static char path[VIEW_TEXT_MAX];
+    static char libraries_path[VIEW_TEXT_MAX];
+    const bool tools =
+        view != NULL && view->tool_dirs != NULL && str_list_count(view->tool_dirs) > 0;
+    if(view != NULL && view->pkgconfig_dirs != NULL && str_list_count(view->pkgconfig_dirs) > 0) {
+        join_view(view->pkgconfig_dirs, "", ":", as_is, pkgconfig, sizeof pkgconfig);
+        env[env_count++] = (process_env_var){.name = "PKG_CONFIG_PATH", .value = pkgconfig};
+        env[env_count++] = (process_env_var){.name = "PKG_CONFIG_LIBDIR", .value = pkgconfig};
+    }
+    if(tools) {
+        join_view(view->tool_dirs, "", ":", as_is, path, sizeof path);
+        const char *inherited = getenv("PATH");
+        const size_t used = strlen(path);
+        snprintf(path + used, sizeof path - used, ":%s", inherited != NULL ? inherited : "");
+        env[env_count++] = (process_env_var){.name = "PATH", .value = path};
+    }
+    if(tools && view->library_dirs != NULL && str_list_count(view->library_dirs) > 0) {
+        /* For those programs alone: a distribution's pkgconf or
+           wayland-scanner, run from where it was unpacked, needs its own
+           libraries. They are that distribution's, as the host is. */
+        join_view(view->library_dirs, "", ":", as_is, libraries_path, sizeof libraries_path);
+        const char *inherited = getenv("LD_LIBRARY_PATH");
+        if(inherited != NULL && inherited[0] != '\0') {
+            const size_t used = strlen(libraries_path);
+            snprintf(libraries_path + used, sizeof libraries_path - used, ":%s", inherited);
+        }
+        env[env_count++] = (process_env_var){.name = "LD_LIBRARY_PATH", .value = libraries_path};
     }
 
     /* What it is to see built, built first. */
@@ -830,4 +870,106 @@ bool configure_compile_lines(const char *name, const char *root, const recipe_bu
     }
     fs_lock_release(&lock);
     return ok;
+}
+
+/* --- what a platform package gives a configuration --- */
+
+#define PLATFORM_PKGCONFIG_DIR ".molto-pkgconfig"
+
+/* Where a distribution keeps libraries, inside an unpacked package. */
+static const char *const PLATFORM_LIBRARY_DIRS[] = {
+    "usr/lib/x86_64-linux-gnu", "usr/lib/aarch64-linux-gnu", "usr/lib64", "usr/lib"};
+
+/* One `.pc` file with every variable that names `/usr…` moved under `root`.
+   A .pc says where its package lives in the variables at its top
+   (`prefix=/usr`, Debian's `libdir=/usr/lib/x86_64-linux-gnu`), and the
+   fields below refer to them, so only those lines move. */
+static bool relocate_pc(const char *from, const char *to, const char *root) {
+    char *text = fs_read_file(from);
+    if(text == NULL)
+        return false;
+    const size_t extra = strlen(root) * 16 + 1;
+    char *out = malloc(strlen(text) * 2 + extra);
+    if(out == NULL) {
+        free(text);
+        return false;
+    }
+    size_t used = 0;
+    for(char *line = text; line != NULL && *line != '\0';) {
+        char *newline = strchr(line, '\n');
+        const size_t length = newline != NULL ? (size_t)(newline - line) : strlen(line);
+        const char *equals = memchr(line, '=', length);
+        const char *colon = memchr(line, ':', length);
+        bool variable = equals != NULL && (colon == NULL || equals < colon);
+        for(const char *c = line; variable && c < equals; c++)
+            variable = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                       (*c >= '0' && *c <= '9') || *c == '_' || *c == '.';
+        if(variable && strncmp(equals + 1, "/usr", 4) == 0) {
+            const size_t name = (size_t)(equals - line) + 1;
+            used += (size_t)sprintf(out + used, "%.*s%s%.*s\n", (int)name, line, root,
+                                    (int)(length - name), equals + 1);
+        } else {
+            used += (size_t)sprintf(out + used, "%.*s\n", (int)length, line);
+        }
+        line = newline != NULL ? newline + 1 : NULL;
+    }
+    out[used] = '\0';
+    const bool ok = fs_write_file(to, out);
+    free(out);
+    free(text);
+    return ok;
+}
+
+/* Every `.pc` in `dir`, relocated into `into`. */
+static bool relocate_dir(const char *dir, const char *into, const char *root, bool *any) {
+    DIR *handle = opendir(dir);
+    if(handle == NULL)
+        return true;
+    bool ok = true;
+    const struct dirent *entry;
+    while(ok && (entry = readdir(handle)) != NULL) {
+        const size_t length = strlen(entry->d_name);
+        if(length < 4 || strcmp(entry->d_name + length - 3, ".pc") != 0)
+            continue;
+        char from[CONFIGURE_PATH_MAX];
+        char to[CONFIGURE_PATH_MAX];
+        ok = fs_format_path(from, sizeof from, "%s/%s", dir, entry->d_name) &&
+             fs_format_path(to, sizeof to, "%s/%s", into, entry->d_name) &&
+             relocate_pc(from, to, root);
+        *any = *any || ok;
+    }
+    closedir(handle);
+    return ok;
+}
+
+bool configure_platform_tree(const char *root, str_list *pkgconfig_dirs, str_list *tool_dirs,
+                             str_list *library_dirs) {
+    if(!fs_is_dir(root))
+        return true;
+    char into[CONFIGURE_PATH_MAX];
+    if(!fs_format_path(into, sizeof into, "%s/" PLATFORM_PKGCONFIG_DIR, root) ||
+       !fs_make_dirs(into))
+        return false;
+    bool any = false;
+    bool ok = true;
+    for(size_t i = 0; ok && i < sizeof PLATFORM_LIBRARY_DIRS / sizeof PLATFORM_LIBRARY_DIRS[0];
+        i++) {
+        char dir[CONFIGURE_PATH_MAX];
+        char pc[CONFIGURE_PATH_MAX];
+        if(!fs_format_path(dir, sizeof dir, "%s/%s", root, PLATFORM_LIBRARY_DIRS[i]) ||
+           !fs_format_path(pc, sizeof pc, "%s/pkgconfig", dir))
+            return false;
+        if(!fs_is_dir(dir))
+            continue;
+        ok = str_list_push(library_dirs, dir) && relocate_dir(pc, into, root, &any);
+    }
+    char share[CONFIGURE_PATH_MAX];
+    char bin[CONFIGURE_PATH_MAX];
+    if(!ok || !fs_format_path(share, sizeof share, "%s/usr/share/pkgconfig", root) ||
+       !fs_format_path(bin, sizeof bin, "%s/usr/bin", root) ||
+       !relocate_dir(share, into, root, &any))
+        return false;
+    if(any && !str_list_push(pkgconfig_dirs, into))
+        return false;
+    return !fs_is_dir(bin) || str_list_push(tool_dirs, bin);
 }

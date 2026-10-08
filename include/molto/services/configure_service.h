@@ -65,6 +65,14 @@ typedef struct {
     /* The C++ compiler molto resolved, for `{cxx}`; NULL or "" when the build
        needs none. */
     const char *cxx;
+    /* What the platform packages it reaches unpacked (RFC-0022), for a
+       configuration that runs their programs or asks pkg-config about them:
+       their `.pc` files relocated to where they are, their `bin` and their
+       library directories. Reach configure as PKG_CONFIG_PATH and
+       PKG_CONFIG_LIBDIR, PATH and LD_LIBRARY_PATH. Any may be NULL. */
+    const str_list *pkgconfig_dirs;
+    const str_list *tool_dirs;
+    const str_list *library_dirs;
 } configure_view;
 
 /* Configure `name`'s source at `root` for the compiler `cc`, or do nothing if
@@ -91,6 +99,14 @@ void configure_fingerprint(const recipe_build *build, const char *cc, const char
                                            const recipe_build *build, const char *cc,
                                            const char *cxx, compile_lines *out, char *err,
                                            size_t err_size);
+
+/* What a platform package unpacked at `root` gives a configuration: its
+   `.pc` files copied to `<root>/.molto-pkgconfig` with every `/usr` they name
+   moved to `<root>/usr`, and its `usr/bin` and library directories as they
+   exist. Appended to the three lists; nothing for a root that is not a
+   directory, as a host answer's is not. */
+[[nodiscard]] bool configure_platform_tree(const char *root, str_list *pkgconfig_dirs,
+                                           str_list *tool_dirs, str_list *library_dirs);
 
 /* Where a delegated CMake configuration writes, relative to the source: what a
    recipe's include paths name for the headers it generates. */
