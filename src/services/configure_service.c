@@ -455,7 +455,13 @@ static bool configure_autotools(const char *name, const char *root, const recipe
         static char defines[VIEW_TEXT_MAX];
         join_view(view->defines, "-D", " ", as_is, defines, sizeof defines);
         const size_t used = strlen(cppflags);
-        snprintf(cppflags + used, sizeof cppflags - used, "%s%s", used == 0 ? "" : " ", defines);
+        const int written = snprintf(cppflags + used, sizeof cppflags - used, "%s%s",
+                                     used == 0 ? "" : " ", defines);
+        if(written < 0 || (size_t)written >= sizeof cppflags - used)
+            return set_error(err, err_size,
+                             "dependency '%s': its dependencies define more than "
+                             "fits in CPPFLAGS",
+                             name);
     }
     join_view(view != NULL ? view->link_flags : NULL, "-L", " ", library_dir, ldflags,
               sizeof ldflags);
