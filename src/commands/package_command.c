@@ -11,7 +11,7 @@
 #include <string.h>
 
 #define PACKAGE_PATH_MAX 4096
-#define TRACKED_OUTPUT_MAX (4 * 1024 * 1024)
+#define TRACKED_OUTPUT_MAX ((size_t)4 * 1024 * 1024)
 
 static bool copy_tracked(const char *root, const char *destination, const str_list *kept,
                          uint64_t *bytes) {

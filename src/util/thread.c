@@ -230,12 +230,12 @@ static void *posix_thread_main(void *arg) {
 
 bool thread_start(thread *out, int (*body)(void *), void *arg) {
     out->running = false;
-    pthread_t *id = malloc(sizeof *id);
+    pthread_t *id = (pthread_t *)malloc(sizeof *id);
     if(id == NULL)
         return false;
     posix_thread_body *carried = malloc(sizeof *carried);
     if(carried == NULL) {
-        free(id);
+        free((void *)id);
         return false;
     }
     carried->body = body;
@@ -243,10 +243,10 @@ bool thread_start(thread *out, int (*body)(void *), void *arg) {
 
     if(pthread_create(id, NULL, posix_thread_main, carried) != 0) {
         free(carried);
-        free(id);
+        free((void *)id);
         return false;
     }
-    out->impl = id;
+    out->impl = (void *)id;
     out->running = true;
     return true;
 }

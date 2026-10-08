@@ -148,7 +148,7 @@ bool package_read(const char *root, const char *name, project_ctx *ctx, recipe_a
         return fail(err, err_size, load_error);
     memset(out, 0, sizeof *out);
     char issues[2048] = "";
-    if(name && strcmp(name, ctx->project_name))
+    if(name && strcmp(name, ctx->project_name) != 0)
         problem(issues, sizeof issues, "dependency name '%s' does not equal [package].name '%s'; ",
                 name, ctx->project_name);
     if(!ctx->version_declared || !manifest_is_exact_version(ctx->version, NULL, 0))
