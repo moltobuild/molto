@@ -165,6 +165,13 @@ molto compiles from a recipe's own sources. The archive is for the probes
 only: the build proper compiles and links the dependency as it always has.
 Which libraries were built, and from which sources, is part of the stamp.
 
+A library may itself be configured — libiconv by its configure, liblzma by
+its CMake, whose own build says what it compiles. molto configures each one a
+recipe names before the recipe's own configuration, and compiles a library
+read from its build with its own lines. What the packages a configuration
+reaches define for their consumers (`LZMA_API_STATIC` on Windows) reaches it
+too, in `CPPFLAGS`, so a probe reads their headers as the build will.
+
 ### Schema
 
 `[build].sources`, `[build].goals` and `[build.libraries]` are schema 5. A reader that predates

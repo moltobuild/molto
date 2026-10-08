@@ -31,6 +31,16 @@ DESCRIBE(words_split_as_sh_splits_them) {
     str_list_free(&words);
 }
 
+DESCRIBE(a_windows_command_keeps_its_backslashes) {
+    str_list words;
+    str_list_init(&words);
+    ASSERT_TRUE(compile_lines_split_windows("C:\\msys64\\bin\\gcc.exe -DQ=\\\"x\\\" -c a.c", &words));
+    ASSERT_EQ(4, (int)str_list_count(&words));
+    EXPECT_STREQ("C:\\msys64\\bin\\gcc.exe", str_list_get(&words, 0));
+    EXPECT_STREQ("-DQ=\"x\"", str_list_get(&words, 1));
+    str_list_free(&words);
+}
+
 DESCRIBE(a_make_dry_run_gives_each_file_and_its_arguments) {
     const char *output =
         "mkdir -p libavutil/\n"

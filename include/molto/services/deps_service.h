@@ -83,6 +83,9 @@ typedef struct {
     /* Every package this one reaches, nearest first: what a configuration may
        be shown built (`[build.libraries]`, RFC-0025). */
     str_list reaches;
+    /* Set once the build has configured it and read what it compiles: a
+       package another one's configuration sees built is configured first. */
+    bool configured;
     str_list includes; /* -I directories, absolute */
     str_list defines;  /* -D */
     str_list flags;    /* passed verbatim */

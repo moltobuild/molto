@@ -103,6 +103,10 @@ static void fingerprint_with(const recipe_build *build, const char *cc, const ch
         for(size_t i = 0; i < str_list_count(view->link_flags); i++)
             hash_field(&state, "link", str_list_get(view->link_flags, i));
     }
+    if(view != NULL && view->defines != NULL) {
+        for(size_t i = 0; i < str_list_count(view->defines); i++)
+            hash_field(&state, "define", str_list_get(view->defines, i));
+    }
     /* Which libraries it saw built, and from what: their sources are under
        their own digest-named roots, so the paths name the bytes. */
     for(size_t i = 0; view != NULL && i < view->library_count; i++) {
@@ -380,19 +384,23 @@ static bool build_library(const char *name, const char *root, const char *cc,
         ok = str_list_push(&argv, cc) && str_list_push(&argv, "-c") &&
              str_list_push(&argv, str_list_get(library->sources, i)) &&
              str_list_push(&argv, "-o") && str_list_push(&argv, object);
-        if(ok && std[0] != '\0')
+        /* A line its own build gave says everything about how it compiles. */
+        const str_list *own = library->source_args != NULL ? &library->source_args[i] : NULL;
+        for(size_t a = 0; ok && own != NULL && a < str_list_count(own); a++)
+            ok = str_list_push(&argv, str_list_get(own, a));
+        if(ok && own == NULL && std[0] != '\0')
             ok = str_list_push(&argv, std);
-        for(size_t d = 0; ok && d < str_list_count(library->defines); d++) {
+        for(size_t d = 0; ok && own == NULL && d < str_list_count(library->defines); d++) {
             char define[CONFIGURE_PATH_MAX];
             snprintf(define, sizeof define, "-D%s", str_list_get(library->defines, d));
             ok = str_list_push(&argv, define);
         }
-        for(size_t d = 0; ok && d < str_list_count(library->includes); d++) {
+        for(size_t d = 0; ok && own == NULL && d < str_list_count(library->includes); d++) {
             char include[CONFIGURE_PATH_MAX];
             snprintf(include, sizeof include, "-I%s", str_list_get(library->includes, d));
             ok = str_list_push(&argv, include);
         }
-        for(size_t d = 0; ok && d < str_list_count(library->flags); d++)
+        for(size_t d = 0; ok && own == NULL && d < str_list_count(library->flags); d++)
             ok = str_list_push(&argv, str_list_get(library->flags, d));
         const char **list = ok ? process_argv_from_list(&argv) : NULL;
         if(list == NULL) {
@@ -443,6 +451,18 @@ static bool configure_autotools(const char *name, const char *root, const recipe
     static char cppflags[VIEW_TEXT_MAX];
     static char ldflags[VIEW_TEXT_MAX];
     join_view(view != NULL ? view->includes : NULL, "-I", " ", as_is, cppflags, sizeof cppflags);
+    if(view != NULL && view->defines != NULL && str_list_count(view->defines) > 0) {
+        static char defines[VIEW_TEXT_MAX];
+        join_view(view->defines, "-D", " ", as_is, defines, sizeof defines);
+        const size_t used = strlen(cppflags);
+        const int written = snprintf(cppflags + used, sizeof cppflags - used, "%s%s",
+                                     used == 0 ? "" : " ", defines);
+        if(written < 0 || (size_t)written >= sizeof cppflags - used)
+            return set_error(err, err_size,
+                             "dependency '%s': its dependencies define more than "
+                             "fits in CPPFLAGS",
+                             name);
+    }
     join_view(view != NULL ? view->link_flags : NULL, "-L", " ", library_dir, ldflags,
               sizeof ldflags);
     if(link_dir[0] != '\0') {

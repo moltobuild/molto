@@ -59,7 +59,17 @@ static compile_line *add_line(compile_lines *out, const char *source) {
 
 /* --- words --- */
 
-bool compile_lines_split(const char *text, str_list *out) {
+/* The split, with backslashes either as `sh` reads them or as Windows does:
+   literal, except before a double quote. */
+static bool split_words(const char *text, bool windows, str_list *out);
+
+bool compile_lines_split(const char *text, str_list *out) { return split_words(text, false, out); }
+
+bool compile_lines_split_windows(const char *text, str_list *out) {
+    return split_words(text, true, out);
+}
+
+static bool split_words(const char *text, bool windows, str_list *out) {
     const size_t length = strlen(text);
     char *word = malloc(length + 1);
     if(word == NULL)
@@ -78,7 +88,7 @@ bool compile_lines_split(const char *text, str_list *out) {
             continue;
         }
         in_word = true;
-        if(*c == '\'') {
+        if(*c == '\'' && !windows) {
             for(c++; *c != '\0' && *c != '\''; c++)
                 word[used++] = *c;
             if(*c == '\0')
@@ -87,13 +97,15 @@ bool compile_lines_split(const char *text, str_list *out) {
             for(c++; *c != '\0' && *c != '"'; c++) {
                 /* Inside double quotes a backslash escapes only what would
                    otherwise mean something there. */
-                if(*c == '\\' && (c[1] == '"' || c[1] == '\\' || c[1] == '$' || c[1] == '`'))
+                if(*c == '\\' &&
+                   (windows ? c[1] == '"'
+                            : (c[1] == '"' || c[1] == '\\' || c[1] == '$' || c[1] == '`')))
                     c++;
                 word[used++] = *c;
             }
             if(*c == '\0')
                 break;
-        } else if(*c == '\\' && c[1] != '\0') {
+        } else if(*c == '\\' && c[1] != '\0' && (!windows || c[1] == '"')) {
             word[used++] = *++c;
         } else {
             word[used++] = *c;
@@ -468,7 +480,13 @@ bool compile_lines_from_database(const char *json, const char *root, const compi
                           "is not a string",
                           i + 1);
         } else if(command != NULL) {
+            /* CMake writes a Windows command as Windows reads it: `C:\msys64\…`
+               with the backslashes meaning themselves. */
+#ifdef _WIN32
+            ok = compile_lines_split_windows(command, &words) ||
+#else
             ok = compile_lines_split(command, &words) ||
+#endif
                  set_error(err, err_size, "out of memory reading compile_commands.json");
         }
         if(ok)
