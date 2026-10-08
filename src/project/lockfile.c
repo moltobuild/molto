@@ -335,6 +335,26 @@ static bool mark_reachable(const lockfile *lock, const char *name, str_map *seen
     return true;
 }
 
+static bool declaration_matches(const lock_package *locked, const project_dep *dep) {
+    if(locked == NULL)
+        return false;
+    if(dep->resolution == dep_resolution_registry)
+        return strcmp(locked->version, dep->version) == 0 &&
+               dep_graph_source_kind(locked->source) == dep_source_version;
+
+    /* Git references live in the source rather than the version field. An
+       edited tag must invalidate the lock before resolution is verified. */
+    if(dep->source == dep_source_git) {
+        char source[DEP_GRAPH_SOURCE_MAX];
+        if(dep->reference[0] != '\0')
+            snprintf(source, sizeof source, "git+%s#%s", dep->location, dep->reference);
+        else
+            snprintf(source, sizeof source, "git+%s", dep->location);
+        return strcmp(locked->source, source) == 0;
+    }
+    return true;
+}
+
 bool lockfile_matches(const lockfile *lock, const project_ctx *ctx) {
     if(strcmp(lock->root, ctx->project_name) != 0)
         return false;
@@ -343,13 +363,13 @@ bool lockfile_matches(const lockfile *lock, const project_ctx *ctx) {
        now names. The transitive ones cannot have moved without one of these
        moving too: a recipe is published once and a coordinate is immutable
        (RFC-0010). */
-    for(size_t i = 0; i < ctx->deps.count; i++) {
-        const project_dep *dep = &ctx->deps.items[i];
-        const lock_package *locked = find_package(lock, dep->name);
-        if(locked == NULL)
-            return false;
-        if(dep->resolution == dep_resolution_registry && strcmp(locked->version, dep->version) != 0)
-            return false;
+    const project_deps *tables[] = {&ctx->deps, &ctx->dev_deps};
+    for(size_t table = 0; table < sizeof tables / sizeof tables[0]; table++) {
+        for(size_t i = 0; i < tables[table]->count; i++) {
+            const project_dep *dep = &tables[table]->items[i];
+            if(!declaration_matches(find_package(lock, dep->name), dep))
+                return false;
+        }
     }
 
     /* And nothing may be locked that the manifest no longer reaches. Checking
@@ -360,8 +380,10 @@ bool lockfile_matches(const lockfile *lock, const project_ctx *ctx) {
     if(seen == NULL)
         return false;
     bool ok = true;
-    for(size_t i = 0; ok && i < ctx->deps.count; i++)
-        ok = mark_reachable(lock, ctx->deps.items[i].name, seen);
+    for(size_t table = 0; ok && table < sizeof tables / sizeof tables[0]; table++) {
+        for(size_t i = 0; ok && i < tables[table]->count; i++)
+            ok = mark_reachable(lock, tables[table]->items[i].name, seen);
+    }
     const bool complete = ok && str_map_size(seen) == lock->count;
     str_map_destroy(seen);
     return complete;

@@ -589,3 +589,42 @@ DESCRIBE(a_host_library_with_no_version_on_either_side_is_quiet) {
     const lock_host here[] = {one_host("toykit", "2.0")};
     EXPECT_EQ(0u, lockfile_report_host_drift(&lock, here, 1));
 }
+
+DESCRIBE(a_lock_tracks_development_dependency_versions_and_git_tags) {
+    sandbox at;
+    ASSERT_TRUE(sandbox_open(&at));
+    char path[PATH_MAX_LEN];
+    ASSERT_TRUE(fs_format_path(path, sizeof path, "%s/Molto.lock", at.root));
+    ASSERT_TRUE(
+        fs_write_file(path, "version = 1\nroot = \"app\"\n"
+                            "[[package]]\nname = \"framework\"\nversion = \"1.0.0\"\n"
+                            "source = \"registry+https://example.test\"\nscopes = [\"dev\"]\n"
+                            "dependencies = []\n"
+                            "[[package]]\nname = \"helper\"\n"
+                            "source = \"git+https://example.test/helper#v1\"\nscopes = [\"dev\"]\n"
+                            "dependencies = []\n"));
+    char err[512] = "";
+    lockfile lock;
+    ASSERT_TRUE(lockfile_read(at.root, &lock, err, sizeof err));
+    project_ctx ctx;
+    ASSERT_TRUE(project_parse("[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+                              "[dev-deps]\nframework = \"1.0.0\"\n"
+                              "helper = { git = \"https://example.test/helper\", tag = \"v1\" }\n",
+                              &ctx, err, sizeof err));
+    EXPECT_TRUE(lockfile_matches(&lock, &ctx));
+    snprintf(ctx.dev_deps.items[0].version, sizeof ctx.dev_deps.items[0].version, "2.0.0");
+    EXPECT_FALSE(lockfile_matches(&lock, &ctx));
+    snprintf(ctx.dev_deps.items[0].version, sizeof ctx.dev_deps.items[0].version, "1.0.0");
+    snprintf(ctx.dev_deps.items[1].reference, sizeof ctx.dev_deps.items[1].reference, "v2");
+    EXPECT_FALSE(lockfile_matches(&lock, &ctx));
+    snprintf(ctx.dev_deps.items[1].reference, sizeof ctx.dev_deps.items[1].reference, "v1");
+    ctx.dev_deps.count = 1;
+    EXPECT_FALSE(lockfile_matches(&lock, &ctx));
+    ctx.dev_deps.count = 2;
+    ctx.deps = ctx.dev_deps;
+    EXPECT_TRUE(lockfile_matches(&lock, &ctx));
+    snprintf(ctx.dev_deps.items[1].reference, sizeof ctx.dev_deps.items[1].reference, "v2");
+    EXPECT_FALSE(lockfile_matches(&lock, &ctx));
+    lockfile_free(&lock);
+    sandbox_close(&at);
+}
