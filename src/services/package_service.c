@@ -321,6 +321,8 @@ bool package_prune(const char *root, char *err, size_t err_size) {
               inventory(root, &files) && package_select(ctx, &files, &kept, err, err_size);
     if(ok)
         ok = prune_tree(root, "", &kept, ctx);
+    if(!ok && !*err)
+        snprintf(err, err_size, "could not prune the fetched package tree at '%s'", root);
     str_list_free(&files);
     str_list_free(&kept);
     free(ctx);
