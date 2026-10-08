@@ -71,4 +71,9 @@ typedef struct {
    for its tests. */
 [[nodiscard]] bool compile_lines_split(const char *text, str_list *out);
 
+/* The same split as Windows reads a command line: a backslash is itself,
+   except before a double quote, and a single quote is a character. What CMake
+   writes into compile_commands.json there. */
+[[nodiscard]] bool compile_lines_split_windows(const char *text, str_list *out);
+
 #endif /* MOLTO_COMPILE_LINES_H */
