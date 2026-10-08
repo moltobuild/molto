@@ -71,7 +71,7 @@ debug_info = false
 mode = "single"         # moltest registers the tests and owns main()
 
 [dev-deps]
-moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.3.0" }
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.4.0" }
 ```
 
 `artifact`, `std` and `include` ship active; the rest are commented
@@ -207,17 +207,20 @@ reach the test build by themselves:
 mode = "single"
 
 [dev-deps]
-moltest = { git = "https://github.com/moltobuild/moltest", rev = "9e0611007d3b1ccebd589273dd14a7a229265c3c" }
-moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.3.0" }
-moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.5.0" }
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.4.0" }
+moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", rev = "0491018dfabb9f948ae6a51648fc696c43648652" }
+moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", rev = "508386d57906d63dd336aea35434ed2fa8974eba" }
 ```
 
 For new suites, prefer the latest compatible `moltest[all]` set: moltest,
 moltest-mock and moltest-coverage. The name describes these three explicit
-`[dev-deps]` entries; it is not CLI syntax. Coverage 0.3.0 and mock 0.5.0 currently
-pin the runner revision above (moltest 0.3.0), so installing moltest 0.4.0 alongside
-them causes a dependency conflict. Update all three entries together when the
-plugins support a newer runner. The generated scaffold only installs the runner;
+`[dev-deps]` entries; it is not CLI syntax. The pinned plugin commits above
+support moltest v0.4.0 and are awaiting releases
+([coverage PR #9](https://github.com/moltobuild/moltest-coverage/pull/9),
+[mock PR #8](https://github.com/moltobuild/moltest-mock/pull/8)).
+Use new compatible release tags once published. Coverage v0.3.0 and mock v0.5.0
+still pin the older runner, so combining those tags with v0.4.0 conflicts.
+The generated scaffold only installs the runner;
 add the other two entries to use the complete set.
 
 A framework kept in the tree instead is not compiled at all unless you say so:
@@ -830,9 +833,9 @@ flags    = ["-Wall", "-Wextra", "-Wpedantic"]
 mode = "single"
 
 [dev-deps]
-moltest = { git = "https://github.com/moltobuild/moltest", rev = "9e0611007d3b1ccebd589273dd14a7a229265c3c" }
-moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", tag = "v0.3.0" }
-moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", tag = "v0.5.0" }
+moltest = { git = "https://github.com/moltobuild/moltest", tag = "v0.4.0" }
+moltest_coverage = { git = "https://github.com/moltobuild/moltest-coverage", rev = "0491018dfabb9f948ae6a51648fc696c43648652" }
+moltest_mock = { git = "https://github.com/moltobuild/moltest-mock", rev = "508386d57906d63dd336aea35434ed2fa8974eba" }
 ```
 
 Migrating from a Makefile is mostly this: read `CFLAGS` and `LDFLAGS`, and put
