@@ -7,21 +7,21 @@ root = "molto"
 
 [[package]]
 name = "moltest"
-version = "0.3.0"
-source = "git+https://github.com/moltobuild/moltest#9e0611007d3b1ccebd589273dd14a7a229265c3c"
+version = "0.4.0"
+source = "git+https://github.com/moltobuild/moltest#v0.4.0"
 scopes = ["dev"]
 dependencies = []
 
 [[package]]
 name = "moltest_coverage"
 version = "0.3.0"
-source = "git+https://github.com/moltobuild/moltest-coverage#v0.3.0"
+source = "git+https://github.com/moltobuild/moltest-coverage#0491018dfabb9f948ae6a51648fc696c43648652"
 scopes = ["dev"]
 dependencies = ["moltest"]
 
 [[package]]
 name = "moltest_mock"
 version = "0.5.0"
-source = "git+https://github.com/moltobuild/moltest-mock#v0.5.0"
+source = "git+https://github.com/moltobuild/moltest-mock#508386d57906d63dd336aea35434ed2fa8974eba"
 scopes = ["dev"]
 dependencies = ["moltest"]

@@ -176,8 +176,12 @@ For new suites, use the latest compatible `moltest[all]` set: moltest,
 moltest-mock and moltest-coverage together. This is shorthand for three
 `[dev-deps]` entries, not a literal CLI argument; see the
 [manifest examples](docs/Project.md#my-tests-use-a-framework-with-its-own-main).
-The published coverage 0.3.0 and mock 0.5.0 plugins require the runner revision
-in `Project.toml` (moltest 0.3.0); moltest 0.4.0 cannot be combined with them yet.
+This project uses moltest v0.4.0 with the compatible plugin commits pinned in
+`Project.toml`. Those commits come from
+[coverage PR #9](https://github.com/moltobuild/moltest-coverage/pull/9) and
+[mock PR #8](https://github.com/moltobuild/moltest-mock/pull/8); replace them with
+new release tags once published. Coverage v0.3.0 and mock v0.5.0 still pin the
+older runner and cannot be combined with moltest v0.4.0.
 
 `make coverage` ends with the coverage of `src/` and fails under the floor in
 `moltest-coverage.toml`; `build/coverage.lcov` holds the detail.
