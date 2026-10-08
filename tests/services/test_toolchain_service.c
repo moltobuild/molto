@@ -530,8 +530,45 @@ DESCRIBE(a_cpp_request_names_the_cpp_standard) {
     char *log = fs_read_file(stub.log);
     ASSERT_NOT_NULL(log);
     EXPECT_NOT_NULL(strstr(log, "--std c++17"));
-    EXPECT_NULL(strstr(log, "c2x"));
+    EXPECT_NOT_NULL(strstr(log, "--mixed"));
+    EXPECT_NOT_NULL(strstr(log, "--c-std c2x"));
+    EXPECT_NULL(strstr(log, "--std c2x"));
     free(log);
+
+    (void)wsdb_close(db);
+    workspace_teardown(root);
+    stub_teardown(&stub);
+    stub_answer_teardown(&answer);
+}
+
+/* C requirements contributed by moltest remain C requirements when SDL's
+   delegated build needs C++. Both standards must participate in the memo. */
+DESCRIBE(a_mixed_request_keeps_c_requirements_and_invalidates_on_c_standard_changes) {
+    pickup_stub stub;
+    stub_answer answer;
+    ASSERT_TRUE(stub_answer_setup(&answer));
+    ASSERT_TRUE(stub_setup(&stub, answer.toml, 0));
+    char root[64];
+    ASSERT_TRUE(workspace_setup(root, sizeof root));
+    wsdb *db = wsdb_open(root);
+    ASSERT_NOT_NULL(db);
+
+    project_target target = target_requiring("attr_nodiscard");
+    snprintf(target.cpp_std, sizeof target.cpp_std, "%s", "c++17");
+    resolved_toolchain chain;
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, true, db, false, &chain));
+    ASSERT_EQ(1, stub_calls(&stub));
+    char *log = fs_read_file(stub.log);
+    ASSERT_NOT_NULL(log);
+    EXPECT_NOT_NULL(strstr(log, "--lang c++ --mixed --c-std c2x --std c++17"));
+    EXPECT_NOT_NULL(strstr(log, "--require attr_nodiscard"));
+    free(log);
+
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, true, db, false, &chain));
+    EXPECT_EQ(1, stub_calls(&stub));
+    snprintf(target.std, sizeof target.std, "%s", "c17");
+    ASSERT_EQ(exit_ok, toolchain_resolve(&target, NULL, true, db, false, &chain));
+    EXPECT_EQ(2, stub_calls(&stub));
 
     (void)wsdb_close(db);
     workspace_teardown(root);
