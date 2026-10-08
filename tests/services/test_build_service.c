@@ -282,6 +282,52 @@ DESCRIBE(a_unit_that_only_warned_still_says_so_and_still_succeeds) {
    than the coordinate on the line above, so the footer leaves it out. A path
    dependency inside the project is the opposite: it is somewhere the reader
    can go and look, and it is named the way they would type it. */
+/* A path dependency is code on this machine, often its reader's own: its
+   warnings are shown even when it compiles. Only a published package's are
+   kept to itself. */
+DESCRIBE(a_path_dependency_that_compiles_still_shows_its_warnings) {
+    char root[MOLTEST_PATH];
+    ASSERT_TRUE(moltest_temp_dir("molto_depwarn", root, sizeof root));
+    char path[512];
+    snprintf(path, sizeof path, "%s/modules/util/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/src", root);
+    EXPECT_TRUE(fs_make_dirs(path));
+    snprintf(path, sizeof path, "%s/modules/util/recipe.toml", root);
+    EXPECT_TRUE(fs_write_file(path, "schema = 1\nform = \"source\"\nkind = \"package\"\n"
+                                    "name = \"util\"\nversion = \"1.0.0\"\ntarget = \"any\"\n"
+                                    "[artifacts]\ntype = \"source\"\n"
+                                    "sources = [\"src/util.c\"]\ninclude = [\"src\"]\n"
+                                    "[artifacts.private]\nflags = [\"-Wall\"]\n"));
+    snprintf(path, sizeof path, "%s/modules/util/src/util.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int util(void) { int unused = 1; return 0; }\n"));
+    char manifest[1024];
+    snprintf(manifest, sizeof manifest,
+             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n"
+             "[target]\nstd = \"c17\"\n"
+             "[deps]\nutil = { path = \"%s/modules/util\" }\n",
+             root);
+    snprintf(path, sizeof path, "%s/Project.toml", root);
+    EXPECT_TRUE(fs_write_file(path, manifest));
+    snprintf(path, sizeof path, "%s/src/main.c", root);
+    EXPECT_TRUE(fs_write_file(path, "int main(void) { return 0; }\n"));
+
+    FILE *said = tmpfile();
+    ASSERT_NOT_NULL(said);
+    build_report *report = build_report_create(said);
+    ASSERT_NOT_NULL(report);
+    EXPECT_EQ(exit_ok, build_project_with(root, profile_debug, NULL, false, 0, NULL, 0, NULL, report));
+    char text[8192] = "";
+    (void)fflush(said);
+    rewind(said);
+    text[fread(text, 1, sizeof text - 1, said)] = '\0';
+    EXPECT_NOT_NULL(strstr(text, "unused"));
+
+    build_report_destroy(report);
+    (void)fclose(said);
+    (void)fs_remove_tree(root);
+}
+
 DESCRIBE(a_dependency_inside_the_project_is_named_where_the_reader_can_find_it) {
     char root[MOLTEST_PATH];
     ASSERT_TRUE(moltest_temp_dir("molto_depframe", root, sizeof root));
